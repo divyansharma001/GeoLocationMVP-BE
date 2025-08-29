@@ -7,6 +7,7 @@ import cors from 'cors';
 import authRoutes from './routes/auth.routes';
 import merchantRoutes from './routes/merchant.routes'; // For protected merchant actions
 import publicDealRoutes from './routes/deals.public.routes'; // For public deal fetching
+import userDealRoutes from './routes/deals.user.routes'; // For user-specific deal actions
 
 dotenv.config();
 
@@ -24,6 +25,7 @@ app.get('/', (req: Request, res: Response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api', merchantRoutes); // e.g., /api/merchants/register, /api/deals
 app.use('/api', publicDealRoutes); // e.g., /api/deals (GET)
+app.use('/api/user', userDealRoutes); // e.g., /api/user/deals/save, /api/user/deals/saved
 
 // You can keep this for testing or remove it later
 app.get('/users', async (req: Request, res: Response) => {

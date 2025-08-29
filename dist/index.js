@@ -11,6 +11,7 @@ const cors_1 = __importDefault(require("cors"));
 const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const merchant_routes_1 = __importDefault(require("./routes/merchant.routes")); // For protected merchant actions
 const deals_public_routes_1 = __importDefault(require("./routes/deals.public.routes")); // For public deal fetching
+const deals_user_routes_1 = __importDefault(require("./routes/deals.user.routes")); // For user-specific deal actions
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +24,7 @@ app.get('/', (req, res) => {
 app.use('/api/auth', auth_routes_1.default);
 app.use('/api', merchant_routes_1.default); // e.g., /api/merchants/register, /api/deals
 app.use('/api', deals_public_routes_1.default); // e.g., /api/deals (GET)
+app.use('/api/user', deals_user_routes_1.default); // e.g., /api/user/deals/save, /api/user/deals/saved
 // You can keep this for testing or remove it later
 app.get('/users', async (req, res) => {
     try {

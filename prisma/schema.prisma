@@ -52,6 +52,9 @@ model User {
 
   // A User can own one Merchant profile
   merchant  Merchant?
+
+  // A User can save many Deals
+  savedDeals SavedDeal[]
 }
 
 model Merchant {
@@ -102,4 +105,22 @@ model Deal {
   // Each Deal belongs to one Merchant
   merchantId    Int
   merchant      Merchant @relation(fields: [merchantId], references: [id])
+
+  // A Deal can be saved by many Users
+  savedBy       SavedDeal[]
+}
+
+// Model to track which users have saved which deals
+model SavedDeal {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  dealId    Int
+  createdAt DateTime @default(now())
+
+  // Relationships
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deal      Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  // Ensure a user can only save a deal once
+  @@unique([userId, dealId])
 }

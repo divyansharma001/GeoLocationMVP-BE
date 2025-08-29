@@ -50,23 +50,17 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
       return res.status(409).json({ error: 'You have already registered as a merchant.' });
     }
 
-    const [merchant] = await prisma.$transaction([
-      prisma.merchant.create({
-        data: {
-          businessName,
-          address,
-          description,
-          logoUrl,
-          latitude: latitude ? parseFloat(latitude) : null,
-          longitude: longitude ? parseFloat(longitude) : null,
-          owner: { connect: { id: userId } },
-        },
-      }),
-      prisma.user.update({
-        where: { id: userId },
-        data: { role: 'MERCHANT' },
-      }),
-    ]);
+    const merchant = await prisma.merchant.create({
+      data: {
+        businessName,
+        address,
+        description,
+        logoUrl,
+        latitude: latitude ? parseFloat(latitude) : null,
+        longitude: longitude ? parseFloat(longitude) : null,
+        owner: { connect: { id: userId } },
+      },
+    });
 
     res.status(201).json({
       message: 'Merchant application submitted successfully. It is now pending approval.',

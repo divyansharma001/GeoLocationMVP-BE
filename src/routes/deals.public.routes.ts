@@ -1,10 +1,9 @@
 // src/routes/deals.public.routes.ts
 
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../lib/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Utility function to calculate distance between two points using Haversine formula
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -20,7 +19,7 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
 }
 
 // Utility function to format deal data for frontend consumption
-function formatDealForFrontend(deal: any, distance?: number) {
+function formatDealForFrontend(deal: any, distance?: number): any {
   return {
     id: deal.id,
     title: deal.title || '',
@@ -233,7 +232,7 @@ router.get('/deals', async (req, res) => {
 
       // Filter by distance and add distance information
       const dealsWithDistance = deals
-        .filter(deal => {
+        .filter((deal: any) => {
           if (!deal.merchant.latitude || !deal.merchant.longitude) {
             return false;
           }
@@ -247,7 +246,7 @@ router.get('/deals', async (req, res) => {
 
           return distance <= radiusKm;
         })
-        .map(deal => {
+        .map((deal: any) => {
           const distance = calculateDistance(
             userLat, 
             userLon, 
@@ -256,12 +255,12 @@ router.get('/deals', async (req, res) => {
           );
           return formatDealForFrontend(deal, distance);
         })
-        .sort((a, b) => (a.distance || 0) - (b.distance || 0));
+        .sort((a: any, b: any) => (a.distance || 0) - (b.distance || 0));
 
       deals = dealsWithDistance;
     } else {
       // Format deals for frontend when no geolocation filtering is applied
-      deals = deals.map(deal => formatDealForFrontend(deal));
+      deals = deals.map((deal: any) => formatDealForFrontend(deal));
     }
 
     res.status(200).json({
@@ -277,6 +276,32 @@ router.get('/deals', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching deals:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/deals/:dealId/saved ---
+// Check if a specific deal is saved by the logged-in user (for public access)
+router.get('/deals/:dealId/saved', async (req, res) => {
+  try {
+    const dealId = parseInt(req.params.dealId);
+
+    // Validate dealId
+    if (isNaN(dealId) || dealId <= 0) {
+      return res.status(400).json({
+        error: 'Invalid deal ID. Must be a positive integer.'
+      });
+    }
+
+    // For public access, always return false since we can't determine the user
+    // This endpoint is useful for frontend consistency
+    res.status(200).json({
+      isSaved: false,
+      savedDeal: null,
+      message: 'Authentication required to check saved status'
+    });
+  } catch (error) {
+    console.error('Error checking saved deal status:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
