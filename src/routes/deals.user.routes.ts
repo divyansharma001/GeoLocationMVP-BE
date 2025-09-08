@@ -287,7 +287,7 @@ router.get('/deals/saved', protect, async (req: AuthRequest, res) => {
     });
 
     // Format the deals for frontend
-    let formattedDeals = savedDeals.map(savedDeal => {
+    let formattedDeals = savedDeals.map((savedDeal: any) => {
       const deal = savedDeal.deal;
       return {
         ...formatDealForFrontend(deal),
@@ -327,7 +327,7 @@ router.get('/deals/saved', protect, async (req: AuthRequest, res) => {
       }
 
       // Calculate distance for each deal
-      formattedDeals = formattedDeals.map(deal => {
+      formattedDeals = formattedDeals.map((deal: any) => {
         if (deal.merchant.latitude && deal.merchant.longitude) {
           const distance = calculateDistance(
             userLat,
@@ -344,7 +344,7 @@ router.get('/deals/saved', protect, async (req: AuthRequest, res) => {
       });
 
       // Sort by distance
-      formattedDeals.sort((a, b) => (a.distance || 0) - (b.distance || 0));
+      formattedDeals.sort((a: any, b: any) => (a.distance || 0) - (b.distance || 0));
     }
 
     res.status(200).json({

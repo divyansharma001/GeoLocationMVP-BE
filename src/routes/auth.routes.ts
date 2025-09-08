@@ -3,6 +3,10 @@ import { z } from 'zod';
 import prisma from '../lib/prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { protect, AuthRequest } from '../middleware/auth.middleware';
+import { ApiResponse } from '../utils/response.utils';
+import { commonValidations, handleValidationErrors } from '../middleware/security.middleware';
+import { body } from 'express-validator';
 
 const router = Router();
 
@@ -14,7 +18,12 @@ const registerSchema = z.object({
   name: z.string().optional(),
 });
 
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', [
+  commonValidations.email,
+  commonValidations.password,
+  commonValidations.name,
+  handleValidationErrors
+], async (req: Request, res: Response) => {
   try {
         const { email, password, name } = registerSchema.parse(req.body);
         
@@ -24,7 +33,7 @@ router.post('/register', async (req: Request, res: Response) => {
     // 2. Check if user already exists
     const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (existingUser) {
-      return res.status(409).json({ error: 'Email is already in use' });
+      return ApiResponse.conflict(res, 'Email is already in use');
     }
 
     // 3. Hash the password
@@ -43,53 +52,41 @@ router.post('/register', async (req: Request, res: Response) => {
     const { password: _, ...userWithoutPassword } = newUser;
 
     // 5. Send back a success response
-    res.status(201).json({
-      message: 'User created successfully',
-      user: userWithoutPassword,
-    });
+    return ApiResponse.success(res, userWithoutPassword, 'User created successfully', 201);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ errors: error.issues });
+      const validationErrors = error.issues.map(issue => ({
+        field: issue.path.join('.'),
+        message: issue.message,
+        code: issue.code
+      }));
+      return ApiResponse.validationError(res, validationErrors);
     }
     console.error('Registration error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    return ApiResponse.internalError(res);
   }
 });
 
 
 
-const verifyToken = (req: Request, res: Response, next: Function) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; 
+// Removed duplicate verifyToken - using protect middleware from auth.middleware.ts instead
 
-  if (token == null) return res.sendStatus(401);
-
-  const jwtSecret = process.env.JWT_SECRET;
-  if (!jwtSecret) return res.status(500).json({ error: 'Server configuration error' });
-
-  jwt.verify(token, jwtSecret, (err: any, user: any) => {
-    if (err) return res.sendStatus(403); 
-    (req as any).user = user;
-    next();
-  });
-};
-
-router.get('/me', verifyToken, async (req: Request, res: Response) => {
+router.get('/me', protect, async (req: AuthRequest, res: Response) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = req.user?.id;
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, email: true, name: true, createdAt: true }, 
     });
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return ApiResponse.notFound(res, 'User');
     }
 
-    res.status(200).json(user);
+    return ApiResponse.success(res, user);
   } catch (error) {
     console.error('Get me error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    return ApiResponse.internalError(res);
   }
 });
 
@@ -102,7 +99,11 @@ const loginSchema = z.object({
   password: z.string(),
 });
 
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', [
+  commonValidations.email,
+  body('password').notEmpty().withMessage('Password is required'),
+  handleValidationErrors
+], async (req: Request, res: Response) => {
   try {
         const { email, password } = loginSchema.parse(req.body);
         
@@ -113,13 +114,13 @@ router.post('/login', async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (!user) {
       // Use a generic error message for security
-      return res.status(401).json({ error: 'Invalid credentials' });
+      return ApiResponse.unauthorized(res, 'Invalid credentials');
     }
 
     // 3. Compare the submitted password with the stored hash
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      return ApiResponse.unauthorized(res, 'Invalid credentials');
     }
 
     // 4. Generate a JWT
@@ -135,16 +136,18 @@ router.post('/login', async (req: Request, res: Response) => {
     );
 
     // 5. Send the token back to the client
-    res.status(200).json({
-      message: 'Login successful',
-      token: token,
-    });
+    return ApiResponse.success(res, { token }, 'Login successful');
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ errors: error.issues });
+      const validationErrors = error.issues.map(issue => ({
+        field: issue.path.join('.'),
+        message: issue.message,
+        code: issue.code
+      }));
+      return ApiResponse.validationError(res, validationErrors);
     }
     console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    return ApiResponse.internalError(res);
   }
 });
 

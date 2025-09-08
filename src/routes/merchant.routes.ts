@@ -160,6 +160,177 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
   }
 });
 
+// --- Endpoint: GET /api/merchants/deals ---
+// Returns all deals created by the authenticated merchant
+router.get('/merchants/deals', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    const { status, category, page = '1', limit = '10' } = req.query;
+
+    if (!merchantId) {
+      return res.status(401).json({ error: 'Merchant authentication required' });
+    }
+
+    // Parse pagination parameters
+    const pageNum = parseInt(page as string, 10);
+    const limitNum = parseInt(limit as string, 10);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Validate pagination parameters
+    if (isNaN(pageNum) || pageNum < 1) {
+      return res.status(400).json({ error: 'Page must be a positive integer' });
+    }
+
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
+      return res.status(400).json({ error: 'Limit must be between 1 and 100' });
+    }
+
+    // Build filter conditions
+    const whereConditions: any = {
+      merchantId: merchantId,
+    };
+
+    // Filter by deal status (active, expired, upcoming)
+    if (status) {
+      const now = new Date();
+      switch (status) {
+        case 'active':
+          whereConditions.startTime = { lte: now };
+          whereConditions.endTime = { gte: now };
+          break;
+        case 'expired':
+          whereConditions.endTime = { lt: now };
+          break;
+        case 'upcoming':
+          whereConditions.startTime = { gt: now };
+          break;
+        default:
+          return res.status(400).json({ 
+            error: 'Invalid status. Must be one of: active, expired, upcoming' 
+          });
+      }
+    }
+
+    // Filter by category
+    if (category) {
+      const validCategories = [
+        'FOOD_AND_BEVERAGE', 'RETAIL', 'ENTERTAINMENT', 'HEALTH_AND_FITNESS',
+        'BEAUTY_AND_SPA', 'AUTOMOTIVE', 'TRAVEL', 'EDUCATION', 'TECHNOLOGY',
+        'HOME_AND_GARDEN', 'OTHER'
+      ];
+      
+      if (!validCategories.includes(category as string)) {
+        return res.status(400).json({
+          error: `Invalid category. Must be one of: ${validCategories.join(', ')}`
+        });
+      }
+      
+      whereConditions.category = category;
+    }
+
+    // Get deals with pagination
+    const [deals, totalCount] = await Promise.all([
+      prisma.deal.findMany({
+        where: whereConditions,
+        include: {
+          merchant: {
+            select: {
+              id: true,
+              businessName: true,
+              address: true,
+              description: true,
+              logoUrl: true,
+              latitude: true,
+              longitude: true,
+              status: true,
+            },
+          },
+          savedBy: {
+            select: {
+              id: true,
+              userId: true,
+              createdAt: true,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip: skip,
+        take: limitNum,
+      }),
+      prisma.deal.count({
+        where: whereConditions,
+      }),
+    ]);
+
+    // Format deals for response
+    const formattedDeals = deals.map(deal => ({
+      id: deal.id,
+      title: deal.title,
+      description: deal.description,
+      imageUrl: deal.imageUrl,
+      discountPercentage: deal.discountPercentage,
+      discountAmount: deal.discountAmount,
+      category: deal.category,
+      startTime: deal.startTime.toISOString(),
+      endTime: deal.endTime.toISOString(),
+      redemptionInstructions: deal.redemptionInstructions,
+      createdAt: deal.createdAt.toISOString(),
+      updatedAt: deal.updatedAt.toISOString(),
+      merchant: {
+        id: deal.merchant.id,
+        businessName: deal.merchant.businessName,
+        address: deal.merchant.address,
+        description: deal.merchant.description,
+        logoUrl: deal.merchant.logoUrl,
+        latitude: deal.merchant.latitude,
+        longitude: deal.merchant.longitude,
+        status: deal.merchant.status,
+      },
+      stats: {
+        totalSaves: deal.savedBy.length,
+        recentSaves: deal.savedBy.filter(save => {
+          const oneWeekAgo = new Date();
+          oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+          return save.createdAt >= oneWeekAgo;
+        }).length,
+      },
+      status: (() => {
+        const now = new Date();
+        if (deal.startTime > now) return 'upcoming';
+        if (deal.endTime < now) return 'expired';
+        return 'active';
+      })(),
+    }));
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(totalCount / limitNum);
+    const hasNextPage = pageNum < totalPages;
+    const hasPrevPage = pageNum > 1;
+
+    res.status(200).json({
+      deals: formattedDeals,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: totalPages,
+        totalCount: totalCount,
+        limit: limitNum,
+        hasNextPage: hasNextPage,
+        hasPrevPage: hasPrevPage,
+      },
+      filters: {
+        status: status || null,
+        category: category || null,
+      },
+    });
+
+  } catch (error) {
+    console.error('Error fetching merchant deals:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // --- Endpoint: PUT /api/merchants/coordinates ---
 // Allows an approved merchant to update their coordinates.
 router.put('/merchants/coordinates', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
