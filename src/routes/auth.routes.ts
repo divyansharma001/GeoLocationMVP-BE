@@ -84,13 +84,22 @@ router.post('/register', async (req: Request, res: Response) => {
           referredByUserId
         } as any,
       });
-      await tx.userPointEvent.create({
-        data: {
-          userId: created.id,
-          pointEventTypeId: 1, // SIGNUP point event type
-          points: signupPoints
-        }
+      // Find the SIGNUP point event type dynamically
+      const signupPointEventType = await tx.pointEventTypeMaster.findFirst({
+        where: { name: 'SIGNUP' }
       });
+
+      if (signupPointEventType) {
+        await tx.userPointEvent.create({
+          data: {
+            userId: created.id,
+            pointEventTypeId: signupPointEventType.id,
+            points: signupPoints
+          }
+        });
+      } else {
+        console.warn('SIGNUP point event type not found, skipping point event creation');
+      }
   // Invalidate monthly & day caches (signup only affects current period aggregates)
   invalidateLeaderboardCache('month');
   invalidateLeaderboardCache('day');
