@@ -694,6 +694,1431 @@ router.get('/merchants/deals', protect, isApprovedMerchant, async (req: AuthRequ
   }
 });
 
+// --- Endpoint: GET /api/merchants/dashboard/stats ---
+// Returns key performance indicators for the merchant dashboard
+router.get('/merchants/dashboard/stats', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { period = 'all_time' } = req.query as any;
+    
+    // Calculate date range based on period
+    let dateFrom: Date | null = null;
+    const now = new Date();
+    
+    switch (period) {
+      case 'last_7_days':
+        dateFrom = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+        break;
+      case 'last_30_days':
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        break;
+      case 'this_month':
+        dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case 'this_year':
+        dateFrom = new Date(now.getFullYear(), 0, 1);
+        break;
+      default:
+        dateFrom = null; // all_time
+    }
+
+    // Build date filter for queries
+    const dateFilter = dateFrom ? { gte: dateFrom } : undefined;
+
+    // Get check-ins (order volume proxy)
+    const checkInCount = await prisma.checkIn.count({
+      where: {
+        merchantId,
+        ...(dateFilter && { createdAt: dateFilter })
+      }
+    });
+
+    // Get kickback earnings data (gross sales proxy)
+    const kickbackData = await prisma.kickbackEvent.aggregate({
+      where: {
+        merchantId,
+        ...(dateFilter && { createdAt: dateFilter })
+      },
+      _sum: {
+        sourceAmountSpent: true,
+        amountEarned: true
+      },
+      _count: {
+        id: true
+      }
+    });
+
+    // Calculate gross sales (total spending from kickback events)
+    const grossSales = kickbackData._sum.sourceAmountSpent || 0;
+    
+    // Calculate average order value
+    const averageOrderValue = checkInCount > 0 ? grossSales / checkInCount : 0;
+
+    // Get active deals count
+    const activeDealsCount = await prisma.deal.count({
+      where: {
+        merchantId,
+        startTime: { lte: now },
+        endTime: { gte: now }
+      }
+    });
+
+    // Get total saved deals (engagement metric)
+    const totalSavedDeals = await prisma.userDeal.count({
+      where: {
+        deal: {
+          merchantId
+        },
+        ...(dateFilter && { savedAt: dateFilter })
+      }
+    });
+
+    res.status(200).json({
+      period,
+      kpis: {
+        grossSales: Number(grossSales.toFixed(2)),
+        orderVolume: checkInCount,
+        averageOrderValue: Number(averageOrderValue.toFixed(2)),
+        totalKickbackHandout: Number((kickbackData._sum.amountEarned || 0).toFixed(2))
+      },
+      metrics: {
+        activeDeals: activeDealsCount,
+        totalSavedDeals,
+        totalKickbackEvents: kickbackData._count.id
+      },
+      dateRange: {
+        from: dateFrom,
+        to: now
+      }
+    });
+
+  } catch (error) {
+    console.error('Dashboard stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/merchants/dashboard/city-performance ---
+// Returns performance metrics by city for the merchant
+router.get('/merchants/dashboard/city-performance', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { period = 'all_time' } = req.query as any;
+    
+    // Calculate date range based on period
+    let dateFrom: Date | null = null;
+    const now = new Date();
+    
+    switch (period) {
+      case 'last_7_days':
+        dateFrom = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+        break;
+      case 'last_30_days':
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        break;
+      case 'this_month':
+        dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case 'this_year':
+        dateFrom = new Date(now.getFullYear(), 0, 1);
+        break;
+      default:
+        dateFrom = null; // all_time
+    }
+
+    // Get stores with their cities
+    const stores = await prisma.store.findMany({
+      where: { merchantId },
+      include: {
+        city: true
+      }
+    });
+
+    // Get city performance data
+    const cityPerformance = await Promise.all(
+      stores.map(async (store) => {
+        const dateFilter = dateFrom ? { gte: dateFrom } : undefined;
+        
+        // Get check-ins for this city (through store)
+        const checkIns = await prisma.checkIn.count({
+          where: {
+            merchantId,
+            ...(dateFilter && { createdAt: dateFilter })
+          }
+        });
+
+        // Get kickback events for this city
+        const kickbackEvents = await prisma.kickbackEvent.aggregate({
+          where: {
+            merchantId,
+            ...(dateFilter && { createdAt: dateFilter })
+          },
+          _sum: {
+            sourceAmountSpent: true,
+            amountEarned: true
+          },
+          _count: {
+            id: true
+          }
+        });
+
+        // Get active deals count for this merchant (not city-specific yet)
+        const activeDeals = await prisma.deal.count({
+          where: {
+            merchantId,
+            startTime: { lte: now },
+            endTime: { gte: now }
+          }
+        });
+
+        const grossSales = kickbackEvents._sum.sourceAmountSpent || 0;
+        const orderVolume = checkIns;
+        const averageOrderValue = orderVolume > 0 ? grossSales / orderVolume : 0;
+
+        return {
+          cityId: store.city.id,
+          cityName: store.city.name,
+          state: store.city.state,
+          storeId: store.id,
+          storeAddress: store.address,
+          performance: {
+            grossSales: Number(grossSales.toFixed(2)),
+            orderVolume,
+            averageOrderValue: Number(averageOrderValue.toFixed(2)),
+            activeDeals,
+            kickbackEarnings: Number((kickbackEvents._sum.amountEarned || 0).toFixed(2))
+          }
+        };
+      })
+    );
+
+    // Group by city (in case there are multiple stores in same city)
+    const cityGroups = cityPerformance.reduce((acc, item) => {
+      const key = `${item.cityName}, ${item.state}`;
+      if (!acc[key]) {
+        acc[key] = {
+          cityId: item.cityId,
+          cityName: item.cityName,
+          state: item.state,
+          stores: [],
+          totalPerformance: {
+            grossSales: 0,
+            orderVolume: 0,
+            averageOrderValue: 0,
+            activeDeals: 0,
+            kickbackEarnings: 0
+          }
+        };
+      }
+      
+      acc[key].stores.push({
+        storeId: item.storeId,
+        address: item.storeAddress
+      });
+      
+      // Aggregate performance metrics
+      acc[key].totalPerformance.grossSales += item.performance.grossSales;
+      acc[key].totalPerformance.orderVolume += item.performance.orderVolume;
+      acc[key].totalPerformance.kickbackEarnings += item.performance.kickbackEarnings;
+      acc[key].totalPerformance.activeDeals = item.performance.activeDeals; // Same for all stores
+    }, {} as any);
+
+    // Calculate average order value for each city
+    Object.values(cityGroups).forEach((city: any) => {
+      city.totalPerformance.averageOrderValue = city.totalPerformance.orderVolume > 0 
+        ? Number((city.totalPerformance.grossSales / city.totalPerformance.orderVolume).toFixed(2))
+        : 0;
+    });
+
+    const cityPerformanceArray = Object.values(cityGroups);
+
+    res.status(200).json({
+      period,
+      cities: cityPerformanceArray,
+      summary: {
+        totalCities: cityPerformanceArray.length,
+        totalStores: stores.length,
+        totalGrossSales: cityPerformanceArray.reduce((sum: number, city: any) => 
+          sum + city.totalPerformance.grossSales, 0),
+        totalOrderVolume: cityPerformanceArray.reduce((sum: number, city: any) => 
+          sum + city.totalPerformance.orderVolume, 0)
+      },
+      dateRange: {
+        from: dateFrom,
+        to: now
+      }
+    });
+
+  } catch (error) {
+    console.error('City performance error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/merchants/dashboard/analytics ---
+// Returns detailed analytics for the merchant dashboard
+router.get('/merchants/dashboard/analytics', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { period = 'last_30_days', groupBy = 'day' } = req.query as any;
+    
+    // Calculate date range
+    let dateFrom: Date;
+    const now = new Date();
+    
+    switch (period) {
+      case 'last_7_days':
+        dateFrom = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+        break;
+      case 'last_30_days':
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        break;
+      case 'this_month':
+        dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case 'this_year':
+        dateFrom = new Date(now.getFullYear(), 0, 1);
+        break;
+      default:
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+    }
+
+    // Get deals performance
+    const dealsPerformance = await prisma.deal.findMany({
+      where: {
+        merchantId,
+        createdAt: { gte: dateFrom }
+      },
+      select: {
+        id: true,
+        title: true,
+        startTime: true,
+        endTime: true,
+        kickbackEnabled: true,
+        _count: {
+          select: {
+            savedByUsers: true,
+            checkIns: true,
+            kickbackEvents: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Calculate time-series data for check-ins and kickback events
+    const timeSeriesData = [];
+    const currentDate = new Date(dateFrom);
+    
+    while (currentDate <= now) {
+      const dayStart = new Date(currentDate);
+      const dayEnd = new Date(currentDate);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const dayCheckIns = await prisma.checkIn.count({
+        where: {
+          merchantId,
+          createdAt: { gte: dayStart, lte: dayEnd }
+        }
+      });
+
+      const dayKickbackEvents = await prisma.kickbackEvent.aggregate({
+        where: {
+          merchantId,
+          createdAt: { gte: dayStart, lte: dayEnd }
+        },
+        _sum: {
+          sourceAmountSpent: true,
+          amountEarned: true
+        }
+      });
+
+      timeSeriesData.push({
+        date: currentDate.toISOString().split('T')[0],
+        checkIns: dayCheckIns,
+        grossSales: Number((dayKickbackEvents._sum.sourceAmountSpent || 0).toFixed(2)),
+        kickbackEarnings: Number((dayKickbackEvents._sum.amountEarned || 0).toFixed(2))
+      });
+
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // Get top performing deals
+    const topDeals = dealsPerformance
+      .map(deal => ({
+        id: deal.id,
+        title: deal.title,
+        checkIns: deal._count.checkIns,
+        saves: deal._count.savedByUsers,
+        kickbackEvents: deal._count.kickbackEvents,
+        isActive: deal.startTime <= now && deal.endTime >= now,
+        kickbackEnabled: deal.kickbackEnabled
+      }))
+      .sort((a, b) => b.checkIns - a.checkIns)
+      .slice(0, 10);
+
+    // Get user engagement metrics
+    const totalUsers = await prisma.user.count({
+      where: {
+        OR: [
+          { checkIns: { some: { merchantId } } },
+          { savedDeals: { some: { deal: { merchantId } } } }
+        ]
+      }
+    });
+
+    // Get users with multiple check-ins (returning users)
+    const userCheckInCounts = await prisma.checkIn.groupBy({
+      by: ['userId'],
+      where: {
+        merchantId,
+        createdAt: { gte: dateFrom }
+      },
+      _count: {
+        id: true
+      }
+    });
+
+    const returningUsers = userCheckInCounts.filter(user => user._count.id > 1);
+
+    res.status(200).json({
+      period,
+      groupBy,
+      timeSeries: timeSeriesData,
+      dealsPerformance: topDeals,
+      userEngagement: {
+        totalUsers,
+        returningUsers: returningUsers.length,
+        newUsers: totalUsers - returningUsers.length
+      },
+      summary: {
+        totalDeals: dealsPerformance.length,
+        activeDeals: dealsPerformance.filter(d => d.startTime <= now && d.endTime >= now).length,
+        totalCheckIns: dealsPerformance.reduce((sum, d) => sum + d._count.checkIns, 0),
+        totalSaves: dealsPerformance.reduce((sum, d) => sum + d._count.savedByUsers, 0),
+        totalKickbackEvents: dealsPerformance.reduce((sum, d) => sum + d._count.kickbackEvents, 0)
+      },
+      dateRange: {
+        from: dateFrom,
+        to: now
+      }
+    });
+
+  } catch (error) {
+    console.error('Dashboard analytics error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/merchants/dashboard/deal-performance ---
+// Returns detailed performance analytics for individual deals
+router.get('/merchants/dashboard/deal-performance', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { period = 'last_30_days', dealId, limit = 10 } = req.query as any;
+    
+    // Calculate date range
+    let dateFrom: Date;
+    const now = new Date();
+    
+    switch (period) {
+      case 'last_7_days':
+        dateFrom = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+        break;
+      case 'last_30_days':
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        break;
+      case 'this_month':
+        dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case 'this_year':
+        dateFrom = new Date(now.getFullYear(), 0, 1);
+        break;
+      default:
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+    }
+
+    // Build base where clause
+    const baseWhere: any = {
+      merchantId,
+      createdAt: { gte: dateFrom }
+    };
+
+    // If specific deal ID requested
+    if (dealId) {
+      baseWhere.id = Number(dealId);
+    }
+
+    // Get deals with comprehensive performance metrics
+    const deals = await prisma.deal.findMany({
+      where: baseWhere,
+      include: {
+        _count: {
+          select: {
+            savedByUsers: true,
+            checkIns: true,
+            kickbackEvents: true
+          }
+        },
+        category: true,
+        dealType: true,
+        menuItems: {
+          include: {
+            menuItem: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Number(limit)
+    });
+
+    // Get detailed performance data for each deal
+    const dealPerformance = await Promise.all(
+      deals.map(async (deal) => {
+        // Get check-ins over time for this deal
+        const checkInTimeSeries = [];
+        const currentDate = new Date(dateFrom);
+        
+        while (currentDate <= now) {
+          const dayStart = new Date(currentDate);
+          const dayEnd = new Date(currentDate);
+          dayEnd.setHours(23, 59, 59, 999);
+
+          const dayCheckIns = await prisma.checkIn.count({
+            where: {
+              dealId: deal.id,
+              createdAt: { gte: dayStart, lte: dayEnd }
+            }
+          });
+
+          const daySaves = await prisma.userDeal.count({
+            where: {
+              dealId: deal.id,
+              savedAt: { gte: dayStart, lte: dayEnd }
+            }
+          });
+
+          const dayKickbacks = await prisma.kickbackEvent.aggregate({
+            where: {
+              dealId: deal.id,
+              createdAt: { gte: dayStart, lte: dayEnd }
+            },
+            _sum: {
+              sourceAmountSpent: true,
+              amountEarned: true
+            }
+          });
+
+          checkInTimeSeries.push({
+            date: currentDate.toISOString().split('T')[0],
+            checkIns: dayCheckIns,
+            saves: daySaves,
+            revenue: Number((dayKickbacks._sum.sourceAmountSpent || 0).toFixed(2)),
+            kickbackEarnings: Number((dayKickbacks._sum.amountEarned || 0).toFixed(2))
+          });
+
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+
+        // Get user engagement details
+        const uniqueUsers = await prisma.user.count({
+          where: {
+            OR: [
+              { checkIns: { some: { dealId: deal.id } } },
+              { savedDeals: { some: { dealId: deal.id } } }
+            ]
+          }
+        });
+
+        const returningUsers = await prisma.checkIn.groupBy({
+          by: ['userId'],
+          where: {
+            dealId: deal.id,
+            createdAt: { gte: dateFrom }
+          },
+          _count: { id: true }
+        });
+
+        const returningUserCount = returningUsers.filter(u => u._count.id > 1).length;
+
+        // Calculate conversion metrics
+        const saveToCheckInRate = deal._count.savedByUsers > 0 
+          ? Number(((deal._count.checkIns / deal._count.savedByUsers) * 100).toFixed(2))
+          : 0;
+
+        const checkInToKickbackRate = deal._count.checkIns > 0
+          ? Number(((deal._count.kickbackEvents / deal._count.checkIns) * 100).toFixed(2))
+          : 0;
+
+        return {
+          id: deal.id,
+          title: deal.title,
+          description: deal.description,
+          category: deal.category,
+          dealType: deal.dealType,
+          isActive: deal.startTime <= now && deal.endTime >= now,
+          kickbackEnabled: deal.kickbackEnabled,
+          performance: {
+            checkIns: deal._count.checkIns,
+            saves: deal._count.savedByUsers,
+            kickbackEvents: deal._count.kickbackEvents,
+            uniqueUsers,
+            returningUsers: returningUserCount,
+            conversionRates: {
+              saveToCheckIn: saveToCheckInRate,
+              checkInToKickback: checkInToKickbackRate
+            }
+          },
+          timeSeries: checkInTimeSeries,
+          menuItems: deal.menuItems.map(dmi => ({
+            id: dmi.menuItem.id,
+            name: dmi.menuItem.name,
+            price: dmi.menuItem.price,
+            category: dmi.menuItem.category,
+            isHidden: dmi.isHidden
+          }))
+        };
+      })
+    );
+
+    res.status(200).json({
+      period,
+      deals: dealPerformance,
+      summary: {
+        totalDeals: dealPerformance.length,
+        activeDeals: dealPerformance.filter(d => d.isActive).length,
+        totalCheckIns: dealPerformance.reduce((sum, d) => sum + d.performance.checkIns, 0),
+        totalSaves: dealPerformance.reduce((sum, d) => sum + d.performance.saves, 0),
+        totalKickbackEvents: dealPerformance.reduce((sum, d) => sum + d.performance.kickbackEvents, 0),
+        averageSaveToCheckInRate: dealPerformance.length > 0 
+          ? Number((dealPerformance.reduce((sum, d) => sum + d.performance.conversionRates.saveToCheckIn, 0) / dealPerformance.length).toFixed(2))
+          : 0
+      },
+      dateRange: {
+        from: dateFrom,
+        to: now
+      }
+    });
+
+  } catch (error) {
+    console.error('Deal performance error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/merchants/dashboard/customer-insights ---
+// Returns detailed customer behavior and engagement analytics
+router.get('/merchants/dashboard/customer-insights', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { period = 'last_30_days' } = req.query as any;
+    
+    // Calculate date range
+    let dateFrom: Date;
+    const now = new Date();
+    
+    switch (period) {
+      case 'last_7_days':
+        dateFrom = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+        break;
+      case 'last_30_days':
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        break;
+      case 'this_month':
+        dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case 'this_year':
+        dateFrom = new Date(now.getFullYear(), 0, 1);
+        break;
+      default:
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+    }
+
+    // Get customer engagement data
+    const totalCustomers = await prisma.user.count({
+      where: {
+        OR: [
+          { checkIns: { some: { merchantId } } },
+          { savedDeals: { some: { deal: { merchantId } } } }
+        ]
+      }
+    });
+
+    // Get new vs returning customers
+    const newCustomers = await prisma.user.count({
+      where: {
+        OR: [
+          { checkIns: { some: { merchantId, createdAt: { gte: dateFrom } } } },
+          { savedDeals: { some: { deal: { merchantId }, savedAt: { gte: dateFrom } } } }
+        ],
+        createdAt: { gte: dateFrom }
+      }
+    });
+
+    // Get customer activity patterns
+    const customerActivity = await prisma.checkIn.groupBy({
+      by: ['userId'],
+      where: {
+        merchantId,
+        createdAt: { gte: dateFrom }
+      },
+      _count: { id: true },
+      _max: { createdAt: true },
+      _min: { createdAt: true }
+    });
+
+    // Categorize customers by activity level
+    const activityCategories = {
+      high: customerActivity.filter(u => u._count.id >= 5).length,
+      medium: customerActivity.filter(u => u._count.id >= 2 && u._count.id < 5).length,
+      low: customerActivity.filter(u => u._count.id === 1).length
+    };
+
+    // Get customer lifetime value (through kickback events)
+    const customerValueData = await prisma.kickbackEvent.groupBy({
+      by: ['userId'],
+      where: {
+        merchantId,
+        createdAt: { gte: dateFrom }
+      },
+      _sum: {
+        sourceAmountSpent: true,
+        amountEarned: true
+      },
+      _count: { id: true }
+    });
+
+    // Calculate customer value metrics
+    const avgCustomerValue = customerValueData.length > 0
+      ? Number((customerValueData.reduce((sum, c) => sum + (c._sum.sourceAmountSpent || 0), 0) / customerValueData.length).toFixed(2))
+      : 0;
+
+    const topCustomers = customerValueData
+      .sort((a, b) => (b._sum.sourceAmountSpent || 0) - (a._sum.sourceAmountSpent || 0))
+      .slice(0, 10)
+      .map(async (customer) => {
+        const user = await prisma.user.findUnique({
+          where: { id: customer.userId },
+          select: { id: true, name: true, avatarUrl: true, createdAt: true }
+        });
+        
+        return {
+          user,
+          totalSpent: Number((customer._sum.sourceAmountSpent || 0).toFixed(2)),
+          totalEarned: Number((customer._sum.amountEarned || 0).toFixed(2)),
+          kickbackEvents: customer._count.id
+        };
+      });
+
+    const resolvedTopCustomers = await Promise.all(topCustomers);
+
+    // Get referral performance
+    const referralData = await prisma.user.findMany({
+      where: {
+        referredByUserId: { not: null },
+        OR: [
+          { checkIns: { some: { merchantId } } },
+          { savedDeals: { some: { deal: { merchantId } } } }
+        ]
+      },
+      include: {
+        referredBy: {
+          select: { id: true, name: true, avatarUrl: true }
+        },
+        _count: {
+          select: {
+            checkIns: {
+              where: { merchantId }
+            },
+            savedDeals: {
+              where: {
+                deal: { merchantId }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Get peak activity times
+    const hourlyActivity = await Promise.all(
+      Array.from({ length: 24 }, (_, hour) => 
+        prisma.checkIn.count({
+          where: {
+            merchantId,
+            createdAt: { gte: dateFrom },
+            // Note: This is a simplified approach. For production, you'd want to extract hour from createdAt
+          }
+        })
+      )
+    );
+
+    res.status(200).json({
+      period,
+      customerOverview: {
+        totalCustomers,
+        newCustomers,
+        returningCustomers: totalCustomers - newCustomers,
+        customerRetentionRate: totalCustomers > 0 
+          ? Number(((totalCustomers - newCustomers) / totalCustomers * 100).toFixed(2))
+          : 0
+      },
+      activityLevels: activityCategories,
+      customerValue: {
+        averageCustomerValue: avgCustomerValue,
+        topCustomers: resolvedTopCustomers
+      },
+      referralInsights: {
+        referredCustomers: referralData.length,
+        referralEngagement: referralData.map(r => ({
+          customer: { id: r.id, name: r.name, avatarUrl: r.avatarUrl },
+          referrer: r.referredBy,
+          checkIns: r._count.checkIns,
+          savedDeals: r._count.savedDeals
+        }))
+      },
+      activityPatterns: {
+        hourlyDistribution: hourlyActivity,
+        peakHours: hourlyActivity
+          .map((count, hour) => ({ hour, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5)
+      },
+      dateRange: {
+        from: dateFrom,
+        to: now
+      }
+    });
+
+  } catch (error) {
+    console.error('Customer insights error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/merchants/dashboard/revenue-analytics ---
+// Returns detailed revenue breakdown and financial analytics
+router.get('/merchants/dashboard/revenue-analytics', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { period = 'last_30_days' } = req.query as any;
+    
+    // Calculate date range
+    let dateFrom: Date;
+    const now = new Date();
+    
+    switch (period) {
+      case 'last_7_days':
+        dateFrom = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+        break;
+      case 'last_30_days':
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        break;
+      case 'this_month':
+        dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case 'this_year':
+        dateFrom = new Date(now.getFullYear(), 0, 1);
+        break;
+      default:
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+    }
+
+    // Get revenue data from kickback events
+    const revenueData = await prisma.kickbackEvent.findMany({
+      where: {
+        merchantId,
+        createdAt: { gte: dateFrom }
+      },
+      include: {
+        deal: {
+          select: {
+            id: true,
+            title: true,
+            category: {
+              select: {
+                name: true,
+                icon: true
+              }
+            },
+            dealType: {
+              select: {
+                name: true
+              }
+            }
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Calculate revenue by category
+    const revenueByCategory = revenueData.reduce((acc, event) => {
+      const categoryName = event.deal.category.name;
+      if (!acc[categoryName]) {
+        acc[categoryName] = {
+          category: event.deal.category,
+          revenue: 0,
+          kickbackPaid: 0,
+          transactions: 0
+        };
+      }
+      acc[categoryName].revenue += event.sourceAmountSpent;
+      acc[categoryName].kickbackPaid += event.amountEarned;
+      acc[categoryName].transactions += 1;
+      return acc;
+    }, {} as any);
+
+    // Calculate revenue by deal type
+    const revenueByDealType = revenueData.reduce((acc, event) => {
+      const dealTypeName = event.deal.dealType.name;
+      if (!acc[dealTypeName]) {
+        acc[dealTypeName] = {
+          dealType: dealTypeName,
+          revenue: 0,
+          kickbackPaid: 0,
+          transactions: 0
+        };
+      }
+      acc[dealTypeName].revenue += event.sourceAmountSpent;
+      acc[dealTypeName].kickbackPaid += event.amountEarned;
+      acc[dealTypeName].transactions += 1;
+      return acc;
+    }, {} as any);
+
+    // Get top performing deals by revenue
+    const topDealsByRevenue = revenueData.reduce((acc, event) => {
+      const dealId = event.dealId;
+      if (!acc[dealId]) {
+        acc[dealId] = {
+          deal: event.deal,
+          revenue: 0,
+          kickbackPaid: 0,
+          transactions: 0,
+          uniqueCustomers: new Set()
+        };
+      }
+      acc[dealId].revenue += event.sourceAmountSpent;
+      acc[dealId].kickbackPaid += event.amountEarned;
+      acc[dealId].transactions += 1;
+      acc[dealId].uniqueCustomers.add(event.userId);
+      return acc;
+    }, {} as any);
+
+    const topDeals = Object.values(topDealsByRevenue)
+      .map((deal: any) => ({
+        ...deal,
+        uniqueCustomers: deal.uniqueCustomers.size
+      }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
+
+    // Calculate daily revenue trends
+    const dailyRevenue = [];
+    const currentDate = new Date(dateFrom);
+    
+    while (currentDate <= now) {
+      const dayStart = new Date(currentDate);
+      const dayEnd = new Date(currentDate);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const dayRevenue = revenueData
+        .filter(event => event.createdAt >= dayStart && event.createdAt <= dayEnd)
+        .reduce((sum, event) => sum + event.sourceAmountSpent, 0);
+
+      const dayKickback = revenueData
+        .filter(event => event.createdAt >= dayStart && event.createdAt <= dayEnd)
+        .reduce((sum, event) => sum + event.amountEarned, 0);
+
+      dailyRevenue.push({
+        date: currentDate.toISOString().split('T')[0],
+        revenue: Number(dayRevenue.toFixed(2)),
+        kickbackPaid: Number(dayKickback.toFixed(2)),
+        transactions: revenueData.filter(event => event.createdAt >= dayStart && event.createdAt <= dayEnd).length
+      });
+
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // Calculate summary metrics
+    const totalRevenue = revenueData.reduce((sum, event) => sum + event.sourceAmountSpent, 0);
+    const totalKickbackPaid = revenueData.reduce((sum, event) => sum + event.amountEarned, 0);
+    const totalTransactions = revenueData.length;
+    const averageTransactionValue = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
+    const kickbackRate = totalRevenue > 0 ? (totalKickbackPaid / totalRevenue) * 100 : 0;
+
+    res.status(200).json({
+      period,
+      summary: {
+        totalRevenue: Number(totalRevenue.toFixed(2)),
+        totalKickbackPaid: Number(totalKickbackPaid.toFixed(2)),
+        totalTransactions,
+        averageTransactionValue: Number(averageTransactionValue.toFixed(2)),
+        kickbackRate: Number(kickbackRate.toFixed(2))
+      },
+      revenueByCategory: Object.values(revenueByCategory).map((cat: any) => ({
+        ...cat,
+        revenue: Number(cat.revenue.toFixed(2)),
+        kickbackPaid: Number(cat.kickbackPaid.toFixed(2))
+      })),
+      revenueByDealType: Object.values(revenueByDealType).map((type: any) => ({
+        ...type,
+        revenue: Number(type.revenue.toFixed(2)),
+        kickbackPaid: Number(type.kickbackPaid.toFixed(2))
+      })),
+      topDeals: topDeals.map((deal: any) => ({
+        ...deal,
+        revenue: Number(deal.revenue.toFixed(2)),
+        kickbackPaid: Number(deal.kickbackPaid.toFixed(2))
+      })),
+      dailyTrends: dailyRevenue,
+      dateRange: {
+        from: dateFrom,
+        to: now
+      }
+    });
+
+  } catch (error) {
+    console.error('Revenue analytics error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/merchants/dashboard/engagement-metrics ---
+// Returns detailed user engagement and behavior analytics
+router.get('/merchants/dashboard/engagement-metrics', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { period = 'last_30_days' } = req.query as any;
+    
+    // Calculate date range
+    let dateFrom: Date;
+    const now = new Date();
+    
+    switch (period) {
+      case 'last_7_days':
+        dateFrom = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+        break;
+      case 'last_30_days':
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        break;
+      case 'this_month':
+        dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case 'this_year':
+        dateFrom = new Date(now.getFullYear(), 0, 1);
+        break;
+      default:
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+    }
+
+    // Get engagement funnel data
+    const totalDealViews = await prisma.deal.count({
+      where: {
+        merchantId,
+        createdAt: { gte: dateFrom }
+      }
+    });
+
+    const totalDealSaves = await prisma.userDeal.count({
+      where: {
+        deal: { merchantId },
+        savedAt: { gte: dateFrom }
+      }
+    });
+
+    const totalCheckIns = await prisma.checkIn.count({
+      where: {
+        merchantId,
+        createdAt: { gte: dateFrom }
+      }
+    });
+
+    const totalKickbackEvents = await prisma.kickbackEvent.count({
+      where: {
+        merchantId,
+        createdAt: { gte: dateFrom }
+      }
+    });
+
+    // Calculate conversion rates
+    const saveRate = totalDealViews > 0 ? (totalDealSaves / totalDealViews) * 100 : 0;
+    const checkInRate = totalDealSaves > 0 ? (totalCheckIns / totalDealSaves) * 100 : 0;
+    const kickbackRate = totalCheckIns > 0 ? (totalKickbackEvents / totalCheckIns) * 100 : 0;
+
+    // Get user engagement patterns
+    const userEngagement = await prisma.user.findMany({
+      where: {
+        OR: [
+          { checkIns: { some: { merchantId, createdAt: { gte: dateFrom } } } },
+          { savedDeals: { some: { deal: { merchantId }, savedAt: { gte: dateFrom } } } }
+        ]
+      },
+      include: {
+        _count: {
+          select: {
+            checkIns: {
+              where: { merchantId, createdAt: { gte: dateFrom } }
+            },
+            savedDeals: {
+              where: {
+                deal: { merchantId },
+                savedAt: { gte: dateFrom }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Categorize users by engagement level
+    const engagementLevels = {
+      high: userEngagement.filter(u => (u._count.checkIns + u._count.savedDeals) >= 5).length,
+      medium: userEngagement.filter(u => (u._count.checkIns + u._count.savedDeals) >= 2 && (u._count.checkIns + u._count.savedDeals) < 5).length,
+      low: userEngagement.filter(u => (u._count.checkIns + u._count.savedDeals) === 1).length
+    };
+
+    // Get daily engagement trends
+    const dailyEngagement = [];
+    const currentDate = new Date(dateFrom);
+    
+    while (currentDate <= now) {
+      const dayStart = new Date(currentDate);
+      const dayEnd = new Date(currentDate);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const daySaves = await prisma.userDeal.count({
+        where: {
+          deal: { merchantId },
+          savedAt: { gte: dayStart, lte: dayEnd }
+        }
+      });
+
+      const dayCheckIns = await prisma.checkIn.count({
+        where: {
+          merchantId,
+          createdAt: { gte: dayStart, lte: dayEnd }
+        }
+      });
+
+      const dayKickbacks = await prisma.kickbackEvent.count({
+        where: {
+          merchantId,
+          createdAt: { gte: dayStart, lte: dayEnd }
+        }
+      });
+
+      dailyEngagement.push({
+        date: currentDate.toISOString().split('T')[0],
+        saves: daySaves,
+        checkIns: dayCheckIns,
+        kickbackEvents: dayKickbacks,
+        engagementScore: daySaves + (dayCheckIns * 2) + (dayKickbacks * 3) // Weighted engagement score
+      });
+
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // Get most engaging deals
+    const engagingDeals = await prisma.deal.findMany({
+      where: {
+        merchantId,
+        createdAt: { gte: dateFrom }
+      },
+      include: {
+        _count: {
+          select: {
+            savedByUsers: {
+              where: { savedAt: { gte: dateFrom } }
+            },
+            checkIns: {
+              where: { createdAt: { gte: dateFrom } }
+            },
+            kickbackEvents: {
+              where: { createdAt: { gte: dateFrom } }
+            }
+          }
+        },
+        category: {
+          select: {
+            name: true,
+            icon: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const topEngagingDeals = engagingDeals
+      .map(deal => ({
+        id: deal.id,
+        title: deal.title,
+        category: deal.category,
+        engagementScore: deal._count.savedByUsers + (deal._count.checkIns * 2) + (deal._count.kickbackEvents * 3),
+        saves: deal._count.savedByUsers,
+        checkIns: deal._count.checkIns,
+        kickbackEvents: deal._count.kickbackEvents
+      }))
+      .sort((a, b) => b.engagementScore - a.engagementScore)
+      .slice(0, 10);
+
+    // Get retention metrics
+    const repeatCustomers = await prisma.checkIn.groupBy({
+      by: ['userId'],
+      where: {
+        merchantId,
+        createdAt: { gte: dateFrom }
+      },
+      _count: { id: true }
+    });
+
+    const customerRetentionRate = userEngagement.length > 0 
+      ? (repeatCustomers.filter(u => u._count.id > 1).length / userEngagement.length) * 100 
+      : 0;
+
+    res.status(200).json({
+      period,
+      funnelMetrics: {
+        totalDealViews: totalDealViews,
+        totalDealSaves: totalDealSaves,
+        totalCheckIns: totalCheckIns,
+        totalKickbackEvents: totalKickbackEvents,
+        conversionRates: {
+          saveRate: Number(saveRate.toFixed(2)),
+          checkInRate: Number(checkInRate.toFixed(2)),
+          kickbackRate: Number(kickbackRate.toFixed(2))
+        }
+      },
+      userEngagement: {
+        totalEngagedUsers: userEngagement.length,
+        engagementLevels,
+        customerRetentionRate: Number(customerRetentionRate.toFixed(2)),
+        averageEngagementPerUser: userEngagement.length > 0 
+          ? Number((userEngagement.reduce((sum, u) => sum + u._count.checkIns + u._count.savedDeals, 0) / userEngagement.length).toFixed(2))
+          : 0
+      },
+      dailyEngagement: dailyEngagement,
+      topEngagingDeals,
+      dateRange: {
+        from: dateFrom,
+        to: now
+      }
+    });
+
+  } catch (error) {
+    console.error('Engagement metrics error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/merchants/dashboard/performance-comparison ---
+// Returns period-over-period performance comparisons
+router.get('/merchants/dashboard/performance-comparison', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { currentPeriod = 'last_30_days', comparePeriod = 'previous_30_days' } = req.query as any;
+    
+    const now = new Date();
+    let currentFrom: Date, currentTo: Date, compareFrom: Date, compareTo: Date;
+
+    // Calculate current period
+    switch (currentPeriod) {
+      case 'last_7_days':
+        currentFrom = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+        currentTo = now;
+        break;
+      case 'last_30_days':
+        currentFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        currentTo = now;
+        break;
+      case 'this_month':
+        currentFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+        currentTo = now;
+        break;
+      case 'this_year':
+        currentFrom = new Date(now.getFullYear(), 0, 1);
+        currentTo = now;
+        break;
+      default:
+        currentFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        currentTo = now;
+    }
+
+    // Calculate comparison period
+    switch (comparePeriod) {
+      case 'previous_30_days':
+        const daysDiff = Math.ceil((currentTo.getTime() - currentFrom.getTime()) / (1000 * 60 * 60 * 24));
+        compareTo = new Date(currentFrom.getTime() - 1);
+        compareFrom = new Date(compareTo.getTime() - (daysDiff * 24 * 60 * 60 * 1000));
+        break;
+      case 'previous_month':
+        compareTo = new Date(currentFrom.getTime() - 1);
+        compareFrom = new Date(compareTo.getFullYear(), compareTo.getMonth(), 1);
+        break;
+      case 'previous_year':
+        compareTo = new Date(currentFrom.getTime() - 1);
+        compareFrom = new Date(compareTo.getFullYear(), 0, 1);
+        break;
+      default:
+        const daysDiffDefault = Math.ceil((currentTo.getTime() - currentFrom.getTime()) / (1000 * 60 * 60 * 24));
+        compareTo = new Date(currentFrom.getTime() - 1);
+        compareFrom = new Date(compareTo.getTime() - (daysDiffDefault * 24 * 60 * 60 * 1000));
+    }
+
+    // Get current period data
+    const currentData = await Promise.all([
+      prisma.checkIn.count({
+        where: {
+          merchantId,
+          createdAt: { gte: currentFrom, lte: currentTo }
+        }
+      }),
+      prisma.userDeal.count({
+        where: {
+          deal: { merchantId },
+          savedAt: { gte: currentFrom, lte: currentTo }
+        }
+      }),
+      prisma.kickbackEvent.aggregate({
+        where: {
+          merchantId,
+          createdAt: { gte: currentFrom, lte: currentTo }
+        },
+        _sum: {
+          sourceAmountSpent: true,
+          amountEarned: true
+        }
+      }),
+      prisma.user.count({
+        where: {
+          OR: [
+            { checkIns: { some: { merchantId, createdAt: { gte: currentFrom, lte: currentTo } } } },
+            { savedDeals: { some: { deal: { merchantId }, savedAt: { gte: currentFrom, lte: currentTo } } } }
+          ]
+        }
+      })
+    ]);
+
+    // Get comparison period data
+    const compareData = await Promise.all([
+      prisma.checkIn.count({
+        where: {
+          merchantId,
+          createdAt: { gte: compareFrom, lte: compareTo }
+        }
+      }),
+      prisma.userDeal.count({
+        where: {
+          deal: { merchantId },
+          savedAt: { gte: compareFrom, lte: compareTo }
+        }
+      }),
+      prisma.kickbackEvent.aggregate({
+        where: {
+          merchantId,
+          createdAt: { gte: compareFrom, lte: compareTo }
+        },
+        _sum: {
+          sourceAmountSpent: true,
+          amountEarned: true
+        }
+      }),
+      prisma.user.count({
+        where: {
+          OR: [
+            { checkIns: { some: { merchantId, createdAt: { gte: compareFrom, lte: compareTo } } } },
+            { savedDeals: { some: { deal: { merchantId }, savedAt: { gte: compareFrom, lte: compareTo } } } }
+          ]
+        }
+      })
+    ]);
+
+    // Calculate metrics
+    const currentMetrics = {
+      checkIns: currentData[0],
+      dealSaves: currentData[1],
+      grossSales: currentData[2]._sum.sourceAmountSpent || 0,
+      kickbackPaid: currentData[2]._sum.amountEarned || 0,
+      uniqueUsers: currentData[3]
+    };
+
+    const compareMetrics = {
+      checkIns: compareData[0],
+      dealSaves: compareData[1],
+      grossSales: compareData[2]._sum.sourceAmountSpent || 0,
+      kickbackPaid: compareData[2]._sum.amountEarned || 0,
+      uniqueUsers: compareData[3]
+    };
+
+    // Calculate percentage changes
+    const calculateChange = (current: number, previous: number) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return Number((((current - previous) / previous) * 100).toFixed(2));
+    };
+
+    const changes = {
+      checkIns: calculateChange(currentMetrics.checkIns, compareMetrics.checkIns),
+      dealSaves: calculateChange(currentMetrics.dealSaves, compareMetrics.dealSaves),
+      grossSales: calculateChange(currentMetrics.grossSales, compareMetrics.grossSales),
+      kickbackPaid: calculateChange(currentMetrics.kickbackPaid, compareMetrics.kickbackPaid),
+      uniqueUsers: calculateChange(currentMetrics.uniqueUsers, compareMetrics.uniqueUsers)
+    };
+
+    res.status(200).json({
+      currentPeriod,
+      comparePeriod,
+      currentMetrics: {
+        ...currentMetrics,
+        grossSales: Number(currentMetrics.grossSales.toFixed(2)),
+        kickbackPaid: Number(currentMetrics.kickbackPaid.toFixed(2))
+      },
+      compareMetrics: {
+        ...compareMetrics,
+        grossSales: Number(compareMetrics.grossSales.toFixed(2)),
+        kickbackPaid: Number(compareMetrics.kickbackPaid.toFixed(2))
+      },
+      changes,
+      trends: {
+        checkIns: changes.checkIns > 0 ? 'up' : changes.checkIns < 0 ? 'down' : 'stable',
+        dealSaves: changes.dealSaves > 0 ? 'up' : changes.dealSaves < 0 ? 'down' : 'stable',
+        grossSales: changes.grossSales > 0 ? 'up' : changes.grossSales < 0 ? 'down' : 'stable',
+        kickbackPaid: changes.kickbackPaid > 0 ? 'up' : changes.kickbackPaid < 0 ? 'down' : 'stable',
+        uniqueUsers: changes.uniqueUsers > 0 ? 'up' : changes.uniqueUsers < 0 ? 'down' : 'stable'
+      },
+      dateRanges: {
+        current: { from: currentFrom, to: currentTo },
+        compare: { from: compareFrom, to: compareTo }
+      }
+    });
+
+  } catch (error) {
+    console.error('Performance comparison error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;
 
 // --- Endpoint: GET /api/merchants/me/menu ---
@@ -826,56 +2251,167 @@ router.delete('/merchants/me/menu/item/:itemId', protect, isApprovedMerchant, as
     // @ts-ignore
     const existing = await prisma.menuItem.findUnique({ where: { id: itemId }, select: { id: true, merchantId: true } });
 // --- Endpoint: GET /api/merchants/me/kickback-earnings ---
-// Fetches aggregated and detailed Kickback earnings data.
-// NOTE: Currently returns realistic MOCK DATA to enable frontend development.
+// Fetches aggregated and detailed Kickback earnings data with real database queries.
 router.get('/merchants/me/kickback-earnings', protect, isApprovedMerchant, async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = req.merchant!.id;
     const { period = 'all_time' } = req.query as any;
 
-    // TODO: Replace mock with actual aggregation over KickbackEvent table
-    // Future implementation outline:
-    //  1. Determine date range based on period (e.g., last_7_days, last_30_days, this_month, all_time)
-    //  2. Query KickbackEvent where merchantId & createdAt in range
-    //  3. Aggregate total sourceAmountSpent (revenue proxy) & total amountEarned
-    //  4. Group by userId for details: sum(earned), count(distinct invitees), sum(sourceAmountSpent)
-    //  5. (Optional) Join to MenuItem / Deal for spending detail if stored per line item later
-    const mockData = {
-      summary: {
-        revenue: 1392.0,
-        totalKickbackHandout: 135.5
+    // Calculate date range based on period
+    let dateFrom: Date | null = null;
+    const now = new Date();
+    
+    switch (period) {
+      case 'last_7_days':
+        dateFrom = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+        break;
+      case 'last_30_days':
+        dateFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        break;
+      case 'this_month':
+        dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case 'this_year':
+        dateFrom = new Date(now.getFullYear(), 0, 1);
+        break;
+      default:
+        dateFrom = null; // all_time
+    }
+
+    // Build date filter for queries
+    const dateFilter = dateFrom ? { gte: dateFrom } : undefined;
+
+    // Get aggregated kickback data
+    const kickbackSummary = await prisma.kickbackEvent.aggregate({
+      where: {
+        merchantId,
+        ...(dateFilter && { createdAt: dateFilter })
       },
-      details: [
-        {
-          user: { name: 'Anita', avatarUrl: 'https://i.pravatar.cc/150?u=anita' },
-          earned: 3.5,
-            invitedCount: 2,
-          totalSpentByInvitees: 13.5,
-          spendingDetail: [
-            { itemName: 'Chicken Ginger', price: 14.0, imageUrl: 'https://example.com/chicken.png' },
-            { itemName: 'Coca Cola Zero', price: 2.5, imageUrl: 'https://example.com/coke.png' }
-          ]
+      _sum: {
+        sourceAmountSpent: true,
+        amountEarned: true
+      },
+      _count: {
+        id: true
+      }
+    });
+
+    // Get detailed kickback events grouped by user
+    const kickbackDetails = await prisma.kickbackEvent.findMany({
+      where: {
+        merchantId,
+        ...(dateFilter && { createdAt: dateFilter })
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            avatarUrl: true
+          }
         },
-        {
-          user: { name: 'Benjamin', avatarUrl: 'https://i.pravatar.cc/150?u=benjamin' },
-          earned: 2.1,
-          invitedCount: 1,
-          totalSpentByInvitees: 13.5,
-          spendingDetail: []
-        },
-        {
-          user: { name: 'Carla', avatarUrl: 'https://i.pravatar.cc/150?u=carla' },
-          earned: 15.75,
-          invitedCount: 5,
-          totalSpentByInvitees: 150.2,
-          spendingDetail: []
+        deal: {
+          select: {
+            id: true,
+            title: true,
+            imageUrls: true
+          }
         }
-      ]
-    };
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    // Group by user and aggregate their kickback data
+    const userKickbackMap = kickbackDetails.reduce((acc, event) => {
+      const userId = event.userId;
+      if (!acc[userId]) {
+        acc[userId] = {
+          user: event.user,
+          earned: 0,
+          invitedCount: 0,
+          totalSpentByInvitees: 0,
+          kickbackEvents: []
+        };
+      }
+      
+      acc[userId].earned += event.amountEarned;
+      acc[userId].invitedCount += event.inviteeCount;
+      acc[userId].totalSpentByInvitees += event.sourceAmountSpent;
+      acc[userId].kickbackEvents.push(event);
+      
+      return acc;
+    }, {} as any);
+
+    // Convert to array and format for response
+    const details = Object.values(userKickbackMap).map((userData: any) => ({
+      user: {
+        id: userData.user.id,
+        name: userData.user.name || 'Anonymous User',
+        avatarUrl: userData.user.avatarUrl
+      },
+      earned: Number(userData.earned.toFixed(2)),
+      invitedCount: userData.invitedCount,
+      totalSpentByInvitees: Number(userData.totalSpentByInvitees.toFixed(2)),
+      spendingDetail: userData.kickbackEvents.map((event: any) => ({
+        dealTitle: event.deal.title,
+        dealId: event.deal.id,
+        amountSpent: Number(event.sourceAmountSpent.toFixed(2)),
+        amountEarned: Number(event.amountEarned.toFixed(2)),
+        inviteeCount: event.inviteeCount,
+        date: event.createdAt
+      }))
+    })).sort((a, b) => b.earned - a.earned); // Sort by highest earnings
+
+    // Get time-series data for kickback earnings
+    const timeSeriesData = [];
+    if (dateFrom) {
+      const currentDate = new Date(dateFrom);
+      while (currentDate <= now) {
+        const dayStart = new Date(currentDate);
+        const dayEnd = new Date(currentDate);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        const dayKickbackEvents = await prisma.kickbackEvent.aggregate({
+          where: {
+            merchantId,
+            createdAt: { gte: dayStart, lte: dayEnd }
+          },
+          _sum: {
+            sourceAmountSpent: true,
+            amountEarned: true
+          },
+          _count: {
+            id: true
+          }
+        });
+
+        timeSeriesData.push({
+          date: currentDate.toISOString().split('T')[0],
+          revenue: Number((dayKickbackEvents._sum.sourceAmountSpent || 0).toFixed(2)),
+          kickbackHandout: Number((dayKickbackEvents._sum.amountEarned || 0).toFixed(2)),
+          eventCount: dayKickbackEvents._count.id
+        });
+
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+    }
 
     res.status(200).json({
-      ...mockData,
-      _note: `This is mock data for development. The period requested was '${period}'.`,
+      period,
+      summary: {
+        revenue: Number((kickbackSummary._sum.sourceAmountSpent || 0).toFixed(2)),
+        totalKickbackHandout: Number((kickbackSummary._sum.amountEarned || 0).toFixed(2)),
+        totalEvents: kickbackSummary._count.id,
+        uniqueUsers: details.length
+      },
+      details,
+      timeSeries: timeSeriesData,
+      dateRange: {
+        from: dateFrom,
+        to: now
+      },
       merchantId
     });
   } catch (error) {
