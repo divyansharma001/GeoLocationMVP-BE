@@ -880,7 +880,10 @@ Get featured deals for homepage.
 - `limit` (number): Number of deals to return (max 20, default 8)
 
 ### GET /api/deals/:id
-Get detailed information about a specific deal.
+Get comprehensive deal details for detailed view with enhanced social proof, user interaction, and action URLs.
+
+**Query Parameters:**
+- `userId` (optional): User ID for personalized interaction data
 
 **Response:**
 ```json

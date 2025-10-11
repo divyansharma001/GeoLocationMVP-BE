@@ -539,6 +539,9 @@ router.get('/deals/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid Deal ID.' });
     }
 
+    // Get user ID from query parameter for personalized data (optional)
+    const { userId } = req.query;
+
     const deal = await prisma.deal.findUnique({
       where: { id: dealId },
       include: {
@@ -584,7 +587,8 @@ router.get('/deals/:id', async (req, res) => {
         _count: { 
           select: { 
             savedByUsers: true,
-            menuItems: true
+            menuItems: true,
+            checkIns: true  // Add check-in count
           } 
         },
         savedByUsers: {
@@ -600,6 +604,22 @@ router.get('/deals/:id', async (req, res) => {
             savedAt: true
           },
           orderBy: { savedAt: 'desc' }
+        },
+        // Add recent check-ins for social proof
+        checkIns: {
+          take: 5,
+          select: {
+            id: true,
+            createdAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                avatarUrl: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
         }
       }
     });
@@ -641,16 +661,34 @@ router.get('/deals/:id', async (req, res) => {
       category: item.menuItem.category
     }));
 
-    // Format social proof
+    // Enhanced social proof with both saves and check-ins
     const socialProof = {
       totalSaves: deal._count.savedByUsers,
+      totalCheckIns: deal._count.checkIns,
       recentSavers: deal.savedByUsers.map(save => ({
         id: save.user.id,
         name: save.user.name,
         avatarUrl: save.user.avatarUrl,
-        savedAt: save.savedAt
+        savedAt: save.savedAt,
+        type: 'saved'
+      })),
+      recentCheckIns: deal.checkIns.map(checkIn => ({
+        id: checkIn.user.id,
+        name: checkIn.user.name,
+        avatarUrl: checkIn.user.avatarUrl,
+        checkedInAt: checkIn.createdAt,
+        type: 'checked_in'
       }))
     };
+
+    // Combine and sort recent activity
+    const recentActivity = [...socialProof.recentSavers, ...socialProof.recentCheckIns]
+      .sort((a, b) => {
+        const dateA = new Date((a as any).savedAt || (a as any).checkedInAt).getTime();
+        const dateB = new Date((b as any).savedAt || (b as any).checkedInAt).getTime();
+        return dateB - dateA;
+      })
+      .slice(0, 10);
 
     // Format merchant details
     const merchantDetails = {
@@ -679,7 +717,25 @@ router.get('/deals/:id', async (req, res) => {
       }))
     };
 
-    // Comprehensive deal response
+    // Check if user has saved this deal (if userId provided)
+    let userInteraction = null;
+    if (userId) {
+      const userSave = await prisma.userDeal.findUnique({
+        where: {
+          userId_dealId: {
+            userId: parseInt(userId as string),
+            dealId: deal.id
+          }
+        }
+      });
+      
+      userInteraction = {
+        isSaved: !!userSave,
+        savedAt: userSave?.savedAt || null
+      };
+    }
+
+    // Comprehensive deal response for details page
     const detailedDeal = {
       // Basic deal info
       id: deal.id,
@@ -696,6 +752,7 @@ router.get('/deals/:id', async (req, res) => {
       // Visual content
       imageUrl: deal.imageUrls?.[0] || null,
       images: deal.imageUrls || [],
+      hasMultipleImages: (deal.imageUrls?.length || 0) > 1,
       
       // Offer details
       offerDisplay: discountValue,
@@ -721,7 +778,9 @@ router.get('/deals/:id', async (req, res) => {
           total: timeRemaining,
           hours: hoursRemaining,
           minutes: minutesRemaining,
-          formatted: `${hoursRemaining}h ${minutesRemaining}m`
+          formatted: `${hoursRemaining}h ${minutesRemaining}m`,
+          percentageRemaining: timeRemaining > 0 ? 
+            Math.round((timeRemaining / (deal.endTime.getTime() - deal.startTime.getTime())) * 100) : 0
         }
       },
       
@@ -736,20 +795,49 @@ router.get('/deals/:id', async (req, res) => {
       // Merchant information
       merchant: merchantDetails,
       
-      // Social proof
-      socialProof,
+      // Enhanced social proof and activity
+      socialProof: {
+        ...socialProof,
+        recentActivity,
+        totalEngagement: socialProof.totalSaves + socialProof.totalCheckIns
+      },
+      
+      // User interaction (if userId provided)
+      userInteraction,
+      
+      // Popularity metrics
+      popularity: {
+        totalSaves: deal._count.savedByUsers,
+        totalCheckIns: deal._count.checkIns,
+        totalEngagement: deal._count.savedByUsers + deal._count.checkIns,
+        isPopular: deal._count.savedByUsers > 10,
+        isTrending: deal._count.savedByUsers > 25,
+        engagementScore: Math.min(100, Math.round(((deal._count.savedByUsers + deal._count.checkIns) / 50) * 100))
+      },
       
       // Metadata
       createdAt: deal.createdAt.toISOString(),
       updatedAt: deal.updatedAt.toISOString(),
       
-      // Additional context
+      // Additional context for UI
       context: {
         isRecurring: deal.dealType.name === 'Recurring',
         isHappyHour: deal.dealType.name === 'Happy Hour',
-        hasMultipleImages: (deal.imageUrls?.length || 0) > 1,
         hasMultipleStores: merchantDetails.totalStores > 1,
-        isPopular: deal._count.savedByUsers > 10
+        canShare: true,
+        canSave: true,
+        canCheckIn: isActive,
+        requiresLocation: true
+      },
+      
+      // Action URLs for frontend
+      actions: {
+        shareUrl: `/api/deals/${deal.id}/share`,
+        saveUrl: `/api/users/save-deal`,
+        checkInUrl: `/api/users/check-in`,
+        callUrl: merchantDetails.phoneNumber ? `tel:${merchantDetails.phoneNumber}` : null,
+        directionsUrl: merchantDetails.latitude && merchantDetails.longitude ? 
+          `https://maps.google.com/?q=${merchantDetails.latitude},${merchantDetails.longitude}` : null
       }
     };
 
