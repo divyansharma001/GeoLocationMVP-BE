@@ -99,7 +99,8 @@ router.post('/save-deal', protect, async (req: AuthRequest, res: Response) => {
                 businessName: true,
                 address: true,
                 latitude: true,
-                longitude: true
+                longitude: true,
+                phoneNumber: true
               }
             },
             category: true,
@@ -346,7 +347,8 @@ router.get('/saved-deals', protect, async (req: AuthRequest, res: Response) => {
                 businessName: true,
                 address: true,
                 latitude: true,
-                longitude: true
+                longitude: true,
+                phoneNumber: true
               }
             },
             category: true,

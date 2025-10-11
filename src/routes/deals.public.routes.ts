@@ -62,6 +62,7 @@ function formatDealForFrontend(rawDeal: any, distance?: number) {
       latitude: rawDeal.merchant?.latitude || null,
       longitude: rawDeal.merchant?.longitude || null,
       logoUrl: rawDeal.merchant?.logoUrl || null,
+      phoneNumber: rawDeal.merchant?.phoneNumber || null,
     },
     ...(distance !== undefined && { distance: Math.round(distance * 100) / 100 }),
   };
@@ -660,6 +661,7 @@ router.get('/deals/:id', async (req, res) => {
       latitude: deal.merchant.latitude,
       longitude: deal.merchant.longitude,
       logoUrl: deal.merchant.logoUrl,
+      phoneNumber: deal.merchant.phoneNumber,
       totalDeals: deal.merchant._count.deals,
       totalStores: deal.merchant._count.stores,
       stores: deal.merchant.stores.map(store => ({
@@ -766,6 +768,75 @@ router.get('/deals/:id', async (req, res) => {
       success: false,
       error: 'Internal server error',
       message: 'Failed to fetch deal details'
+    });
+  }
+});
+
+// --- Endpoint: POST /api/deals/:id/share ---
+// Track deal sharing for analytics and social proof
+router.post('/deals/:id/share', async (req, res) => {
+  try {
+    const dealId = parseInt(req.params.id);
+    if (isNaN(dealId)) {
+      return res.status(400).json({ error: 'Invalid Deal ID.' });
+    }
+
+    const { shareMethod, platform } = req.body; // e.g., shareMethod: 'link', platform: 'whatsapp'
+
+    // Check if deal exists and is active
+    const deal = await prisma.deal.findUnique({
+      where: { id: dealId },
+      include: {
+        merchant: {
+          select: {
+            status: true,
+            businessName: true
+          }
+        }
+      }
+    });
+
+    if (!deal || deal.merchant.status !== 'APPROVED') {
+      return res.status(404).json({ error: 'Deal not available or merchant not approved.' });
+    }
+
+    // Check if deal is currently active
+    const now = new Date();
+    const isActive = deal.startTime <= now && deal.endTime >= now;
+    if (!isActive) {
+      return res.status(400).json({ error: 'Cannot share inactive deal.' });
+    }
+
+    // In a real implementation, you might want to:
+    // 1. Track share analytics in a separate table
+    // 2. Generate shareable links with tracking parameters
+    // 3. Store share metadata (user agent, timestamp, etc.)
+    
+    // For now, we'll just return success with deal information for sharing
+    const shareData = {
+      dealId: deal.id,
+      title: deal.title,
+      description: deal.description,
+      imageUrl: deal.imageUrls?.[0] || null,
+      merchantName: deal.merchant.businessName,
+      shareUrl: `${process.env.FRONTEND_URL || 'https://your-app.com'}/deals/${deal.id}`,
+      shareMethod: shareMethod || 'link',
+      platform: platform || 'general'
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Deal shared successfully',
+      shareData,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error(`Error sharing deal ${req.params.id}:`, error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error',
+      message: 'Failed to share deal'
     });
   }
 });

@@ -151,6 +151,7 @@ model Merchant {
   address       String
   description   String?
   logoUrl       String?
+  phoneNumber   String?  // Phone number for contact/call functionality
   status        MerchantStatus @default(PENDING) // New merchants are PENDING by default
   
   // Geolocation fields

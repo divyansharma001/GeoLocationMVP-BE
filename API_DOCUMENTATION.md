@@ -162,6 +162,7 @@ Register as a merchant (requires authentication).
   "address": "123 Main St, New York, NY",
   "description": "Best pizza in town",
   "logoUrl": "https://example.com/logo.jpg",
+  "phoneNumber": "+1-555-123-4567",
   "latitude": 40.7128,
   "longitude": -74.0060,
   "cityId": 1
@@ -826,6 +827,36 @@ Discover deals with optional filtering.
 
 ### GET /api/deals/categories
 Get all available deal categories.
+
+### POST /api/deals/:id/share
+Track deal sharing for analytics and social proof.
+
+**Request Body:**
+```json
+{
+  "shareMethod": "link",
+  "platform": "whatsapp"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Deal shared successfully",
+  "shareData": {
+    "dealId": 123,
+    "title": "50% Off Pizza",
+    "description": "Get half off any pizza",
+    "imageUrl": "https://example.com/pizza.jpg",
+    "merchantName": "Joe's Pizza",
+    "shareUrl": "https://your-app.com/deals/123",
+    "shareMethod": "link",
+    "platform": "whatsapp"
+  },
+  "timestamp": "2024-01-15T10:30:00.000Z"
+}
+```
 
 **Response:**
 ```json

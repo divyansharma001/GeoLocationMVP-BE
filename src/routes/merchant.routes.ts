@@ -12,7 +12,7 @@ const router = Router();
 // Allows a user to register as a merchant.
 router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
   try {
-  const { businessName, address, description, logoUrl, latitude, longitude, cityId } = req.body;
+  const { businessName, address, description, logoUrl, phoneNumber, latitude, longitude, cityId } = req.body;
     const userId = req.user?.id;
 
     if (!userId) {
@@ -74,6 +74,7 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
           address,
           description,
           logoUrl,
+          phoneNumber: phoneNumber || null,
           latitude: latitude ? parseFloat(latitude) : null,
           longitude: longitude ? parseFloat(longitude) : null,
           // legacy free-form city usage disabled for new merchants
@@ -131,6 +132,7 @@ router.get('/merchants/status', protect, async (req: AuthRequest, res) => {
         address: true,
         description: true,
         logoUrl: true,
+        phoneNumber: true,
         city: true,
         createdAt: true,
         updatedAt: true
