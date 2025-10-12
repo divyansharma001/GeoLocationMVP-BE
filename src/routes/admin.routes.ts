@@ -1597,4 +1597,786 @@ router.get('/performance/top-categories', protect, requireAdmin, async (req: Aut
   }
 });
 
+// --- Customer Management APIs ---
+
+// --- Endpoint: GET /api/admin/customers/overview ---
+// Get customer management KPIs for admin dashboard
+router.get('/customers/overview', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
+  
+  try {
+    const { period = '30d', cityId, state } = req.query as any;
+    
+    // Validate period parameter
+    const periodValidation = validatePeriod(period);
+    if (!periodValidation.isValid) {
+      return res.status(400).json({ error: periodValidation.error });
+    }
+
+    // Calculate date ranges
+    const dateRanges = calculateDateRanges(periodValidation.days);
+
+    // Build location filters
+    let locationFilter: any = {};
+    if (cityId) {
+      locationFilter.cityId = parseInt(cityId);
+    }
+    if (state) {
+      locationFilter.state = state;
+    }
+
+    // Get customer overview metrics
+    const [
+      totalCustomers,
+      paidMembers,
+      totalSpend,
+      avgSpend,
+      prevTotalCustomers,
+      prevPaidMembers,
+      prevTotalSpend,
+      prevAvgSpend
+    ] = await Promise.all([
+      // Current total customers
+      prisma.user.count({
+        where: {
+          role: 'USER',
+          ...(Object.keys(locationFilter).length > 0 && {
+            savedDeals: {
+              some: {
+                deal: {
+                  merchant: {
+                    stores: {
+                      some: locationFilter
+                    }
+                  }
+                }
+              }
+            }
+          })
+        }
+      }),
+      
+      // Current paid members (users with premium subscriptions or high spending)
+      prisma.user.count({
+        where: {
+          role: 'USER',
+          OR: [
+            { monthlyPoints: { gte: 1000 } }, // High engagement users
+            { points: { gte: 500 } }, // Users with significant points
+            {
+              savedDeals: {
+                some: {
+                  deal: {
+                    merchant: {
+                      stores: {
+                        some: locationFilter
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }),
+      
+      // Current total spend (from kickback events)
+      prisma.kickbackEvent.aggregate({
+        where: {
+          createdAt: { gte: dateRanges.current.from },
+          ...(Object.keys(locationFilter).length > 0 && {
+            merchant: {
+              stores: {
+                some: locationFilter
+              }
+            }
+          })
+        },
+        _sum: { sourceAmountSpent: true }
+      }),
+      
+      // Calculate transaction count for average spend
+      prisma.kickbackEvent.count({
+        where: {
+          createdAt: { gte: dateRanges.current.from },
+          ...(Object.keys(locationFilter).length > 0 && {
+            merchant: {
+              stores: {
+                some: locationFilter
+              }
+            }
+          })
+        }
+      }),
+      
+      // Previous period metrics
+      prisma.user.count({
+        where: {
+          role: 'USER',
+          createdAt: { lte: dateRanges.previous.to },
+          ...(Object.keys(locationFilter).length > 0 && {
+            savedDeals: {
+              some: {
+                deal: {
+                  merchant: {
+                    stores: {
+                      some: locationFilter
+                    }
+                  }
+                }
+              }
+            }
+          })
+        }
+      }),
+      
+      prisma.user.count({
+        where: {
+          role: 'USER',
+          createdAt: { lte: dateRanges.previous.to },
+          OR: [
+            { monthlyPoints: { gte: 1000 } },
+            { points: { gte: 500 } }
+          ]
+        }
+      }),
+      
+      prisma.kickbackEvent.aggregate({
+        where: {
+          createdAt: { 
+            gte: dateRanges.previous.from, 
+            lte: dateRanges.previous.to 
+          },
+          ...(Object.keys(locationFilter).length > 0 && {
+            merchant: {
+              stores: {
+                some: locationFilter
+              }
+            }
+          })
+        },
+        _sum: { sourceAmountSpent: true }
+      }),
+      
+      prisma.kickbackEvent.count({
+        where: {
+          createdAt: { 
+            gte: dateRanges.previous.from, 
+            lte: dateRanges.previous.to 
+          },
+          ...(Object.keys(locationFilter).length > 0 && {
+            merchant: {
+              stores: {
+                some: locationFilter
+              }
+            }
+          })
+        }
+      })
+    ]);
+
+    // Calculate metrics
+    const totalSpendAmount = Number(totalSpend._sum.sourceAmountSpent || 0);
+    const totalTransactions = avgSpend;
+    const averageSpend = totalTransactions > 0 ? totalSpendAmount / totalTransactions : 0;
+
+    const prevTotalSpendAmount = Number(prevTotalSpend._sum.sourceAmountSpent || 0);
+    const prevTotalTransactions = prevAvgSpend;
+    const prevAverageSpend = prevTotalTransactions > 0 ? prevTotalSpendAmount / prevTotalTransactions : 0;
+
+    // Calculate percentage changes
+    const totalCustomersChange = calculatePercentageChange(totalCustomers, prevTotalCustomers);
+    const paidMembersChange = calculatePercentageChange(paidMembers, prevPaidMembers);
+    const totalSpendChange = calculatePercentageChange(totalSpendAmount, prevTotalSpendAmount);
+    const avgSpendChange = calculatePercentageChange(averageSpend, prevAverageSpend);
+
+    logPerformanceMetrics('Customer Overview', startTime, totalCustomers);
+
+    res.status(200).json({
+      success: true,
+      period,
+      dateRange: {
+        from: dateRanges.current.from.toISOString(),
+        to: dateRanges.current.to.toISOString()
+      },
+      metrics: {
+        totalCustomers: {
+          value: totalCustomers,
+          change: Number(totalCustomersChange.toFixed(1)),
+          trend: totalCustomersChange >= 0 ? 'up' : 'down'
+        },
+        paidMembers: {
+          value: paidMembers,
+          change: Number(paidMembersChange.toFixed(1)),
+          trend: paidMembersChange >= 0 ? 'up' : 'down'
+        },
+        totalSpend: {
+          value: Number(totalSpendAmount.toFixed(2)),
+          change: Number(totalSpendChange.toFixed(1)),
+          trend: totalSpendChange >= 0 ? 'up' : 'down'
+        },
+        averageSpend: {
+          value: Number(averageSpend.toFixed(2)),
+          change: Number(avgSpendChange.toFixed(1)),
+          trend: avgSpendChange >= 0 ? 'up' : 'down'
+        }
+      },
+      filters: {
+        cityId: cityId ? parseInt(cityId) : null,
+        state: state || null
+      }
+    });
+
+  } catch (error) {
+    console.error('Get customer overview error:', error);
+    logPerformanceMetrics('Customer Overview (Error)', startTime, 0);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to fetch customer overview'
+    });
+  }
+});
+
+// --- Endpoint: GET /api/admin/customers ---
+// Get customer list with search and filtering
+router.get('/customers', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
+  
+  try {
+    const { 
+      page = 1, 
+      limit = 50, 
+      search, 
+      cityId, 
+      state, 
+      memberType = 'all',
+      sortBy = 'lastActive',
+      sortOrder = 'desc'
+    } = req.query as any;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Build search filter
+    let searchFilter: any = {
+      role: 'USER'
+    };
+
+    if (search && search.trim().length > 0) {
+      const searchTerm = search.trim();
+      searchFilter.OR = [
+        { name: { contains: searchTerm, mode: 'insensitive' } },
+        { email: { contains: searchTerm, mode: 'insensitive' } }
+      ];
+    }
+
+    // Build member type filter
+    if (memberType === 'paid') {
+      searchFilter.OR = [
+        { monthlyPoints: { gte: 1000 } },
+        { points: { gte: 500 } }
+      ];
+    } else if (memberType === 'free') {
+      searchFilter.AND = [
+        { monthlyPoints: { lt: 1000 } },
+        { points: { lt: 500 } }
+      ];
+    }
+
+    // Get customers with their activity data
+    const [customers, totalCount] = await Promise.all([
+      prisma.user.findMany({
+        where: searchFilter,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          points: true,
+          monthlyPoints: true,
+          createdAt: true,
+          savedDeals: {
+            select: {
+              savedAt: true,
+              deal: {
+                select: {
+                  merchant: {
+                    select: {
+                      stores: {
+                        select: {
+                          city: {
+                            select: {
+                              name: true,
+                              state: true
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            orderBy: { savedAt: 'desc' },
+            take: 1
+          },
+          checkIns: {
+            select: {
+              createdAt: true
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1
+          }
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: parseInt(limit)
+      }),
+      
+      prisma.user.count({ where: searchFilter })
+    ]);
+
+    // Calculate customer metrics and format response
+    const formattedCustomers = await Promise.all(
+      customers.map(async (customer) => {
+        // Get customer's total spend
+        const totalSpend = await prisma.kickbackEvent.aggregate({
+          where: { userId: customer.id },
+          _sum: { sourceAmountSpent: true }
+        });
+
+        // Determine member type
+        const isPaidMember = customer.monthlyPoints >= 1000 || customer.points >= 500;
+        const memberType = isPaidMember ? 'paid' : 'free';
+
+        // Get primary location from saved deals
+        const primaryLocation = customer.savedDeals[0]?.deal?.merchant?.stores?.[0]?.city;
+
+        // Get last active date
+        const lastSavedDeal = customer.savedDeals[0]?.savedAt;
+        const lastCheckIn = customer.checkIns[0]?.createdAt;
+        const lastActive = lastSavedDeal && lastCheckIn 
+          ? (lastSavedDeal > lastCheckIn ? lastSavedDeal : lastCheckIn)
+          : (lastSavedDeal || lastCheckIn || customer.createdAt);
+
+        return {
+          id: customer.id,
+          name: customer.name,
+          email: customer.email,
+          location: primaryLocation ? `${primaryLocation.name}, ${primaryLocation.state}` : 'Unknown',
+          totalSpend: Number((totalSpend._sum.sourceAmountSpent || 0).toFixed(2)),
+          points: customer.points,
+          memberType,
+          lastActive: lastActive.toISOString().split('T')[0],
+          createdAt: customer.createdAt.toISOString().split('T')[0]
+        };
+      })
+    );
+
+    logPerformanceMetrics('Customer List', startTime, formattedCustomers.length);
+
+    res.status(200).json({
+      success: true,
+      customers: formattedCustomers,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalCount,
+        totalPages: Math.ceil(totalCount / parseInt(limit)),
+        hasNext: skip + parseInt(limit) < totalCount,
+        hasPrev: parseInt(page) > 1
+      },
+      filters: {
+        search: search || null,
+        cityId: cityId ? parseInt(cityId) : null,
+        state: state || null,
+        memberType,
+        sortBy,
+        sortOrder
+      }
+    });
+
+  } catch (error) {
+    console.error('Get customers error:', error);
+    logPerformanceMetrics('Customer List (Error)', startTime, 0);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to fetch customers'
+    });
+  }
+});
+
+// --- Endpoint: GET /api/admin/customers/:customerId ---
+// Get detailed information about a specific customer
+router.get('/customers/:customerId', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
+  
+  try {
+    const customerId = parseInt(req.params.customerId);
+    
+    if (isNaN(customerId)) {
+      return res.status(400).json({ error: 'Invalid customer ID' });
+    }
+
+    // Get customer details
+    const customer = await prisma.user.findUnique({
+      where: { id: customerId, role: 'USER' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        points: true,
+        monthlyPoints: true,
+        createdAt: true,
+        updatedAt: true,
+        savedDeals: {
+          include: {
+            deal: {
+              select: {
+                id: true,
+                title: true,
+                merchant: {
+                  select: {
+                    businessName: true,
+                    stores: {
+                      select: {
+                        city: {
+                          select: {
+                            name: true,
+                            state: true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          orderBy: { savedAt: 'desc' }
+        },
+        checkIns: {
+          include: {
+            deal: {
+              select: {
+                id: true,
+                title: true,
+                merchant: {
+                  select: {
+                    businessName: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        }
+      }
+    });
+
+    if (!customer) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+
+    // Get customer's spending data
+    const [
+      totalSpend,
+      monthlySpend,
+      dealSaves,
+      checkIns,
+      kickbackEvents
+    ] = await Promise.all([
+      prisma.kickbackEvent.aggregate({
+        where: { userId: customerId },
+        _sum: { sourceAmountSpent: true },
+        _count: { id: true }
+      }),
+      
+      prisma.kickbackEvent.aggregate({
+        where: { 
+          userId: customerId,
+          createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
+        },
+        _sum: { sourceAmountSpent: true }
+      }),
+      
+      prisma.userDeal.count({ where: { userId: customerId } }),
+      prisma.checkIn.count({ where: { userId: customerId } }),
+      prisma.kickbackEvent.findMany({
+        where: { userId: customerId },
+        include: {
+          deal: {
+            select: {
+              title: true,
+              merchant: {
+                select: {
+                  businessName: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10
+      })
+    ]);
+
+    // Calculate engagement metrics
+    const totalSpendAmount = Number(totalSpend._sum.sourceAmountSpent || 0);
+    const monthlySpendAmount = Number(monthlySpend._sum.sourceAmountSpent || 0);
+    const isPaidMember = customer.monthlyPoints >= 1000 || customer.points >= 500;
+    
+    // Get primary location
+    const primaryLocation = customer.savedDeals[0]?.deal?.merchant?.stores?.[0]?.city;
+
+    // Get last active date
+    const lastSavedDeal = customer.savedDeals[0]?.savedAt;
+    const lastCheckIn = customer.checkIns[0]?.createdAt;
+    const lastActive = lastSavedDeal && lastCheckIn 
+      ? (lastSavedDeal > lastCheckIn ? lastSavedDeal : lastCheckIn)
+      : (lastSavedDeal || lastCheckIn || customer.createdAt);
+
+    logPerformanceMetrics('Customer Details', startTime, 1);
+
+    res.status(200).json({
+      success: true,
+      customer: {
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        location: primaryLocation ? `${primaryLocation.name}, ${primaryLocation.state}` : 'Unknown',
+        memberType: isPaidMember ? 'paid' : 'free',
+        points: customer.points,
+        monthlyPoints: customer.monthlyPoints,
+        totalSpend: Number(totalSpendAmount.toFixed(2)),
+        monthlySpend: Number(monthlySpendAmount.toFixed(2)),
+        totalTransactions: totalSpend._count.id,
+        totalDealSaves: dealSaves,
+        totalCheckIns: checkIns,
+        lastActive: lastActive.toISOString(),
+        createdAt: customer.createdAt.toISOString(),
+        updatedAt: customer.updatedAt.toISOString()
+      },
+      activity: {
+        recentSaves: customer.savedDeals.slice(0, 5).map(save => ({
+          id: save.deal.id,
+          title: save.deal.title,
+          merchant: save.deal.merchant.businessName,
+          savedAt: save.savedAt.toISOString()
+        })),
+        recentCheckIns: customer.checkIns.slice(0, 5).map(checkIn => ({
+          id: checkIn.deal.id,
+          title: checkIn.deal.title,
+          merchant: checkIn.deal.merchant.businessName,
+          checkedInAt: checkIn.createdAt.toISOString()
+        })),
+        recentTransactions: kickbackEvents.map(event => ({
+          id: event.id,
+          deal: event.deal.title,
+          merchant: event.deal.merchant.businessName,
+          amount: Number(event.sourceAmountSpent.toFixed(2)),
+          transactionDate: event.createdAt.toISOString()
+        }))
+      }
+    });
+
+  } catch (error) {
+    console.error('Get customer details error:', error);
+    logPerformanceMetrics('Customer Details (Error)', startTime, 0);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to fetch customer details'
+    });
+  }
+});
+
+// --- Endpoint: GET /api/admin/customers/analytics ---
+// Get customer analytics and insights
+router.get('/customers/analytics', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
+  
+  try {
+    const { period = '30d' } = req.query as any;
+    
+    // Validate period parameter
+    const periodValidation = validatePeriod(period);
+    if (!periodValidation.isValid) {
+      return res.status(400).json({ error: periodValidation.error });
+    }
+
+    // Calculate date ranges
+    const dateRanges = calculateDateRanges(periodValidation.days);
+
+    // Get customer analytics
+    const [
+      totalCustomers,
+      newCustomers,
+      activeCustomers,
+      topSpendingCustomers,
+      customerEngagement,
+      locationDistribution
+    ] = await Promise.all([
+      // Total customers
+      prisma.user.count({ where: { role: 'USER' } }),
+      
+      // New customers in period
+      prisma.user.count({
+        where: {
+          role: 'USER',
+          createdAt: { gte: dateRanges.current.from }
+        }
+      }),
+      
+      // Active customers (with check-ins or saves in period)
+      prisma.user.count({
+        where: {
+          role: 'USER',
+          OR: [
+            {
+              checkIns: {
+                some: {
+                  createdAt: { gte: dateRanges.current.from }
+                }
+              }
+            },
+            {
+              savedDeals: {
+                some: {
+                  savedAt: { gte: dateRanges.current.from }
+                }
+              }
+            }
+          ]
+        }
+      }),
+      
+      // Top spending customers
+      prisma.kickbackEvent.groupBy({
+        by: ['userId'],
+        where: {
+          createdAt: { gte: dateRanges.current.from }
+        },
+        _sum: { sourceAmountSpent: true },
+        orderBy: { _sum: { sourceAmountSpent: 'desc' } },
+        take: 10
+      }),
+      
+      // Customer engagement metrics
+      prisma.user.aggregate({
+        where: { role: 'USER' },
+        _avg: { 
+          points: true,
+          monthlyPoints: true 
+        },
+        _max: { 
+          points: true,
+          monthlyPoints: true 
+        }
+      }),
+      
+      // Location distribution
+      prisma.user.findMany({
+        where: { role: 'USER' },
+        select: {
+          savedDeals: {
+            select: {
+              deal: {
+                select: {
+                  merchant: {
+                    select: {
+                      stores: {
+                        select: {
+                          city: {
+                            select: {
+                              name: true,
+                              state: true
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      })
+    ]);
+
+    // Get top customer details
+    const topCustomerIds = topSpendingCustomers.map(c => c.userId);
+    const topCustomerDetails = await prisma.user.findMany({
+      where: { id: { in: topCustomerIds } },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        points: true
+      }
+    });
+
+    // Format top customers
+    const formattedTopCustomers = topSpendingCustomers.map(spender => {
+      const customer = topCustomerDetails.find(c => c.id === spender.userId);
+      return {
+        id: spender.userId,
+        name: customer?.name || 'Unknown',
+        email: customer?.email || 'Unknown',
+        points: customer?.points || 0,
+        totalSpend: Number((spender._sum.sourceAmountSpent || 0).toFixed(2))
+      };
+    });
+
+    // Calculate location distribution
+    const locationMap = new Map();
+    locationDistribution.forEach(user => {
+      user.savedDeals.forEach(save => {
+        const city = save.deal?.merchant?.stores?.[0]?.city;
+        if (city) {
+          const key = `${city.name}, ${city.state}`;
+          locationMap.set(key, (locationMap.get(key) || 0) + 1);
+        }
+      });
+    });
+
+    const locationStats = Array.from(locationMap.entries())
+      .map(([location, count]) => ({ location, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    logPerformanceMetrics('Customer Analytics', startTime, totalCustomers);
+
+    res.status(200).json({
+      success: true,
+      period,
+      dateRange: {
+        from: dateRanges.current.from.toISOString(),
+        to: dateRanges.current.to.toISOString()
+      },
+      overview: {
+        totalCustomers,
+        newCustomers,
+        activeCustomers,
+        inactiveCustomers: totalCustomers - activeCustomers,
+        engagementRate: totalCustomers > 0 ? ((activeCustomers / totalCustomers) * 100).toFixed(1) : '0'
+      },
+      topCustomers: formattedTopCustomers,
+      engagement: {
+        averagePoints: Number((customerEngagement._avg.points || 0).toFixed(1)),
+        averageMonthlyPoints: Number((customerEngagement._avg.monthlyPoints || 0).toFixed(1)),
+        maxPoints: customerEngagement._max.points || 0,
+        maxMonthlyPoints: customerEngagement._max.monthlyPoints || 0
+      },
+      locationDistribution: locationStats
+    });
+
+  } catch (error) {
+    console.error('Get customer analytics error:', error);
+    logPerformanceMetrics('Customer Analytics (Error)', startTime, 0);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to fetch customer analytics'
+    });
+  }
+});
+
 export default router;

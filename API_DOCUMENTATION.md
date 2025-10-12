@@ -19,10 +19,12 @@ The GeolocationMVPBackend is a Node.js/TypeScript backend for a geolocation-base
 7. [User Interactions](#user-interactions)
 8. [Leaderboard](#leaderboard)
 9. [Admin Functions](#admin-functions)
-10. [Media Upload](#media-upload)
-11. [Health & Monitoring](#health--monitoring)
-12. [Data Models](#data-models)
-13. [Error Handling](#error-handling)
+10. [Admin Performance Analytics](#admin-performance-analytics)
+11. [Customer Management](#customer-management)
+12. [Media Upload](#media-upload)
+13. [Health & Monitoring](#health--monitoring)
+14. [Data Models](#data-models)
+15. [Error Handling](#error-handling)
 
 ## Authentication
 
@@ -1311,6 +1313,236 @@ Get top categories by deals count.
 #### Point Event Types
 - `GET /api/admin/master-data/point-event-types` - List point event types
 - `POST /api/admin/master-data/point-event-types` - Create point event type
+
+## Customer Management
+
+### GET /api/admin/customers/overview
+Get customer management KPIs for admin dashboard.
+
+**Query Parameters:**
+- `period` (optional): Time period - `1d`, `7d`, `30d`, `90d` (default: `30d`)
+- `cityId` (optional): Filter by city ID
+- `state` (optional): Filter by state
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "30d",
+  "dateRange": {
+    "from": "2024-01-01T00:00:00.000Z",
+    "to": "2024-01-31T00:00:00.000Z"
+  },
+  "metrics": {
+    "totalCustomers": {
+      "value": 1247,
+      "change": 12.5,
+      "trend": "up"
+    },
+    "paidMembers": {
+      "value": 324,
+      "change": 8.2,
+      "trend": "up"
+    },
+    "totalSpend": {
+      "value": 45230.50,
+      "change": 15.3,
+      "trend": "up"
+    },
+    "averageSpend": {
+      "value": 36.28,
+      "change": 2.1,
+      "trend": "up"
+    }
+  },
+  "filters": {
+    "cityId": null,
+    "state": null
+  }
+}
+```
+
+**Description:** Returns key performance indicators for customer management including total customers, paid members, total spend, and average spend with period-over-period comparison.
+
+### GET /api/admin/customers
+Get customer list with search and filtering capabilities.
+
+**Query Parameters:**
+- `page` (optional): Page number (default: `1`)
+- `limit` (optional): Items per page (default: `50`)
+- `search` (optional): Search by name or email
+- `cityId` (optional): Filter by city ID
+- `state` (optional): Filter by state
+- `memberType` (optional): Filter by member type - `all`, `paid`, `free` (default: `all`)
+- `sortBy` (optional): Sort field - `lastActive`, `totalSpend`, `points`, `createdAt` (default: `lastActive`)
+- `sortOrder` (optional): Sort order - `asc`, `desc` (default: `desc`)
+
+**Response:**
+```json
+{
+  "success": true,
+  "customers": [
+    {
+      "id": 1,
+      "name": "John Doe",
+      "email": "john@gmail.com",
+      "location": "New York, NY",
+      "totalSpend": 150.75,
+      "points": 1250,
+      "memberType": "paid",
+      "lastActive": "2024-01-20",
+      "createdAt": "2023-12-15"
+    },
+    {
+      "id": 2,
+      "name": "Jane Smith",
+      "email": "jane@gmail.com",
+      "location": "Atlanta, GA",
+      "totalSpend": 80.20,
+      "points": 650,
+      "memberType": "free",
+      "lastActive": "2024-01-19",
+      "createdAt": "2024-01-10"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 50,
+    "totalCount": 1247,
+    "totalPages": 25,
+    "hasNext": true,
+    "hasPrev": false
+  },
+  "filters": {
+    "search": null,
+    "cityId": null,
+    "state": null,
+    "memberType": "all",
+    "sortBy": "lastActive",
+    "sortOrder": "desc"
+  }
+}
+```
+
+**Description:** Returns a paginated list of customers with comprehensive filtering, sorting, and search capabilities. Supports searching by name or email and filtering by location and member type.
+
+### GET /api/admin/customers/:customerId
+Get detailed information about a specific customer.
+
+**Path Parameters:**
+- `customerId`: Customer ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "customer": {
+    "id": 1,
+    "name": "John Doe",
+    "email": "john@gmail.com",
+    "location": "New York, NY",
+    "memberType": "paid",
+    "points": 1250,
+    "monthlyPoints": 850,
+    "totalSpend": 150.75,
+    "monthlySpend": 45.20,
+    "totalTransactions": 8,
+    "totalDealSaves": 12,
+    "totalCheckIns": 15,
+    "lastActive": "2024-01-20T10:30:00.000Z",
+    "createdAt": "2023-12-15T08:00:00.000Z",
+    "updatedAt": "2024-01-20T10:30:00.000Z"
+  },
+  "activity": {
+    "recentSaves": [
+      {
+        "id": 45,
+        "title": "50% Off Pizza",
+        "merchant": "Tony's Pizzeria",
+        "savedAt": "2024-01-20T10:30:00.000Z"
+      }
+    ],
+    "recentCheckIns": [
+      {
+        "id": 23,
+        "title": "Free Coffee with Purchase",
+        "merchant": "Coffee Corner",
+        "checkedInAt": "2024-01-19T15:20:00.000Z"
+      }
+    ],
+    "recentTransactions": [
+      {
+        "id": 12,
+        "deal": "50% Off Pizza",
+        "merchant": "Tony's Pizzeria",
+        "amount": 25.50,
+        "transactionDate": "2024-01-18T19:45:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+**Description:** Returns comprehensive details about a specific customer including profile information, spending metrics, engagement data, and recent activity history.
+
+### GET /api/admin/customers/analytics
+Get customer analytics and insights for admin dashboard.
+
+**Query Parameters:**
+- `period` (optional): Time period - `1d`, `7d`, `30d`, `90d` (default: `30d`)
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "30d",
+  "dateRange": {
+    "from": "2024-01-01T00:00:00.000Z",
+    "to": "2024-01-31T00:00:00.000Z"
+  },
+  "overview": {
+    "totalCustomers": 1247,
+    "newCustomers": 89,
+    "activeCustomers": 456,
+    "inactiveCustomers": 791,
+    "engagementRate": "36.6"
+  },
+  "topCustomers": [
+    {
+      "id": 1,
+      "name": "John Doe",
+      "email": "john@gmail.com",
+      "points": 1250,
+      "totalSpend": 450.75
+    },
+    {
+      "id": 23,
+      "name": "Sarah Wilson",
+      "email": "sarah@outlook.com",
+      "points": 980,
+      "totalSpend": 380.20
+    }
+  ],
+  "engagement": {
+    "averagePoints": 245.6,
+    "averageMonthlyPoints": 89.3,
+    "maxPoints": 2500,
+    "maxMonthlyPoints": 1200
+  },
+  "locationDistribution": [
+    {
+      "location": "New York, NY",
+      "count": 234
+    },
+    {
+      "location": "Los Angeles, CA",
+      "count": 189
+    }
+  ]
+}
+```
+
+**Description:** Returns comprehensive customer analytics including overview metrics, top spending customers, engagement statistics, and geographic distribution of customers.
 
 ## Media Upload
 
