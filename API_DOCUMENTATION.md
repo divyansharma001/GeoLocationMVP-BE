@@ -1046,6 +1046,255 @@ Reject a merchant application.
 }
 ```
 
+### Admin Performance Analytics
+
+#### Performance Overview
+- `GET /api/admin/performance/overview` - Platform-wide performance metrics
+- `GET /api/admin/performance/cities` - City performance metrics  
+- `GET /api/admin/performance/weekly-chart` - Weekly activity charts
+- `GET /api/admin/performance/sales-by-store` - Sales by store ranking
+- `GET /api/admin/performance/top-merchants` - Top performing merchants
+- `GET /api/admin/performance/top-cities` - Top cities by revenue
+- `GET /api/admin/performance/top-categories` - Top categories by deals
+
+#### GET /api/admin/performance/overview
+Get platform-wide performance metrics for admin dashboard.
+
+**Query Parameters:**
+- `period` (string): Time period - '1d', '7d', '30d', '90d' (default: '7d')
+- `cityId` (number): Filter by specific city (optional)
+- `merchantId` (number): Filter by specific merchant (optional)
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "7d",
+  "dateRange": {
+    "from": "2024-01-20T00:00:00.000Z",
+    "to": "2024-01-27T00:00:00.000Z"
+  },
+  "metrics": {
+    "grossSales": {
+      "value": 12500.50,
+      "change": 12.5,
+      "trend": "up"
+    },
+    "orderVolume": {
+      "value": 245,
+      "change": 8.2,
+      "trend": "up"
+    },
+    "averageOrderValue": {
+      "value": 51.02,
+      "change": 4.1,
+      "trend": "up"
+    },
+    "totalApprovedMerchants": {
+      "value": 15,
+      "change": 1.0,
+      "trend": "up"
+    }
+  },
+  "filters": {
+    "cityId": null,
+    "merchantId": null
+  }
+}
+```
+
+#### GET /api/admin/performance/cities
+Get city performance metrics with check-in data.
+
+**Query Parameters:**
+- `period` (string): Time period - '1d', '7d', '30d' (default: '7d')
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "7d",
+  "cities": [
+    {
+      "id": 1,
+      "name": "Atlanta",
+      "state": "GA",
+      "value": 45,
+      "change": 12.5,
+      "trend": "up"
+    },
+    {
+      "id": 2,
+      "name": "Houston",
+      "state": "TX", 
+      "value": 32,
+      "change": 5.2,
+      "trend": "up"
+    }
+  ]
+}
+```
+
+#### GET /api/admin/performance/weekly-chart
+Get weekly activity chart data for specific city or merchant.
+
+**Query Parameters:**
+- `cityId` (number): Filter by city (required if merchantId not provided)
+- `merchantId` (number): Filter by merchant (required if cityId not provided)
+- `metric` (string): Metric type - 'checkins', 'saves', 'sales' (default: 'checkins')
+
+**Response:**
+```json
+{
+  "success": true,
+  "cityId": 1,
+  "merchantId": null,
+  "metric": "checkins",
+  "chartData": {
+    "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    "data": [12, 15, 8, 22, 18, 25, 14]
+  }
+}
+```
+
+#### GET /api/admin/performance/sales-by-store
+Get sales by store ranking with performance metrics.
+
+**Query Parameters:**
+- `cityId` (number): Filter by specific city (optional)
+- `limit` (number): Number of stores to return (default: 10)
+- `period` (string): Time period - '1d', '7d', '30d' (default: '7d')
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "7d",
+  "stores": [
+    {
+      "id": 1,
+      "name": "Garden Grove Café & Bistro",
+      "city": "Atlanta, GA",
+      "sales": 45,
+      "change": 15.2,
+      "trend": "up"
+    },
+    {
+      "id": 2,
+      "name": "Olive & Thyme Ristorante",
+      "city": "Atlanta, GA",
+      "sales": 32,
+      "change": 8.5,
+      "trend": "up"
+    }
+  ]
+}
+```
+
+#### GET /api/admin/performance/top-merchants
+Get top performing merchants by revenue.
+
+**Query Parameters:**
+- `limit` (number): Number of merchants to return (default: 10)
+- `period` (string): Time period - '1d', '7d', '30d' (default: '7d')
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "7d",
+  "merchants": [
+    {
+      "id": 1,
+      "name": "The Corner Bistro",
+      "description": "Fine dining restaurant",
+      "logoUrl": "https://example.com/logo.jpg",
+      "revenue": 2500.75,
+      "change": 18.5,
+      "trend": "up"
+    },
+    {
+      "id": 2,
+      "name": "Zahav",
+      "description": "Mediterranean cuisine",
+      "logoUrl": null,
+      "revenue": 1850.25,
+      "change": 12.2,
+      "trend": "up"
+    }
+  ]
+}
+```
+
+#### GET /api/admin/performance/top-cities
+Get top cities by revenue.
+
+**Query Parameters:**
+- `limit` (number): Number of cities to return (default: 10)
+- `period` (string): Time period - '1d', '7d', '30d' (default: '7d')
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "7d",
+  "cities": [
+    {
+      "id": 1,
+      "name": "New York",
+      "state": "NY",
+      "revenue": 12500.50,
+      "change": 22.1,
+      "trend": "up"
+    },
+    {
+      "id": 2,
+      "name": "Los Angeles",
+      "state": "CA",
+      "revenue": 8750.25,
+      "change": 15.8,
+      "trend": "up"
+    }
+  ]
+}
+```
+
+#### GET /api/admin/performance/top-categories
+Get top categories by deals count.
+
+**Query Parameters:**
+- `limit` (number): Number of categories to return (default: 10)
+- `period` (string): Time period - '1d', '7d', '30d' (default: '7d')
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "7d",
+  "categories": [
+    {
+      "id": 1,
+      "name": "Food & Beverage",
+      "description": "Restaurants and food-related deals",
+      "icon": "🍽️",
+      "color": "#FF6B6B",
+      "deals": 45,
+      "change": 25.5,
+      "trend": "up"
+    },
+    {
+      "id": 2,
+      "name": "Entertainment",
+      "description": "Movies, shows, and entertainment deals",
+      "icon": "🎬",
+      "color": "#4ECDC4",
+      "deals": 28,
+      "change": 12.3,
+      "trend": "up"
+    }
+  ]
+}
+
 ### Master Data Management
 
 #### Categories
