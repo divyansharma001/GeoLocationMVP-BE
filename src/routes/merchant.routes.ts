@@ -899,7 +899,7 @@ router.get('/merchants/dashboard/city-performance', protect, isApprovedMerchant,
     );
 
     // Group by city (in case there are multiple stores in same city)
-    const cityGroups = cityPerformance.reduce((acc, item) => {
+    const cityGroups = (cityPerformance || []).reduce((acc, item) => {
       const key = `${item.cityName}, ${item.state}`;
       if (!acc[key]) {
         acc[key] = {
@@ -930,13 +930,13 @@ router.get('/merchants/dashboard/city-performance', protect, isApprovedMerchant,
     }, {} as any);
 
     // Calculate average order value for each city
-    Object.values(cityGroups).forEach((city: any) => {
+    Object.values(cityGroups || {}).forEach((city: any) => {
       city.totalPerformance.averageOrderValue = city.totalPerformance.orderVolume > 0 
         ? Number((city.totalPerformance.grossSales / city.totalPerformance.orderVolume).toFixed(2))
         : 0;
     });
 
-    const cityPerformanceArray = Object.values(cityGroups);
+    const cityPerformanceArray = Object.values(cityGroups || {});
 
     res.status(200).json({
       period,
@@ -957,7 +957,11 @@ router.get('/merchants/dashboard/city-performance', protect, isApprovedMerchant,
 
   } catch (error) {
     console.error('City performance error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
   }
 });
 
