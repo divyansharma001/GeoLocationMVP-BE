@@ -1027,13 +1027,75 @@ Create a new city.
 ### Merchant Management
 
 #### GET /api/admin/merchants
-Get all merchants with pagination and filtering.
+Get all merchants with pagination and filtering. Returns dynamic deal counts including total, active, upcoming, and expired deals.
 
 **Query Parameters:**
-- `page` (number): Page number
-- `limit` (number): Items per page
-- `status` (string): Filter by merchant status
+- `page` (number): Page number (default: 1)
+- `limit` (number): Items per page (default: 50)
+- `status` (string): Filter by merchant status (PENDING, APPROVED, REJECTED, SUSPENDED)
 - `search` (string): Search by business name, description, or address
+
+**Response:**
+```json
+{
+  "message": "Merchants retrieved successfully",
+  "merchants": [
+    {
+      "id": 1,
+      "businessName": "Joe's Coffee Shop",
+      "description": "Local coffee shop with great atmosphere",
+      "address": "123 Main St, Atlanta, GA",
+      "logoUrl": "https://example.com/logo.jpg",
+      "latitude": 33.7490,
+      "longitude": -84.3880,
+      "status": "APPROVED",
+      "phoneNumber": "+1-555-0100",
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-20T14:30:00.000Z",
+      "owner": {
+        "id": 5,
+        "email": "joe@coffee.com",
+        "name": "Joe Smith"
+      },
+      "stores": [
+        {
+          "id": 1,
+          "merchantId": 1,
+          "cityId": 1,
+          "address": "123 Main St",
+          "latitude": 33.7490,
+          "longitude": -84.3880,
+          "active": true,
+          "city": {
+            "id": 1,
+            "name": "Atlanta",
+            "state": "GA"
+          }
+        }
+      ],
+      "totalDeals": 5,
+      "activeDeals": 3,
+      "upcomingDeals": 1,
+      "expiredDeals": 1,
+      "totalStores": 1
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 50,
+    "totalCount": 25,
+    "totalPages": 1,
+    "hasNext": false,
+    "hasPrev": false
+  }
+}
+```
+
+**Deal Count Breakdown:**
+- `totalDeals`: All deals associated with the merchant
+- `activeDeals`: Deals currently valid (current time between startTime and endTime)
+- `upcomingDeals`: Deals that haven't started yet (startTime in the future)
+- `expiredDeals`: Deals that have ended (endTime in the past)
 
 #### POST /api/admin/merchants/:merchantId/approve
 Approve a merchant application.

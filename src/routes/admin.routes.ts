@@ -528,10 +528,13 @@ router.get('/merchants', protect, requireAdmin, async (req: AuthRequest, res: Re
               }
             }
           },
-          _count: {
+          deals: {
             select: {
-              deals: true,
-              stores: true
+              id: true,
+              title: true,
+              startTime: true,
+              endTime: true,
+              createdAt: true
             }
           }
         },
@@ -545,9 +548,28 @@ router.get('/merchants', protect, requireAdmin, async (req: AuthRequest, res: Re
       prisma.merchant.count({ where })
     ]);
 
-    res.status(200).json({
-      message: 'Merchants retrieved successfully',
-      merchants: merchants.map(merchant => ({
+    // Calculate deal counts dynamically
+    const now = new Date();
+    const merchantsWithCounts = merchants.map(merchant => {
+      // Count all deals
+      const totalDeals = merchant.deals.length;
+      
+      // Count active deals (currently valid based on time)
+      const activeDeals = merchant.deals.filter(deal => 
+        new Date(deal.startTime) <= now && new Date(deal.endTime) >= now
+      ).length;
+      
+      // Count upcoming deals
+      const upcomingDeals = merchant.deals.filter(deal => 
+        new Date(deal.startTime) > now
+      ).length;
+      
+      // Count expired deals
+      const expiredDeals = merchant.deals.filter(deal => 
+        new Date(deal.endTime) < now
+      ).length;
+
+      return {
         id: merchant.id,
         businessName: merchant.businessName,
         description: merchant.description,
@@ -556,13 +578,22 @@ router.get('/merchants', protect, requireAdmin, async (req: AuthRequest, res: Re
         latitude: merchant.latitude,
         longitude: merchant.longitude,
         status: merchant.status,
+        phoneNumber: merchant.phoneNumber,
         createdAt: merchant.createdAt,
         updatedAt: merchant.updatedAt,
         owner: merchant.owner,
         stores: merchant.stores,
-        totalDeals: merchant._count.deals,
-        totalStores: merchant._count.stores
-      })),
+        totalDeals,
+        activeDeals,
+        upcomingDeals,
+        expiredDeals,
+        totalStores: merchant.stores.length
+      };
+    });
+
+    res.status(200).json({
+      message: 'Merchants retrieved successfully',
+      merchants: merchantsWithCounts,
       pagination: {
         page,
         limit,
@@ -1493,7 +1524,7 @@ router.get('/performance/top-cities', protect, requireAdmin, async (req: AuthReq
 });
 
 // --- Endpoint: GET /api/admin/performance/top-categories ---
-// Get top categories by deals count
+// Get top categories by deals count, optionally filtered by city
 router.get('/performance/top-categories', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const { limit = 10, period = '7d', cityId } = req.query as any;
@@ -1516,22 +1547,12 @@ router.get('/performance/top-categories', protect, requireAdmin, async (req: Aut
         dateFrom = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     }
 
-    // Get categories with deal counts
-    const categories = await prisma.dealCategoryMaster.findMany({
-      where: { active: true },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        icon: true,
-        color: true
-      }
-    });
-
     // Get merchant IDs for city filter if provided
     let merchantIds: number[] | undefined;
     if (cityId) {
       merchantIds = await getMerchantIdsForCity(parseInt(cityId));
+      
+      // If no merchants in this city, return empty results
       if (merchantIds.length === 0) {
         return res.status(200).json({
           success: true,
@@ -1546,6 +1567,35 @@ router.get('/performance/top-categories', protect, requireAdmin, async (req: Aut
         });
       }
     }
+
+    // Get categories with deal counts
+    const categories = await prisma.dealCategoryMaster.findMany({
+      where: { active: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        icon: true,
+        color: true
+      }
+    });
+
+    // Build where clause for deals
+    const buildDealWhere = (dateFilter: any) => {
+      const where: any = {
+        category: {},
+        createdAt: dateFilter,
+        merchant: {
+          status: 'APPROVED'
+        }
+      };
+      
+      if (merchantIds) {
+        where.merchantId = { in: merchantIds };
+      }
+      
+      return where;
+    };
 
     // Calculate deal counts for each category
     const categoryStats = await Promise.all(
@@ -1566,8 +1616,11 @@ router.get('/performance/top-categories', protect, requireAdmin, async (req: Aut
         }
 
         // Get current period deals
+        const currentWhere = buildDealWhere({ gte: dateFrom });
+        currentWhere.category.name = category.name;
+        
         const currentDeals = await prisma.deal.count({
-          where: whereClause
+          where: currentWhere
         });
 
         // Get previous period for comparison
@@ -1575,13 +1628,11 @@ router.get('/performance/top-categories', protect, requireAdmin, async (req: Aut
         const prevDateFrom = new Date(dateFrom.getTime() - periodDays * 24 * 60 * 60 * 1000);
         const prevDateTo = new Date(dateFrom.getTime() - 1);
 
-        const prevWhereClause = {
-          ...whereClause,
-          createdAt: { gte: prevDateFrom, lte: prevDateTo }
-        };
-
+        const prevWhere = buildDealWhere({ gte: prevDateFrom, lte: prevDateTo });
+        prevWhere.category.name = category.name;
+        
         const prevDeals = await prisma.deal.count({
-          where: prevWhereClause
+          where: prevWhere
         });
 
         const change = prevDeals > 0 ? ((currentDeals - prevDeals) / prevDeals) * 100 : 0;
