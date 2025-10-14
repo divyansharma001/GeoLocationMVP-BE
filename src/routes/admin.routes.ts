@@ -1600,6 +1600,21 @@ router.get('/performance/top-categories', protect, requireAdmin, async (req: Aut
     // Calculate deal counts for each category
     const categoryStats = await Promise.all(
       categories.map(async (category) => {
+        // Build where clause with city filter
+        const whereClause: any = {
+          category: {
+            name: category.name
+          },
+          createdAt: { gte: dateFrom },
+          merchant: {
+            status: 'APPROVED'
+          }
+        };
+
+        if (merchantIds) {
+          whereClause.merchantId = { in: merchantIds };
+        }
+
         // Get current period deals
         const currentWhere = buildDealWhere({ gte: dateFrom });
         currentWhere.category.name = category.name;
@@ -1954,41 +1969,9 @@ router.get('/customers', protect, requireAdmin, async (req: AuthRequest, res: Re
           email: true,
           points: true,
           monthlyPoints: true,
-          createdAt: true,
-          savedDeals: {
-            select: {
-              savedAt: true,
-              deal: {
-                select: {
-                  merchant: {
-                    select: {
-                      stores: {
-                        select: {
-                          city: {
-                            select: {
-                              name: true,
-                              state: true
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            orderBy: { savedAt: 'desc' },
-            take: 1
-          },
-          checkIns: {
-            select: {
-              createdAt: true
-            },
-            orderBy: { createdAt: 'desc' },
-            take: 1
-          }
+          createdAt: true
         },
-        orderBy: { [sortBy]: sortOrder },
+        orderBy: { createdAt: 'desc' },
         skip,
         take: parseInt(limit)
       }),
@@ -2009,25 +1992,15 @@ router.get('/customers', protect, requireAdmin, async (req: AuthRequest, res: Re
         const isPaidMember = customer.monthlyPoints >= 1000 || customer.points >= 500;
         const memberType = isPaidMember ? 'paid' : 'free';
 
-        // Get primary location from saved deals
-        const primaryLocation = customer.savedDeals[0]?.deal?.merchant?.stores?.[0]?.city;
-
-        // Get last active date
-        const lastSavedDeal = customer.savedDeals[0]?.savedAt;
-        const lastCheckIn = customer.checkIns[0]?.createdAt;
-        const lastActive = lastSavedDeal && lastCheckIn 
-          ? (lastSavedDeal > lastCheckIn ? lastSavedDeal : lastCheckIn)
-          : (lastSavedDeal || lastCheckIn || customer.createdAt);
-
         return {
           id: customer.id,
           name: customer.name,
           email: customer.email,
-          location: primaryLocation ? `${primaryLocation.name}, ${primaryLocation.state}` : 'Unknown',
+          location: 'Unknown', // Simplified for now
           totalSpend: Number((totalSpend._sum.sourceAmountSpent || 0).toFixed(2)),
           points: customer.points,
           memberType,
-          lastActive: lastActive.toISOString().split('T')[0],
+          lastActive: customer.createdAt.toISOString().split('T')[0],
           createdAt: customer.createdAt.toISOString().split('T')[0]
         };
       })
@@ -2062,190 +2035,6 @@ router.get('/customers', protect, requireAdmin, async (req: AuthRequest, res: Re
     res.status(500).json({ 
       error: 'Internal server error',
       message: 'Failed to fetch customers'
-    });
-  }
-});
-
-// --- Endpoint: GET /api/admin/customers/:customerId ---
-// Get detailed information about a specific customer
-router.get('/customers/:customerId', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const customerId = parseInt(req.params.customerId);
-    
-    if (isNaN(customerId)) {
-      return res.status(400).json({ error: 'Invalid customer ID' });
-    }
-
-    // Get customer details
-    const customer = await prisma.user.findUnique({
-      where: { id: customerId, role: 'USER' },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        points: true,
-        monthlyPoints: true,
-        createdAt: true,
-        updatedAt: true,
-        savedDeals: {
-          include: {
-            deal: {
-              select: {
-                id: true,
-                title: true,
-                merchant: {
-                  select: {
-                    businessName: true,
-                    stores: {
-                      select: {
-                        city: {
-                          select: {
-                            name: true,
-                            state: true
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          orderBy: { savedAt: 'desc' }
-        },
-        checkIns: {
-          include: {
-            deal: {
-              select: {
-                id: true,
-                title: true,
-                merchant: {
-                  select: {
-                    businessName: true
-                  }
-                }
-              }
-            }
-          },
-          orderBy: { createdAt: 'desc' }
-        }
-      }
-    });
-
-    if (!customer) {
-      return res.status(404).json({ error: 'Customer not found' });
-    }
-
-    // Get customer's spending data
-    const [
-      totalSpend,
-      monthlySpend,
-      dealSaves,
-      checkIns,
-      kickbackEvents
-    ] = await Promise.all([
-      prisma.kickbackEvent.aggregate({
-        where: { userId: customerId },
-        _sum: { sourceAmountSpent: true },
-        _count: { id: true }
-      }),
-      
-      prisma.kickbackEvent.aggregate({
-        where: { 
-          userId: customerId,
-          createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
-        },
-        _sum: { sourceAmountSpent: true }
-      }),
-      
-      prisma.userDeal.count({ where: { userId: customerId } }),
-      prisma.checkIn.count({ where: { userId: customerId } }),
-      prisma.kickbackEvent.findMany({
-        where: { userId: customerId },
-        include: {
-          deal: {
-            select: {
-              title: true,
-              merchant: {
-                select: {
-                  businessName: true
-                }
-              }
-            }
-          }
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 10
-      })
-    ]);
-
-    // Calculate engagement metrics
-    const totalSpendAmount = Number(totalSpend._sum.sourceAmountSpent || 0);
-    const monthlySpendAmount = Number(monthlySpend._sum.sourceAmountSpent || 0);
-    const isPaidMember = customer.monthlyPoints >= 1000 || customer.points >= 500;
-    
-    // Get primary location
-    const primaryLocation = customer.savedDeals[0]?.deal?.merchant?.stores?.[0]?.city;
-
-    // Get last active date
-    const lastSavedDeal = customer.savedDeals[0]?.savedAt;
-    const lastCheckIn = customer.checkIns[0]?.createdAt;
-    const lastActive = lastSavedDeal && lastCheckIn 
-      ? (lastSavedDeal > lastCheckIn ? lastSavedDeal : lastCheckIn)
-      : (lastSavedDeal || lastCheckIn || customer.createdAt);
-
-    logPerformanceMetrics('Customer Details', startTime, 1);
-
-    res.status(200).json({
-      success: true,
-      customer: {
-        id: customer.id,
-        name: customer.name,
-        email: customer.email,
-        location: primaryLocation ? `${primaryLocation.name}, ${primaryLocation.state}` : 'Unknown',
-        memberType: isPaidMember ? 'paid' : 'free',
-        points: customer.points,
-        monthlyPoints: customer.monthlyPoints,
-        totalSpend: Number(totalSpendAmount.toFixed(2)),
-        monthlySpend: Number(monthlySpendAmount.toFixed(2)),
-        totalTransactions: totalSpend._count.id,
-        totalDealSaves: dealSaves,
-        totalCheckIns: checkIns,
-        lastActive: lastActive.toISOString(),
-        createdAt: customer.createdAt.toISOString(),
-        updatedAt: customer.updatedAt.toISOString()
-      },
-      activity: {
-        recentSaves: customer.savedDeals.slice(0, 5).map(save => ({
-          id: save.deal.id,
-          title: save.deal.title,
-          merchant: save.deal.merchant.businessName,
-          savedAt: save.savedAt.toISOString()
-        })),
-        recentCheckIns: customer.checkIns.slice(0, 5).map(checkIn => ({
-          id: checkIn.deal.id,
-          title: checkIn.deal.title,
-          merchant: checkIn.deal.merchant.businessName,
-          checkedInAt: checkIn.createdAt.toISOString()
-        })),
-        recentTransactions: kickbackEvents.map(event => ({
-          id: event.id,
-          deal: event.deal.title,
-          merchant: event.deal.merchant.businessName,
-          amount: Number(event.sourceAmountSpent.toFixed(2)),
-          transactionDate: event.createdAt.toISOString()
-        }))
-      }
-    });
-
-  } catch (error) {
-    console.error('Get customer details error:', error);
-    logPerformanceMetrics('Customer Details (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch customer details'
     });
   }
 });
@@ -2437,6 +2226,190 @@ router.get('/customers/analytics', protect, requireAdmin, async (req: AuthReques
     res.status(500).json({ 
       error: 'Internal server error',
       message: 'Failed to fetch customer analytics'
+    });
+  }
+});
+
+// --- Endpoint: GET /api/admin/customers/:customerId ---
+// Get detailed information about a specific customer
+router.get('/customers/:customerId', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
+  
+  try {
+    const customerId = parseInt(req.params.customerId);
+    
+    if (isNaN(customerId)) {
+      return res.status(400).json({ error: 'Invalid customer ID' });
+    }
+
+    // Get customer details
+    const customer = await prisma.user.findUnique({
+      where: { id: customerId, role: 'USER' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        points: true,
+        monthlyPoints: true,
+        createdAt: true,
+        updatedAt: true,
+        savedDeals: {
+          include: {
+            deal: {
+              select: {
+                id: true,
+                title: true,
+                merchant: {
+                  select: {
+                    businessName: true,
+                    stores: {
+                      select: {
+                        city: {
+                          select: {
+                            name: true,
+                            state: true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          orderBy: { savedAt: 'desc' }
+        },
+        checkIns: {
+          include: {
+            deal: {
+              select: {
+                id: true,
+                title: true,
+                merchant: {
+                  select: {
+                    businessName: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        }
+      }
+    });
+
+    if (!customer) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+
+    // Get customer's spending data
+    const [
+      totalSpend,
+      monthlySpend,
+      dealSaves,
+      checkIns,
+      kickbackEvents
+    ] = await Promise.all([
+      prisma.kickbackEvent.aggregate({
+        where: { userId: customerId },
+        _sum: { sourceAmountSpent: true },
+        _count: { id: true }
+      }),
+      
+      prisma.kickbackEvent.aggregate({
+        where: { 
+          userId: customerId,
+          createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
+        },
+        _sum: { sourceAmountSpent: true }
+      }),
+      
+      prisma.userDeal.count({ where: { userId: customerId } }),
+      prisma.checkIn.count({ where: { userId: customerId } }),
+      prisma.kickbackEvent.findMany({
+        where: { userId: customerId },
+        include: {
+          deal: {
+            select: {
+              title: true,
+              merchant: {
+                select: {
+                  businessName: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10
+      })
+    ]);
+
+    // Calculate engagement metrics
+    const totalSpendAmount = Number(totalSpend._sum.sourceAmountSpent || 0);
+    const monthlySpendAmount = Number(monthlySpend._sum.sourceAmountSpent || 0);
+    const isPaidMember = customer.monthlyPoints >= 1000 || customer.points >= 500;
+    
+    // Get primary location
+    const primaryLocation = customer.savedDeals[0]?.deal?.merchant?.stores?.[0]?.city;
+
+    // Get last active date
+    const lastSavedDeal = customer.savedDeals[0]?.savedAt;
+    const lastCheckIn = customer.checkIns[0]?.createdAt;
+    const lastActive = lastSavedDeal && lastCheckIn 
+      ? (lastSavedDeal > lastCheckIn ? lastSavedDeal : lastCheckIn)
+      : (lastSavedDeal || lastCheckIn || customer.createdAt);
+
+    logPerformanceMetrics('Customer Details', startTime, 1);
+
+    res.status(200).json({
+      success: true,
+      customer: {
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        location: primaryLocation ? `${primaryLocation.name}, ${primaryLocation.state}` : 'Unknown',
+        memberType: isPaidMember ? 'paid' : 'free',
+        points: customer.points,
+        monthlyPoints: customer.monthlyPoints,
+        totalSpend: Number(totalSpendAmount.toFixed(2)),
+        monthlySpend: Number(monthlySpendAmount.toFixed(2)),
+        totalTransactions: totalSpend._count.id,
+        totalDealSaves: dealSaves,
+        totalCheckIns: checkIns,
+        lastActive: lastActive.toISOString(),
+        createdAt: customer.createdAt.toISOString(),
+        updatedAt: customer.updatedAt.toISOString()
+      },
+      activity: {
+        recentSaves: customer.savedDeals.slice(0, 5).map(save => ({
+          id: save.deal.id,
+          title: save.deal.title,
+          merchant: save.deal.merchant.businessName,
+          savedAt: save.savedAt.toISOString()
+        })),
+        recentCheckIns: customer.checkIns.slice(0, 5).map(checkIn => ({
+          id: checkIn.deal.id,
+          title: checkIn.deal.title,
+          merchant: checkIn.deal.merchant.businessName,
+          checkedInAt: checkIn.createdAt.toISOString()
+        })),
+        recentTransactions: kickbackEvents.map(event => ({
+          id: event.id,
+          deal: event.deal.title,
+          merchant: event.deal.merchant.businessName,
+          amount: Number(event.sourceAmountSpent.toFixed(2)),
+          transactionDate: event.createdAt.toISOString()
+        }))
+      }
+    });
+
+  } catch (error) {
+    console.error('Get customer details error:', error);
+    logPerformanceMetrics('Customer Details (Error)', startTime, 0);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to fetch customer details'
     });
   }
 });
