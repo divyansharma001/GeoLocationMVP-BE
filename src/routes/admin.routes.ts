@@ -1600,6 +1600,21 @@ router.get('/performance/top-categories', protect, requireAdmin, async (req: Aut
     // Calculate deal counts for each category
     const categoryStats = await Promise.all(
       categories.map(async (category) => {
+        // Build where clause with city filter
+        const whereClause: any = {
+          category: {
+            name: category.name
+          },
+          createdAt: { gte: dateFrom },
+          merchant: {
+            status: 'APPROVED'
+          }
+        };
+
+        if (merchantIds) {
+          whereClause.merchantId = { in: merchantIds };
+        }
+
         // Get current period deals
         const currentWhere = buildDealWhere({ gte: dateFrom });
         currentWhere.category.name = category.name;
@@ -1954,41 +1969,9 @@ router.get('/customers', protect, requireAdmin, async (req: AuthRequest, res: Re
           email: true,
           points: true,
           monthlyPoints: true,
-          createdAt: true,
-          savedDeals: {
-            select: {
-              savedAt: true,
-              deal: {
-                select: {
-                  merchant: {
-                    select: {
-                      stores: {
-                        select: {
-                          city: {
-                            select: {
-                              name: true,
-                              state: true
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            orderBy: { savedAt: 'desc' },
-            take: 1
-          },
-          checkIns: {
-            select: {
-              createdAt: true
-            },
-            orderBy: { createdAt: 'desc' },
-            take: 1
-          }
+          createdAt: true
         },
-        orderBy: { [sortBy]: sortOrder },
+        orderBy: { createdAt: 'desc' },
         skip,
         take: parseInt(limit)
       }),
@@ -2009,25 +1992,15 @@ router.get('/customers', protect, requireAdmin, async (req: AuthRequest, res: Re
         const isPaidMember = customer.monthlyPoints >= 1000 || customer.points >= 500;
         const memberType = isPaidMember ? 'paid' : 'free';
 
-        // Get primary location from saved deals
-        const primaryLocation = customer.savedDeals[0]?.deal?.merchant?.stores?.[0]?.city;
-
-        // Get last active date
-        const lastSavedDeal = customer.savedDeals[0]?.savedAt;
-        const lastCheckIn = customer.checkIns[0]?.createdAt;
-        const lastActive = lastSavedDeal && lastCheckIn 
-          ? (lastSavedDeal > lastCheckIn ? lastSavedDeal : lastCheckIn)
-          : (lastSavedDeal || lastCheckIn || customer.createdAt);
-
         return {
           id: customer.id,
           name: customer.name,
           email: customer.email,
-          location: primaryLocation ? `${primaryLocation.name}, ${primaryLocation.state}` : 'Unknown',
+          location: 'Unknown', // Simplified for now
           totalSpend: Number((totalSpend._sum.sourceAmountSpent || 0).toFixed(2)),
           points: customer.points,
           memberType,
-          lastActive: lastActive.toISOString().split('T')[0],
+          lastActive: customer.createdAt.toISOString().split('T')[0],
           createdAt: customer.createdAt.toISOString().split('T')[0]
         };
       })
@@ -2256,101 +2229,38 @@ router.get('/customers/analytics', protect, requireAdmin, async (req: AuthReques
   const startTime = Date.now();
   
   try {
-    const { period = '30d' } = req.query as any;
+    const customerId = parseInt(req.params.customerId);
     
-    // Validate period parameter
-    const periodValidation = validatePeriod(period);
-    if (!periodValidation.isValid) {
-      return res.status(400).json({ error: periodValidation.error });
+    if (isNaN(customerId)) {
+      return res.status(400).json({ error: 'Invalid customer ID' });
     }
 
-    // Calculate date ranges
-    const dateRanges = calculateDateRanges(periodValidation.days);
-
-    // Get customer analytics
-    const [
-      totalCustomers,
-      newCustomers,
-      activeCustomers,
-      topSpendingCustomers,
-      customerEngagement,
-      locationDistribution
-    ] = await Promise.all([
-      // Total customers
-      prisma.user.count({ where: { role: 'USER' } }),
-      
-      // New customers in period
-      prisma.user.count({
-        where: {
-          role: 'USER',
-          createdAt: { gte: dateRanges.current.from }
-        }
-      }),
-      
-      // Active customers (with check-ins or saves in period)
-      prisma.user.count({
-        where: {
-          role: 'USER',
-          OR: [
-            {
-              checkIns: {
-                some: {
-                  createdAt: { gte: dateRanges.current.from }
-                }
-              }
-            },
-            {
-              savedDeals: {
-                some: {
-                  savedAt: { gte: dateRanges.current.from }
-                }
-              }
-            }
-          ]
-        }
-      }),
-      
-      // Top spending customers
-      prisma.kickbackEvent.groupBy({
-        by: ['userId'],
-        where: {
-          createdAt: { gte: dateRanges.current.from }
-        },
-        _sum: { sourceAmountSpent: true },
-        orderBy: { _sum: { sourceAmountSpent: 'desc' } },
-        take: 10
-      }),
-      
-      // Customer engagement metrics
-      prisma.user.aggregate({
-        where: { role: 'USER' },
-        _avg: { 
-          points: true,
-          monthlyPoints: true 
-        },
-        _max: { 
-          points: true,
-          monthlyPoints: true 
-        }
-      }),
-      
-      // Location distribution
-      prisma.user.findMany({
-        where: { role: 'USER' },
-        select: {
-          savedDeals: {
-            select: {
-              deal: {
-                select: {
-                  merchant: {
-                    select: {
-                      stores: {
-                        select: {
-                          city: {
-                            select: {
-                              name: true,
-                              state: true
-                            }
+    // Get customer details
+    const customer = await prisma.user.findUnique({
+      where: { id: customerId, role: 'USER' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        points: true,
+        monthlyPoints: true,
+        createdAt: true,
+        updatedAt: true,
+        savedDeals: {
+          include: {
+            deal: {
+              select: {
+                id: true,
+                title: true,
+                merchant: {
+                  select: {
+                    businessName: true,
+                    stores: {
+                      select: {
+                        city: {
+                          select: {
+                            name: true,
+                            state: true
                           }
                         }
                       }
@@ -2359,77 +2269,133 @@ router.get('/customers/analytics', protect, requireAdmin, async (req: AuthReques
                 }
               }
             }
-          }
+          },
+          orderBy: { savedAt: 'desc' }
+        },
+        checkIns: {
+          include: {
+            deal: {
+              select: {
+                id: true,
+                title: true,
+                merchant: {
+                  select: {
+                    businessName: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
         }
-      })
-    ]);
-
-    // Get top customer details
-    const topCustomerIds = topSpendingCustomers.map(c => c.userId);
-    const topCustomerDetails = await prisma.user.findMany({
-      where: { id: { in: topCustomerIds } },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        points: true
       }
     });
 
-    // Format top customers
-    const formattedTopCustomers = topSpendingCustomers.map(spender => {
-      const customer = topCustomerDetails.find(c => c.id === spender.userId);
-      return {
-        id: spender.userId,
-        name: customer?.name || 'Unknown',
-        email: customer?.email || 'Unknown',
-        points: customer?.points || 0,
-        totalSpend: Number((spender._sum.sourceAmountSpent || 0).toFixed(2))
-      };
-    });
+    if (!customer) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
 
-    // Calculate location distribution
-    const locationMap = new Map();
-    locationDistribution.forEach(user => {
-      user.savedDeals.forEach(save => {
-        const city = save.deal?.merchant?.stores?.[0]?.city;
-        if (city) {
-          const key = `${city.name}, ${city.state}`;
-          locationMap.set(key, (locationMap.get(key) || 0) + 1);
+    // Get customer's spending data
+    const [
+      totalSpend,
+      monthlySpend,
+      dealSaves,
+      checkIns,
+      kickbackEvents
+    ] = await Promise.all([
+      prisma.kickbackEvent.aggregate({
+        where: { userId: customerId },
+        _sum: { sourceAmountSpent: true },
+        _count: { id: true }
+      }),
+      
+      prisma.kickbackEvent.aggregate({
+        where: { 
+          userId: customerId,
+          createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
+        },
+        _sum: { sourceAmountSpent: true }
+      }),
+      
+      prisma.userDeal.count({ where: { userId: customerId } }),
+      prisma.checkIn.count({ where: { userId: customerId } }),
+      prisma.kickbackEvent.findMany({
+        where: { userId: customerId },
+        include: {
+          deal: {
+            select: {
+              title: true,
+              merchant: {
+                select: {
+                  businessName: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10
+      })
+      ]);
+
+      // Calculate engagement metrics
+      const totalSpendAmount = Number(totalSpend._sum.sourceAmountSpent || 0);
+      const monthlySpendAmount = Number(monthlySpend._sum.sourceAmountSpent || 0);
+      const isPaidMember = customer.monthlyPoints >= 1000 || customer.points >= 500;
+      
+      // Get primary location
+      const primaryLocation = customer.savedDeals[0]?.deal?.merchant?.stores?.[0]?.city;
+
+      // Get last active date
+      const lastSavedDeal = customer.savedDeals[0]?.savedAt;
+      const lastCheckIn = customer.checkIns[0]?.createdAt;
+      const lastActive = lastSavedDeal && lastCheckIn 
+        ? (lastSavedDeal > lastCheckIn ? lastSavedDeal : lastCheckIn)
+        : (lastSavedDeal || lastCheckIn || customer.createdAt);
+
+      logPerformanceMetrics('Customer Details', startTime, 1);
+
+      res.status(200).json({
+        success: true,
+        customer: {
+          id: customer.id,
+          name: customer.name,
+          email: customer.email,
+          location: primaryLocation ? `${primaryLocation.name}, ${primaryLocation.state}` : 'Unknown',
+          memberType: isPaidMember ? 'paid' : 'free',
+          points: customer.points,
+          monthlyPoints: customer.monthlyPoints,
+          totalSpend: Number(totalSpendAmount.toFixed(2)),
+          monthlySpend: Number(monthlySpendAmount.toFixed(2)),
+          totalTransactions: totalSpend._count.id,
+          totalDealSaves: dealSaves,
+          totalCheckIns: checkIns,
+          lastActive: lastActive.toISOString(),
+          createdAt: customer.createdAt.toISOString(),
+          updatedAt: customer.updatedAt.toISOString()
+        },
+        activity: {
+          recentSaves: customer.savedDeals.slice(0, 5).map(save => ({
+            id: save.deal.id,
+            title: save.deal.title,
+            merchant: save.deal.merchant.businessName,
+            savedAt: save.savedAt.toISOString()
+          })),
+          recentCheckIns: customer.checkIns.slice(0, 5).map(checkIn => ({
+            id: checkIn.deal.id,
+            title: checkIn.deal.title,
+            merchant: checkIn.deal.merchant.businessName,
+            checkedInAt: checkIn.createdAt.toISOString()
+          })),
+          recentTransactions: kickbackEvents.map(event => ({
+            id: event.id,
+            deal: event.deal.title,
+            merchant: event.deal.merchant.businessName,
+            amount: Number(event.sourceAmountSpent.toFixed(2)),
+            transactionDate: event.createdAt.toISOString()
+          }))
         }
       });
-    });
-
-    const locationStats = Array.from(locationMap.entries())
-      .map(([location, count]) => ({ location, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
-
-    logPerformanceMetrics('Customer Analytics', startTime, totalCustomers);
-
-    res.status(200).json({
-      success: true,
-      period,
-      dateRange: {
-        from: dateRanges.current.from.toISOString(),
-        to: dateRanges.current.to.toISOString()
-      },
-      overview: {
-        totalCustomers,
-        newCustomers,
-        activeCustomers,
-        inactiveCustomers: totalCustomers - activeCustomers,
-        engagementRate: totalCustomers > 0 ? ((activeCustomers / totalCustomers) * 100).toFixed(1) : '0'
-      },
-      topCustomers: formattedTopCustomers,
-      engagement: {
-        averagePoints: Number((customerEngagement._avg.points || 0).toFixed(1)),
-        averageMonthlyPoints: Number((customerEngagement._avg.monthlyPoints || 0).toFixed(1)),
-        maxPoints: customerEngagement._max.points || 0,
-        maxMonthlyPoints: customerEngagement._max.monthlyPoints || 0
-      },
-      locationDistribution: locationStats
-    });
 
   } catch (error) {
     console.error('Get customer analytics error:', error);
@@ -2437,1785 +2403,6 @@ router.get('/customers/analytics', protect, requireAdmin, async (req: AuthReques
     res.status(500).json({ 
       error: 'Internal server error',
       message: 'Failed to fetch customer analytics'
-    });
-  }
-});
-
-// ============================================================================
-// TAP-INS (CHECK-INS) STATISTICS APIs
-// ============================================================================
-
-// --- Endpoint: GET /api/admin/tap-ins/overview ---
-// Get comprehensive tap-ins overview with real-time stats from database
-router.get('/tap-ins/overview', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const { period = '7d', cityId, merchantId } = req.query as any;
-    
-    // Validate period parameter
-    const periodValidation = validatePeriod(period);
-    if (!periodValidation.isValid) {
-      return res.status(400).json({ error: periodValidation.error });
-    }
-
-    // Calculate date ranges
-    const dateRanges = calculateDateRanges(periodValidation.days);
-
-    // Build merchant filter based on city or specific merchant
-    let merchantIds: number[] | undefined;
-    
-    if (cityId) {
-      merchantIds = await getMerchantIdsForCity(parseInt(cityId));
-      
-      if (merchantIds.length === 0) {
-        logPerformanceMetrics('Tap-ins Overview (No Data)', startTime, 0);
-        return res.status(200).json({
-          success: true,
-          period,
-          dateRange: {
-            from: dateRanges.current.from.toISOString(),
-            to: dateRanges.current.to.toISOString()
-          },
-          metrics: {
-            totalTapIns: { value: 0, change: 0, trend: 'up' },
-            uniqueUsers: { value: 0, change: 0, trend: 'up' },
-            averageDistance: { value: 0, change: 0, trend: 'up' },
-            pointsAwarded: { value: 0, change: 0, trend: 'up' }
-          },
-          filters: { cityId: parseInt(cityId), merchantId: null },
-          message: 'No approved merchants found in this city'
-        });
-      }
-    } else if (merchantId) {
-      const merchantValidation = await validateMerchant(parseInt(merchantId));
-      if (!merchantValidation.isValid) {
-        return res.status(400).json({ error: merchantValidation.error });
-      }
-      merchantIds = [parseInt(merchantId)];
-    }
-
-    // Build where clauses for current and previous periods
-    const currentWhere: any = { createdAt: { gte: dateRanges.current.from } };
-    const prevWhere: any = { 
-      createdAt: { 
-        gte: dateRanges.previous.from, 
-        lte: dateRanges.previous.to 
-      } 
-    };
-    
-    if (merchantIds) {
-      currentWhere.merchantId = { in: merchantIds };
-      prevWhere.merchantId = { in: merchantIds };
-    }
-
-    // Get current period metrics
-    const [
-      currentTapIns,
-      currentUniqueUsers,
-      currentAvgDistance,
-      currentPointsAwarded,
-      prevTapIns,
-      prevUniqueUsers,
-      prevAvgDistance,
-      prevPointsAwarded
-    ] = await Promise.all([
-      // Current period tap-ins count
-      prisma.checkIn.count({ where: currentWhere }),
-      
-      // Current period unique users
-      prisma.checkIn.groupBy({
-        by: ['userId'],
-        where: currentWhere,
-        _count: { userId: true }
-      }).then(result => result.length),
-      
-      // Current period average distance
-      prisma.checkIn.aggregate({
-        where: currentWhere,
-        _avg: { distanceMeters: true }
-      }),
-      
-      // Current period points awarded (from point events)
-      prisma.userPointEvent.aggregate({
-        where: {
-          pointEventType: {
-            name: { in: ['CHECKIN', 'FIRST_CHECKIN_DEAL'] }
-          },
-          createdAt: { gte: dateRanges.current.from },
-          ...(merchantIds && {
-            deal: {
-              merchantId: { in: merchantIds }
-            }
-          })
-        },
-        _sum: { points: true }
-      }),
-      
-      // Previous period metrics
-      prisma.checkIn.count({ where: prevWhere }),
-      
-      prisma.checkIn.groupBy({
-        by: ['userId'],
-        where: prevWhere,
-        _count: { userId: true }
-      }).then(result => result.length),
-      
-      prisma.checkIn.aggregate({
-        where: prevWhere,
-        _avg: { distanceMeters: true }
-      }),
-      
-      prisma.userPointEvent.aggregate({
-        where: {
-          pointEventType: {
-            name: { in: ['CHECKIN', 'FIRST_CHECKIN_DEAL'] }
-          },
-          createdAt: { 
-            gte: dateRanges.previous.from, 
-            lte: dateRanges.previous.to 
-          },
-          ...(merchantIds && {
-            deal: {
-              merchantId: { in: merchantIds }
-            }
-          })
-        },
-        _sum: { points: true }
-      })
-    ]);
-
-    // Calculate metrics
-    const totalTapIns = currentTapIns;
-    const uniqueUsers = currentUniqueUsers;
-    const averageDistance = Number((currentAvgDistance._avg.distanceMeters || 0).toFixed(2));
-    const pointsAwarded = Number(currentPointsAwarded._sum.points || 0);
-
-    // Calculate percentage changes
-    const totalTapInsChange = calculatePercentageChange(totalTapIns, prevTapIns);
-    const uniqueUsersChange = calculatePercentageChange(uniqueUsers, prevUniqueUsers);
-    const avgDistancePrev = Number(prevAvgDistance._avg.distanceMeters || 0);
-    const averageDistanceChange = calculatePercentageChange(averageDistance, avgDistancePrev);
-    const pointsAwardedPrev = Number(prevPointsAwarded._sum.points || 0);
-    const pointsAwardedChange = calculatePercentageChange(pointsAwarded, pointsAwardedPrev);
-
-    logPerformanceMetrics('Tap-ins Overview', startTime, totalTapIns);
-
-    res.status(200).json({
-      success: true,
-      period,
-      dateRange: {
-        from: dateRanges.current.from.toISOString(),
-        to: dateRanges.current.to.toISOString()
-      },
-      metrics: {
-        totalTapIns: {
-          value: totalTapIns,
-          change: Number(totalTapInsChange.toFixed(1)),
-          trend: totalTapInsChange >= 0 ? 'up' : 'down'
-        },
-        uniqueUsers: {
-          value: uniqueUsers,
-          change: Number(uniqueUsersChange.toFixed(1)),
-          trend: uniqueUsersChange >= 0 ? 'up' : 'down'
-        },
-        averageDistance: {
-          value: averageDistance,
-          change: Number(averageDistanceChange.toFixed(1)),
-          trend: averageDistanceChange >= 0 ? 'up' : 'down'
-        },
-        pointsAwarded: {
-          value: pointsAwarded,
-          change: Number(pointsAwardedChange.toFixed(1)),
-          trend: pointsAwardedChange >= 0 ? 'up' : 'down'
-        }
-      },
-      filters: {
-        cityId: cityId ? parseInt(cityId) : null,
-        merchantId: merchantId ? parseInt(merchantId) : null
-      }
-    });
-
-  } catch (error) {
-    console.error('Get tap-ins overview error:', error);
-    logPerformanceMetrics('Tap-ins Overview (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch tap-ins overview'
-    });
-  }
-});
-
-// --- Endpoint: GET /api/admin/tap-ins/analytics ---
-// Get detailed tap-ins analytics with trends and patterns
-router.get('/tap-ins/analytics', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const { period = '30d', cityId, merchantId } = req.query as any;
-    
-    // Validate period parameter
-    const periodValidation = validatePeriod(period);
-    if (!periodValidation.isValid) {
-      return res.status(400).json({ error: periodValidation.error });
-    }
-
-    // Calculate date ranges
-    const dateRanges = calculateDateRanges(periodValidation.days);
-
-    // Build merchant filter
-    let merchantIds: number[] | undefined;
-    
-    if (cityId) {
-      merchantIds = await getMerchantIdsForCity(parseInt(cityId));
-      if (merchantIds.length === 0) {
-        return res.status(200).json({
-          success: true,
-          period,
-          dateRange: {
-            from: dateRanges.current.from.toISOString(),
-            to: dateRanges.current.to.toISOString()
-          },
-          analytics: {
-            hourlyDistribution: [],
-            dailyPatterns: [],
-            topDeals: [],
-            topMerchants: [],
-            distanceAnalysis: { average: 0, median: 0, distribution: [] }
-          },
-          filters: { cityId: parseInt(cityId), merchantId: null },
-          message: 'No approved merchants found in this city'
-        });
-      }
-    } else if (merchantId) {
-      const merchantValidation = await validateMerchant(parseInt(merchantId));
-      if (!merchantValidation.isValid) {
-        return res.status(400).json({ error: merchantValidation.error });
-      }
-      merchantIds = [parseInt(merchantId)];
-    }
-
-    // Build where clause
-    const whereClause: any = { createdAt: { gte: dateRanges.current.from } };
-    if (merchantIds) {
-      whereClause.merchantId = { in: merchantIds };
-    }
-
-    // Get detailed analytics
-    const [
-      hourlyDistribution,
-      dailyPatterns,
-      topDeals,
-      topMerchants,
-      distanceAnalysis,
-      engagementData
-    ] = await Promise.all([
-      // Hourly distribution (last 7 days)
-      prisma.checkIn.groupBy({
-        by: ['createdAt'],
-        where: {
-          ...whereClause,
-          createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
-        },
-        _count: { id: true },
-        orderBy: { createdAt: 'asc' }
-      }).then(results => {
-        const hourlyMap = new Map();
-        results.forEach(result => {
-          const hour = new Date(result.createdAt).getHours();
-          hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + result._count.id);
-        });
-        return Array.from({ length: 24 }, (_, i) => ({
-          hour: i,
-          count: hourlyMap.get(i) || 0
-        }));
-      }),
-      
-      // Daily patterns (last 30 days)
-      prisma.checkIn.groupBy({
-        by: ['createdAt'],
-        where: {
-          ...whereClause,
-          createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
-        },
-        _count: { id: true },
-        orderBy: { createdAt: 'asc' }
-      }).then(results => {
-        const dailyMap = new Map();
-        results.forEach(result => {
-          const day = new Date(result.createdAt).getDay();
-          dailyMap.set(day, (dailyMap.get(day) || 0) + result._count.id);
-        });
-        return Array.from({ length: 7 }, (_, i) => ({
-          day: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][i],
-          count: dailyMap.get(i) || 0
-        }));
-      }),
-      
-      // Top deals by tap-ins
-      prisma.checkIn.groupBy({
-        by: ['dealId'],
-        where: whereClause,
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
-        take: 10
-      }).then(async results => {
-        const dealIds = results.map(r => r.dealId);
-        const deals = await prisma.deal.findMany({
-          where: { id: { in: dealIds } },
-          select: {
-            id: true,
-            title: true,
-            merchant: {
-              select: {
-                businessName: true
-              }
-            }
-          }
-        });
-        
-        return results.map(result => {
-          const deal = deals.find(d => d.id === result.dealId);
-          return {
-            dealId: result.dealId,
-            title: deal?.title || 'Unknown Deal',
-            merchant: deal?.merchant.businessName || 'Unknown Merchant',
-            tapIns: result._count.id
-          };
-        });
-      }),
-      
-      // Top merchants by tap-ins
-      prisma.checkIn.groupBy({
-        by: ['merchantId'],
-        where: whereClause,
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
-        take: 10
-      }).then(async results => {
-        const merchantIds = results.map(r => r.merchantId);
-        const merchants = await prisma.merchant.findMany({
-          where: { id: { in: merchantIds } },
-          select: {
-            id: true,
-            businessName: true
-          }
-        });
-        
-        return results.map(result => {
-          const merchant = merchants.find(m => m.id === result.merchantId);
-          return {
-            merchantId: result.merchantId,
-            businessName: merchant?.businessName || 'Unknown Merchant',
-            tapIns: result._count.id
-          };
-        });
-      }),
-      
-      // Distance analysis
-      prisma.checkIn.findMany({
-        where: whereClause,
-        select: { distanceMeters: true }
-      }).then(results => {
-        const distances = results.map(r => r.distanceMeters);
-        const sorted = distances.sort((a, b) => a - b);
-        const average = distances.reduce((sum, d) => sum + d, 0) / distances.length;
-        const median = sorted.length % 2 === 0 
-          ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
-          : sorted[Math.floor(sorted.length / 2)];
-        
-        // Distance distribution
-        const distribution = [
-          { range: '0-25m', count: distances.filter(d => d <= 25).length },
-          { range: '25-50m', count: distances.filter(d => d > 25 && d <= 50).length },
-          { range: '50-100m', count: distances.filter(d => d > 50 && d <= 100).length },
-          { range: '100m+', count: distances.filter(d => d > 100).length }
-        ];
-        
-        return {
-          average: Number(average.toFixed(2)),
-          median: Number(median.toFixed(2)),
-          distribution
-        };
-      }),
-      
-      // First-time vs repeat tap-ins
-      prisma.checkIn.groupBy({
-        by: ['userId', 'dealId'],
-        where: whereClause,
-        _count: { id: true }
-      }).then(results => {
-        const firstTime = results.filter(r => r._count.id === 1).length;
-        const repeat = results.filter(r => r._count.id > 1).length;
-        return { firstTime, repeat };
-      })
-    ]);
-
-    logPerformanceMetrics('Tap-ins Analytics', startTime, topDeals.length);
-
-    res.status(200).json({
-      success: true,
-      period,
-      dateRange: {
-        from: dateRanges.current.from.toISOString(),
-        to: dateRanges.current.to.toISOString()
-      },
-      analytics: {
-        hourlyDistribution,
-        dailyPatterns,
-        topDeals,
-        topMerchants,
-        distanceAnalysis,
-        engagement: {
-          firstTimeTapIns: engagementData.firstTime,
-          repeatTapIns: engagementData.repeat,
-          repeatRate: engagementData.firstTime + engagementData.repeat > 0 
-            ? Number(((engagementData.repeat / (engagementData.firstTime + engagementData.repeat)) * 100).toFixed(1))
-            : 0
-        }
-      },
-      filters: {
-        cityId: cityId ? parseInt(cityId) : null,
-        merchantId: merchantId ? parseInt(merchantId) : null
-      }
-    });
-
-  } catch (error) {
-    console.error('Get tap-ins analytics error:', error);
-    logPerformanceMetrics('Tap-ins Analytics (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch tap-ins analytics'
-    });
-  }
-});
-
-// --- Endpoint: GET /api/admin/tap-ins/top-performers ---
-// Get top performing users and merchants by tap-ins
-router.get('/tap-ins/top-performers', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const { period = '30d', cityId, merchantId, limit = 10 } = req.query as any;
-    
-    // Validate period parameter
-    const periodValidation = validatePeriod(period);
-    if (!periodValidation.isValid) {
-      return res.status(400).json({ error: periodValidation.error });
-    }
-
-    // Calculate date ranges
-    const dateRanges = calculateDateRanges(periodValidation.days);
-
-    // Build merchant filter
-    let merchantIds: number[] | undefined;
-    
-    if (cityId) {
-      merchantIds = await getMerchantIdsForCity(parseInt(cityId));
-      if (merchantIds.length === 0) {
-        return res.status(200).json({
-          success: true,
-          period,
-          dateRange: {
-            from: dateRanges.current.from.toISOString(),
-            to: dateRanges.current.to.toISOString()
-          },
-          topUsers: [],
-          topMerchants: [],
-          filters: { cityId: parseInt(cityId), merchantId: null },
-          message: 'No approved merchants found in this city'
-        });
-      }
-    } else if (merchantId) {
-      const merchantValidation = await validateMerchant(parseInt(merchantId));
-      if (!merchantValidation.isValid) {
-        return res.status(400).json({ error: merchantValidation.error });
-      }
-      merchantIds = [parseInt(merchantId)];
-    }
-
-    // Build where clause
-    const whereClause: any = { createdAt: { gte: dateRanges.current.from } };
-    if (merchantIds) {
-      whereClause.merchantId = { in: merchantIds };
-    }
-
-    // Get top performers
-    const [topUsers, topMerchants] = await Promise.all([
-      // Top users by tap-ins
-      prisma.checkIn.groupBy({
-        by: ['userId'],
-        where: whereClause,
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
-        take: parseInt(limit)
-      }).then(async results => {
-        const userIds = results.map(r => r.userId);
-        const users = await prisma.user.findMany({
-          where: { id: { in: userIds } },
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            points: true
-          }
-        });
-        
-        return results.map(result => {
-          const user = users.find(u => u.id === result.userId);
-          return {
-            userId: result.userId,
-            name: user?.name || 'Unknown User',
-            email: user?.email || 'Unknown Email',
-            points: user?.points || 0,
-            tapIns: result._count.id
-          };
-        });
-      }),
-      
-      // Top merchants by tap-ins
-      prisma.checkIn.groupBy({
-        by: ['merchantId'],
-        where: whereClause,
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
-        take: parseInt(limit)
-      }).then(async results => {
-        const merchantIds = results.map(r => r.merchantId);
-        const merchants = await prisma.merchant.findMany({
-          where: { id: { in: merchantIds } },
-          select: {
-            id: true,
-            businessName: true,
-            description: true,
-            logoUrl: true
-          }
-        });
-        
-        return results.map(result => {
-          const merchant = merchants.find(m => m.id === result.merchantId);
-          return {
-            merchantId: result.merchantId,
-            businessName: merchant?.businessName || 'Unknown Merchant',
-            description: merchant?.description || '',
-            logoUrl: merchant?.logoUrl || null,
-            tapIns: result._count.id
-          };
-        });
-      })
-    ]);
-
-    logPerformanceMetrics('Tap-ins Top Performers', startTime, topUsers.length + topMerchants.length);
-
-    res.status(200).json({
-      success: true,
-      period,
-      dateRange: {
-        from: dateRanges.current.from.toISOString(),
-        to: dateRanges.current.to.toISOString()
-      },
-      topUsers,
-      topMerchants,
-      filters: {
-        cityId: cityId ? parseInt(cityId) : null,
-        merchantId: merchantId ? parseInt(merchantId) : null
-      }
-    });
-
-  } catch (error) {
-    console.error('Get tap-ins top performers error:', error);
-    logPerformanceMetrics('Tap-ins Top Performers (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch tap-ins top performers'
-    });
-  }
-});
-
-// --- Endpoint: GET /api/admin/tap-ins/geographic ---
-// Get geographic distribution of tap-ins
-router.get('/tap-ins/geographic', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const { period = '30d', limit = 20 } = req.query as any;
-    
-    // Validate period parameter
-    const periodValidation = validatePeriod(period);
-    if (!periodValidation.isValid) {
-      return res.status(400).json({ error: periodValidation.error });
-    }
-
-    // Calculate date ranges
-    const dateRanges = calculateDateRanges(periodValidation.days);
-
-    // Build where clause
-    const whereClause = { createdAt: { gte: dateRanges.current.from } };
-
-    // Get geographic distribution
-    const [cityDistribution, stateDistribution, distanceAnalysis] = await Promise.all([
-      // City distribution
-      prisma.checkIn.groupBy({
-        by: ['merchantId'],
-        where: whereClause,
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
-        take: parseInt(limit)
-      }).then(async results => {
-        const merchantIds = results.map(r => r.merchantId);
-        const merchants = await prisma.merchant.findMany({
-          where: { id: { in: merchantIds } },
-          include: {
-            stores: {
-              include: {
-                city: {
-                  select: {
-                    id: true,
-                    name: true,
-                    state: true
-                  }
-                }
-              }
-            }
-          }
-        });
-        
-        const cityMap = new Map();
-        results.forEach(result => {
-          const merchant = merchants.find(m => m.id === result.merchantId);
-          if (merchant?.stores?.[0]?.city) {
-            const city = merchant.stores[0].city;
-            const key = `${city.name}, ${city.state}`;
-            cityMap.set(key, (cityMap.get(key) || 0) + result._count.id);
-          }
-        });
-        
-        return Array.from(cityMap.entries())
-          .map(([location, count]) => ({ location, count }))
-          .sort((a, b) => b.count - a.count);
-      }),
-      
-      // State distribution
-      prisma.checkIn.groupBy({
-        by: ['merchantId'],
-        where: whereClause,
-        _count: { id: true }
-      }).then(async results => {
-        const merchantIds = results.map(r => r.merchantId);
-        const merchants = await prisma.merchant.findMany({
-          where: { id: { in: merchantIds } },
-          include: {
-            stores: {
-              include: {
-                city: {
-                  select: {
-                    state: true
-                  }
-                }
-              }
-            }
-          }
-        });
-        
-        const stateMap = new Map();
-        results.forEach(result => {
-          const merchant = merchants.find(m => m.id === result.merchantId);
-          if (merchant?.stores?.[0]?.city) {
-            const state = merchant.stores[0].city.state;
-            stateMap.set(state, (stateMap.get(state) || 0) + result._count.id);
-          }
-        });
-        
-        return Array.from(stateMap.entries())
-          .map(([state, count]) => ({ state, count }))
-          .sort((a, b) => b.count - a.count);
-      }),
-      
-      // Distance analysis
-      prisma.checkIn.findMany({
-        where: whereClause,
-        select: { distanceMeters: true }
-      }).then(results => {
-        const distances = results.map(r => r.distanceMeters);
-        const sorted = distances.sort((a, b) => a - b);
-        
-        return {
-          average: Number((distances.reduce((sum, d) => sum + d, 0) / distances.length).toFixed(2)),
-          median: Number((sorted.length % 2 === 0 
-            ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
-            : sorted[Math.floor(sorted.length / 2)]).toFixed(2)),
-          min: Number(sorted[0]?.toFixed(2) || 0),
-          max: Number(sorted[sorted.length - 1]?.toFixed(2) || 0),
-          total: distances.length
-        };
-      })
-    ]);
-
-    logPerformanceMetrics('Tap-ins Geographic', startTime, cityDistribution.length);
-
-    res.status(200).json({
-      success: true,
-      period,
-      dateRange: {
-        from: dateRanges.current.from.toISOString(),
-        to: dateRanges.current.to.toISOString()
-      },
-      geographic: {
-        cityDistribution,
-        stateDistribution,
-        distanceAnalysis
-      }
-    });
-
-  } catch (error) {
-    console.error('Get tap-ins geographic error:', error);
-    logPerformanceMetrics('Tap-ins Geographic (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch tap-ins geographic data'
-    });
-  }
-});
-
-// --- Endpoint: GET /api/admin/tap-ins/time-charts ---
-// Get time-based charts for tap-ins activity
-router.get('/tap-ins/time-charts', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const { period = '7d', cityId, merchantId, chartType = 'daily' } = req.query as any;
-    
-    // Validate period parameter
-    const periodValidation = validatePeriod(period);
-    if (!periodValidation.isValid) {
-      return res.status(400).json({ error: periodValidation.error });
-    }
-
-    // Build merchant filter
-    let merchantIds: number[] | undefined;
-    
-    if (cityId) {
-      merchantIds = await getMerchantIdsForCity(parseInt(cityId));
-      if (merchantIds.length === 0) {
-        return res.status(200).json({
-          success: true,
-          period,
-          chartType,
-          chartData: {
-            labels: [],
-            data: []
-          },
-          filters: { cityId: parseInt(cityId), merchantId: null },
-          message: 'No approved merchants found in this city'
-        });
-      }
-    } else if (merchantId) {
-      const merchantValidation = await validateMerchant(parseInt(merchantId));
-      if (!merchantValidation.isValid) {
-        return res.status(400).json({ error: merchantValidation.error });
-      }
-      merchantIds = [parseInt(merchantId)];
-    }
-
-    // Build where clause
-    const whereClause: any = {};
-    if (merchantIds) {
-      whereClause.merchantId = { in: merchantIds };
-    }
-
-    let chartData: { labels: string[], data: number[] };
-
-    if (chartType === 'hourly') {
-      // Hourly chart for last 24 hours
-      const now = new Date();
-      const labels = [];
-      const data = [];
-      
-      for (let i = 23; i >= 0; i--) {
-        const hour = new Date(now.getTime() - i * 60 * 60 * 1000);
-        const hourStart = new Date(hour);
-        hourStart.setMinutes(0, 0, 0);
-        const hourEnd = new Date(hour);
-        hourEnd.setMinutes(59, 59, 999);
-        
-        const count = await prisma.checkIn.count({
-          where: {
-            ...whereClause,
-            createdAt: { gte: hourStart, lte: hourEnd }
-          }
-        });
-        
-        labels.push(hour.getHours().toString().padStart(2, '0') + ':00');
-        data.push(count);
-      }
-      
-      chartData = { labels, data };
-    } else {
-      // Daily chart for specified period
-      const days = periodValidation.days;
-      const labels = [];
-      const data = [];
-      
-      for (let i = days - 1; i >= 0; i--) {
-        const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
-        const dayStart = new Date(date);
-        dayStart.setHours(0, 0, 0, 0);
-        const dayEnd = new Date(date);
-        dayEnd.setHours(23, 59, 59, 999);
-        
-        const count = await prisma.checkIn.count({
-          where: {
-            ...whereClause,
-            createdAt: { gte: dayStart, lte: dayEnd }
-          }
-        });
-        
-        labels.push(date.toISOString().split('T')[0]);
-        data.push(count);
-      }
-      
-      chartData = { labels, data };
-    }
-
-    logPerformanceMetrics('Tap-ins Time Charts', startTime, chartData.data.length);
-
-    res.status(200).json({
-      success: true,
-      period,
-      chartType,
-      chartData,
-      filters: {
-        cityId: cityId ? parseInt(cityId) : null,
-        merchantId: merchantId ? parseInt(merchantId) : null
-      }
-    });
-
-  } catch (error) {
-    console.error('Get tap-ins time charts error:', error);
-    logPerformanceMetrics('Tap-ins Time Charts (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch tap-ins time charts'
-    });
-  }
-});
-
-// ============================================================================
-// BOUNTIES (MONTHLY LEADERBOARD) STATISTICS APIs
-// ============================================================================
-
-// --- Endpoint: GET /api/admin/bounties/overview ---
-// Get comprehensive bounties overview with monthly competition stats
-router.get('/bounties/overview', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const { period = '30d', cityId } = req.query as any;
-    
-    // Validate period parameter
-    const periodValidation = validatePeriod(period);
-    if (!periodValidation.isValid) {
-      return res.status(400).json({ error: periodValidation.error });
-    }
-
-    // Calculate date ranges
-    const dateRanges = calculateDateRanges(periodValidation.days);
-
-    // Build user filter based on city (if provided)
-    let userFilter: any = { role: 'USER' };
-    if (cityId) {
-      // Get users who have interacted with merchants in this city
-      const cityMerchants = await getMerchantIdsForCity(parseInt(cityId));
-      if (cityMerchants.length === 0) {
-        return res.status(200).json({
-          success: true,
-          period,
-          dateRange: {
-            from: dateRanges.current.from.toISOString(),
-            to: dateRanges.current.to.toISOString()
-          },
-          metrics: {
-            totalParticipants: { value: 0, change: 0, trend: 'up' },
-            totalPointsAwarded: { value: 0, change: 0, trend: 'up' },
-            averagePointsPerUser: { value: 0, change: 0, trend: 'up' },
-            topPerformerPoints: { value: 0, change: 0, trend: 'up' }
-          },
-          filters: { cityId: parseInt(cityId) },
-          message: 'No approved merchants found in this city'
-        });
-      }
-      
-      // Filter users who have check-ins with merchants in this city
-      userFilter.checkIns = {
-        some: {
-          merchantId: { in: cityMerchants }
-        }
-      };
-    }
-
-    // Get current period metrics
-    const [
-      currentParticipants,
-      currentTotalPoints,
-      currentAvgPoints,
-      currentTopPerformer,
-      prevParticipants,
-      prevTotalPoints,
-      prevAvgPoints,
-      prevTopPerformer
-    ] = await Promise.all([
-      // Current period participants (users with points in period)
-      prisma.user.count({
-        where: {
-          ...userFilter,
-          pointEvents: {
-            some: {
-              createdAt: { gte: dateRanges.current.from }
-            }
-          }
-        }
-      }),
-      
-      // Current period total points awarded
-      prisma.userPointEvent.aggregate({
-        where: {
-          createdAt: { gte: dateRanges.current.from },
-          ...(cityId && {
-            deal: {
-              merchantId: { in: await getMerchantIdsForCity(parseInt(cityId)) }
-            }
-          })
-        },
-        _sum: { points: true }
-      }),
-      
-      // Current period average points per user
-      prisma.user.aggregate({
-        where: {
-          ...userFilter,
-          pointEvents: {
-            some: {
-              createdAt: { gte: dateRanges.current.from }
-            }
-          }
-        },
-        _avg: { points: true }
-      }),
-      
-      // Current period top performer
-      prisma.user.findFirst({
-        where: {
-          ...userFilter,
-          pointEvents: {
-            some: {
-              createdAt: { gte: dateRanges.current.from }
-            }
-          }
-        },
-        orderBy: { points: 'desc' },
-        select: { points: true }
-      }),
-      
-      // Previous period metrics
-      prisma.user.count({
-        where: {
-          ...userFilter,
-          pointEvents: {
-            some: {
-              createdAt: { 
-                gte: dateRanges.previous.from, 
-                lte: dateRanges.previous.to 
-              }
-            }
-          }
-        }
-      }),
-      
-      prisma.userPointEvent.aggregate({
-        where: {
-          createdAt: { 
-            gte: dateRanges.previous.from, 
-            lte: dateRanges.previous.to 
-          },
-          ...(cityId && {
-            deal: {
-              merchantId: { in: await getMerchantIdsForCity(parseInt(cityId)) }
-            }
-          })
-        },
-        _sum: { points: true }
-      }),
-      
-      prisma.user.aggregate({
-        where: {
-          ...userFilter,
-          pointEvents: {
-            some: {
-              createdAt: { 
-                gte: dateRanges.previous.from, 
-                lte: dateRanges.previous.to 
-              }
-            }
-          }
-        },
-        _avg: { points: true }
-      }),
-      
-      prisma.user.findFirst({
-        where: {
-          ...userFilter,
-          pointEvents: {
-            some: {
-              createdAt: { 
-                gte: dateRanges.previous.from, 
-                lte: dateRanges.previous.to 
-              }
-            }
-          }
-        },
-        orderBy: { points: 'desc' },
-        select: { points: true }
-      })
-    ]);
-
-    // Calculate metrics
-    const totalParticipants = currentParticipants;
-    const totalPointsAwarded = Number(currentTotalPoints._sum.points || 0);
-    const averagePointsPerUser = Number((currentAvgPoints._avg.points || 0).toFixed(2));
-    const topPerformerPoints = currentTopPerformer?.points || 0;
-
-    // Calculate percentage changes
-    const totalParticipantsChange = calculatePercentageChange(totalParticipants, prevParticipants);
-    const totalPointsAwardedPrev = Number(prevTotalPoints._sum.points || 0);
-    const totalPointsAwardedChange = calculatePercentageChange(totalPointsAwarded, totalPointsAwardedPrev);
-    const avgPointsPrev = Number(prevAvgPoints._avg.points || 0);
-    const averagePointsPerUserChange = calculatePercentageChange(averagePointsPerUser, avgPointsPrev);
-    const topPerformerPointsPrev = prevTopPerformer?.points || 0;
-    const topPerformerPointsChange = calculatePercentageChange(topPerformerPoints, topPerformerPointsPrev);
-
-    logPerformanceMetrics('Bounties Overview', startTime, totalParticipants);
-
-    res.status(200).json({
-      success: true,
-      period,
-      dateRange: {
-        from: dateRanges.current.from.toISOString(),
-        to: dateRanges.current.to.toISOString()
-      },
-      metrics: {
-        totalParticipants: {
-          value: totalParticipants,
-          change: Number(totalParticipantsChange.toFixed(1)),
-          trend: totalParticipantsChange >= 0 ? 'up' : 'down'
-        },
-        totalPointsAwarded: {
-          value: totalPointsAwarded,
-          change: Number(totalPointsAwardedChange.toFixed(1)),
-          trend: totalPointsAwardedChange >= 0 ? 'up' : 'down'
-        },
-        averagePointsPerUser: {
-          value: averagePointsPerUser,
-          change: Number(averagePointsPerUserChange.toFixed(1)),
-          trend: averagePointsPerUserChange >= 0 ? 'up' : 'down'
-        },
-        topPerformerPoints: {
-          value: topPerformerPoints,
-          change: Number(topPerformerPointsChange.toFixed(1)),
-          trend: topPerformerPointsChange >= 0 ? 'up' : 'down'
-        }
-      },
-      filters: {
-        cityId: cityId ? parseInt(cityId) : null
-      }
-    });
-
-  } catch (error) {
-    console.error('Get bounties overview error:', error);
-    logPerformanceMetrics('Bounties Overview (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch bounties overview'
-    });
-  }
-});
-
-// --- Endpoint: GET /api/admin/bounties/leaderboard ---
-// Get current monthly leaderboard with rankings
-router.get('/bounties/leaderboard', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const { limit = 50, cityId, period = 'current' } = req.query as any;
-    
-    // Build user filter based on city (if provided)
-    let userFilter: any = { role: 'USER' };
-    if (cityId) {
-      const cityMerchants = await getMerchantIdsForCity(parseInt(cityId));
-      if (cityMerchants.length === 0) {
-        return res.status(200).json({
-          success: true,
-          period,
-          leaderboard: [],
-          filters: { cityId: parseInt(cityId) },
-          message: 'No approved merchants found in this city'
-        });
-      }
-      
-      userFilter.checkIns = {
-        some: {
-          merchantId: { in: cityMerchants }
-        }
-      };
-    }
-
-    let leaderboardData: any[];
-
-    if (period === 'current') {
-      // Current month leaderboard using monthlyPoints
-      leaderboardData = await prisma.user.findMany({
-        where: {
-          ...userFilter,
-          monthlyPoints: { gt: 0 }
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          points: true,
-          monthlyPoints: true,
-          createdAt: true
-        },
-        orderBy: { monthlyPoints: 'desc' },
-        take: parseInt(limit)
-      });
-    } else {
-      // Historical period leaderboard using point events
-      const periodValidation = validatePeriod(period);
-      if (!periodValidation.isValid) {
-        return res.status(400).json({ error: periodValidation.error });
-      }
-
-      const dateRanges = calculateDateRanges(periodValidation.days);
-      
-      leaderboardData = await prisma.user.findMany({
-        where: {
-          ...userFilter,
-          pointEvents: {
-            some: {
-              createdAt: { gte: dateRanges.current.from }
-            }
-          }
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          points: true,
-          monthlyPoints: true,
-          createdAt: true,
-          pointEvents: {
-            where: {
-              createdAt: { gte: dateRanges.current.from }
-            },
-            select: { points: true }
-          }
-        },
-        orderBy: { points: 'desc' },
-        take: parseInt(limit)
-      });
-
-      // Calculate period points for historical data
-      leaderboardData = leaderboardData.map(user => ({
-        ...user,
-        periodPoints: user.pointEvents.reduce((sum: number, event: { points: number }) => sum + event.points, 0)
-      }));
-    }
-
-    // Add rankings
-    const leaderboard = leaderboardData.map((user, index) => ({
-      rank: index + 1,
-      userId: user.id,
-      name: user.name || 'Anonymous',
-      email: user.email,
-      totalPoints: user.points,
-      periodPoints: period === 'current' ? user.monthlyPoints : user.periodPoints,
-      memberSince: user.createdAt.toISOString().split('T')[0]
-    }));
-
-    logPerformanceMetrics('Bounties Leaderboard', startTime, leaderboard.length);
-
-    res.status(200).json({
-      success: true,
-      period,
-      leaderboard,
-      filters: {
-        cityId: cityId ? parseInt(cityId) : null
-      }
-    });
-
-  } catch (error) {
-    console.error('Get bounties leaderboard error:', error);
-    logPerformanceMetrics('Bounties Leaderboard (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch bounties leaderboard'
-    });
-  }
-});
-
-// --- Endpoint: GET /api/admin/bounties/analytics ---
-// Get detailed bounties analytics with competition insights
-router.get('/bounties/analytics', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const { period = '30d', cityId } = req.query as any;
-    
-    // Validate period parameter
-    const periodValidation = validatePeriod(period);
-    if (!periodValidation.isValid) {
-      return res.status(400).json({ error: periodValidation.error });
-    }
-
-    // Calculate date ranges
-    const dateRanges = calculateDateRanges(periodValidation.days);
-
-    // Build user filter
-    let userFilter: any = { role: 'USER' };
-    if (cityId) {
-      const cityMerchants = await getMerchantIdsForCity(parseInt(cityId));
-      if (cityMerchants.length === 0) {
-        return res.status(200).json({
-          success: true,
-          period,
-          dateRange: {
-            from: dateRanges.current.from.toISOString(),
-            to: dateRanges.current.to.toISOString()
-          },
-          analytics: {
-            pointDistribution: [],
-            activityPatterns: [],
-            competitionMetrics: {},
-            topPerformers: []
-          },
-          filters: { cityId: parseInt(cityId) },
-          message: 'No approved merchants found in this city'
-        });
-      }
-      
-      userFilter.checkIns = {
-        some: {
-          merchantId: { in: cityMerchants }
-        }
-      };
-    }
-
-    // Get detailed analytics
-    const [
-      pointDistribution,
-      activityPatterns,
-      competitionMetrics,
-      topPerformers
-    ] = await Promise.all([
-      // Point distribution analysis
-      prisma.user.findMany({
-        where: {
-          ...userFilter,
-          pointEvents: {
-            some: {
-              createdAt: { gte: dateRanges.current.from }
-            }
-          }
-        },
-        select: {
-          id: true,
-          points: true,
-          pointEvents: {
-            where: {
-              createdAt: { gte: dateRanges.current.from }
-            },
-            select: { points: true }
-          }
-        }
-      }).then(users => {
-        const periodPoints = users.map(user => 
-          user.pointEvents.reduce((sum, event) => sum + event.points, 0)
-        );
-        
-        const sorted = periodPoints.sort((a, b) => a - b);
-        const total = periodPoints.length;
-        
-        return {
-          total: total,
-          average: total > 0 ? Number((periodPoints.reduce((sum, p) => sum + p, 0) / total).toFixed(2)) : 0,
-          median: total > 0 ? (total % 2 === 0 
-            ? (sorted[total / 2 - 1] + sorted[total / 2]) / 2
-            : sorted[Math.floor(total / 2)]
-          ) : 0,
-          distribution: [
-            { range: '0-50', count: periodPoints.filter(p => p <= 50).length },
-            { range: '51-100', count: periodPoints.filter(p => p > 50 && p <= 100).length },
-            { range: '101-250', count: periodPoints.filter(p => p > 100 && p <= 250).length },
-            { range: '251-500', count: periodPoints.filter(p => p > 250 && p <= 500).length },
-            { range: '500+', count: periodPoints.filter(p => p > 500).length }
-          ]
-        };
-      }),
-      
-      // Activity patterns (daily points awarded)
-      prisma.userPointEvent.groupBy({
-        by: ['createdAt'],
-        where: {
-          createdAt: { gte: dateRanges.current.from },
-          ...(cityId && {
-            deal: {
-              merchantId: { in: await getMerchantIdsForCity(parseInt(cityId)) }
-            }
-          })
-        },
-        _sum: { points: true },
-        orderBy: { createdAt: 'asc' }
-      }).then(results => {
-        const dailyMap = new Map();
-        results.forEach(result => {
-          const day = new Date(result.createdAt).getDay();
-          dailyMap.set(day, (dailyMap.get(day) || 0) + Number(result._sum.points || 0));
-        });
-        
-        return Array.from({ length: 7 }, (_, i) => ({
-          day: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][i],
-          points: dailyMap.get(i) || 0
-        }));
-      }),
-      
-      // Competition metrics
-      prisma.user.count({
-        where: {
-          ...userFilter,
-          pointEvents: {
-            some: {
-              createdAt: { gte: dateRanges.current.from }
-            }
-          }
-        }
-      }).then(async totalParticipants => {
-        const top10Percent = Math.max(1, Math.floor(totalParticipants * 0.1));
-        const top25Percent = Math.max(1, Math.floor(totalParticipants * 0.25));
-        
-        // Get top 10% and 25% thresholds
-        const topUsers = await prisma.user.findMany({
-          where: {
-            ...userFilter,
-            pointEvents: {
-              some: {
-                createdAt: { gte: dateRanges.current.from }
-              }
-            }
-          },
-          select: {
-            pointEvents: {
-              where: {
-                createdAt: { gte: dateRanges.current.from }
-              },
-              select: { points: true }
-            }
-          },
-          orderBy: { points: 'desc' },
-          take: top25Percent
-        });
-        
-        const userPoints = topUsers.map(user => 
-          user.pointEvents.reduce((sum, event) => sum + event.points, 0)
-        );
-        
-        return {
-          totalParticipants,
-          top10PercentThreshold: userPoints[top10Percent - 1] || 0,
-          top25PercentThreshold: userPoints[top25Percent - 1] || 0,
-          competitionIntensity: totalParticipants > 0 ? Number(((userPoints[0] || 0) / Math.max(1, userPoints[userPoints.length - 1] || 1)).toFixed(2)) : 0
-        };
-      }),
-      
-      // Top performers
-      prisma.user.findMany({
-        where: {
-          ...userFilter,
-          pointEvents: {
-            some: {
-              createdAt: { gte: dateRanges.current.from }
-            }
-          }
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          points: true,
-          pointEvents: {
-            where: {
-              createdAt: { gte: dateRanges.current.from }
-            },
-            select: { points: true }
-          }
-        },
-        orderBy: { points: 'desc' },
-        take: 10
-      }).then(users => 
-        users.map(user => ({
-          userId: user.id,
-          name: user.name || 'Anonymous',
-          email: user.email,
-          totalPoints: user.points,
-          periodPoints: user.pointEvents.reduce((sum, event) => sum + event.points, 0)
-        }))
-      )
-    ]);
-
-    logPerformanceMetrics('Bounties Analytics', startTime, pointDistribution.total);
-
-    res.status(200).json({
-      success: true,
-      period,
-      dateRange: {
-        from: dateRanges.current.from.toISOString(),
-        to: dateRanges.current.to.toISOString()
-      },
-      analytics: {
-        pointDistribution,
-        activityPatterns,
-        competitionMetrics,
-        topPerformers
-      },
-      filters: {
-        cityId: cityId ? parseInt(cityId) : null
-      }
-    });
-
-  } catch (error) {
-    console.error('Get bounties analytics error:', error);
-    logPerformanceMetrics('Bounties Analytics (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch bounties analytics'
-    });
-  }
-});
-
-// --- Endpoint: GET /api/admin/bounties/rewards ---
-// Get points rewards distribution and statistics
-router.get('/bounties/rewards', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const { period = '30d', cityId } = req.query as any;
-    
-    // Validate period parameter
-    const periodValidation = validatePeriod(period);
-    if (!periodValidation.isValid) {
-      return res.status(400).json({ error: periodValidation.error });
-    }
-
-    // Calculate date ranges
-    const dateRanges = calculateDateRanges(periodValidation.days);
-
-    // Build where clause for point events
-    const whereClause: any = {
-      createdAt: { gte: dateRanges.current.from }
-    };
-    
-    if (cityId) {
-      const cityMerchants = await getMerchantIdsForCity(parseInt(cityId));
-      if (cityMerchants.length === 0) {
-        return res.status(200).json({
-          success: true,
-          period,
-          dateRange: {
-            from: dateRanges.current.from.toISOString(),
-            to: dateRanges.current.to.toISOString()
-          },
-          rewards: {
-            totalPointsAwarded: 0,
-            pointsByEventType: [],
-            pointsByUser: [],
-            pointsByDeal: [],
-            averagePointsPerEvent: 0
-          },
-          filters: { cityId: parseInt(cityId) },
-          message: 'No approved merchants found in this city'
-        });
-      }
-      
-      whereClause.deal = {
-        merchantId: { in: cityMerchants }
-      };
-    }
-
-    // Get rewards analytics
-    const [
-      totalPointsAwarded,
-      pointsByEventType,
-      pointsByUser,
-      pointsByDeal,
-      averagePointsPerEvent
-    ] = await Promise.all([
-      // Total points awarded in period
-      prisma.userPointEvent.aggregate({
-        where: whereClause,
-        _sum: { points: true }
-      }),
-      
-      // Points by event type
-      prisma.userPointEvent.groupBy({
-        by: ['pointEventTypeId'],
-        where: whereClause,
-        _sum: { points: true },
-        _count: { id: true }
-      }).then(async results => {
-        const eventTypes = await prisma.pointEventTypeMaster.findMany({
-          where: { id: { in: results.map(r => r.pointEventTypeId) } },
-          select: { id: true, name: true, points: true }
-        });
-        
-        return results.map(result => {
-          const eventType = eventTypes.find(et => et.id === result.pointEventTypeId);
-          return {
-            eventTypeId: result.pointEventTypeId,
-            eventTypeName: eventType?.name || 'Unknown',
-            basePoints: eventType?.points || 0,
-            totalPointsAwarded: Number(result._sum.points || 0),
-            totalEvents: result._count.id,
-            averagePointsPerEvent: result._count.id > 0 
-              ? Number((Number(result._sum.points || 0) / result._count.id).toFixed(2))
-              : 0
-          };
-        });
-      }),
-      
-      // Top users by points earned
-      prisma.userPointEvent.groupBy({
-        by: ['userId'],
-        where: whereClause,
-        _sum: { points: true },
-        _count: { id: true },
-        orderBy: { _sum: { points: 'desc' } },
-        take: 20
-      }).then(async results => {
-        const userIds = results.map(r => r.userId);
-        const users = await prisma.user.findMany({
-          where: { id: { in: userIds } },
-          select: { id: true, name: true, email: true }
-        });
-        
-        return results.map(result => {
-          const user = users.find(u => u.id === result.userId);
-          return {
-            userId: result.userId,
-            name: user?.name || 'Anonymous',
-            email: user?.email || 'Unknown',
-            totalPointsEarned: Number(result._sum.points || 0),
-            totalEvents: result._count.id,
-            averagePointsPerEvent: result._count.id > 0 
-              ? Number((Number(result._sum.points || 0) / result._count.id).toFixed(2))
-              : 0
-          };
-        });
-      }),
-      
-      // Top deals by points awarded
-      prisma.userPointEvent.groupBy({
-        by: ['dealId'],
-        where: {
-          ...whereClause,
-          dealId: { not: null }
-        },
-        _sum: { points: true },
-        _count: { id: true },
-        orderBy: { _sum: { points: 'desc' } },
-        take: 20
-      }).then(async results => {
-        const dealIds = results.map(r => r.dealId).filter(id => id !== null);
-        const deals = await prisma.deal.findMany({
-          where: { id: { in: dealIds } },
-          select: {
-            id: true,
-            title: true,
-            merchant: {
-              select: { businessName: true }
-            }
-          }
-        });
-        
-        return results.map(result => {
-          const deal = deals.find(d => d.id === result.dealId);
-          return {
-            dealId: result.dealId,
-            title: deal?.title || 'Unknown Deal',
-            merchant: deal?.merchant.businessName || 'Unknown Merchant',
-            totalPointsAwarded: Number(result._sum.points || 0),
-            totalEvents: result._count.id,
-            averagePointsPerEvent: result._count.id > 0 
-              ? Number((Number(result._sum.points || 0) / result._count.id).toFixed(2))
-              : 0
-          };
-        });
-      }),
-      
-      // Average points per event
-      prisma.userPointEvent.aggregate({
-        where: whereClause,
-        _avg: { points: true },
-        _count: { id: true }
-      })
-    ]);
-
-    logPerformanceMetrics('Bounties Rewards', startTime, pointsByUser.length);
-
-    res.status(200).json({
-      success: true,
-      period,
-      dateRange: {
-        from: dateRanges.current.from.toISOString(),
-        to: dateRanges.current.to.toISOString()
-      },
-      rewards: {
-        totalPointsAwarded: Number(totalPointsAwarded._sum.points || 0),
-        pointsByEventType,
-        pointsByUser,
-        pointsByDeal,
-        averagePointsPerEvent: Number((averagePointsPerEvent._avg.points || 0).toFixed(2)),
-        totalEvents: averagePointsPerEvent._count.id
-      },
-      filters: {
-        cityId: cityId ? parseInt(cityId) : null
-      }
-    });
-
-  } catch (error) {
-    console.error('Get bounties rewards error:', error);
-    logPerformanceMetrics('Bounties Rewards (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch bounties rewards'
-    });
-  }
-});
-
-// --- Endpoint: GET /api/admin/bounties/historical ---
-// Get historical bounties data and past competitions
-router.get('/bounties/historical', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
-  const startTime = Date.now();
-  
-  try {
-    const { months = 6, cityId } = req.query as any;
-    
-    // Get historical data for specified number of months
-    const historicalData = [];
-    const now = new Date();
-    
-    for (let i = 0; i < parseInt(months); i++) {
-      const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59, 999);
-      
-      // Build user filter
-      let userFilter: any = { role: 'USER' };
-      if (cityId) {
-        const cityMerchants = await getMerchantIdsForCity(parseInt(cityId));
-        if (cityMerchants.length > 0) {
-          userFilter.checkIns = {
-            some: {
-              merchantId: { in: cityMerchants }
-            }
-          };
-        }
-      }
-      
-      // Get month data
-      const [
-        totalParticipants,
-        totalPointsAwarded,
-        topPerformer,
-        averagePoints
-      ] = await Promise.all([
-        prisma.user.count({
-          where: {
-            ...userFilter,
-            pointEvents: {
-              some: {
-                createdAt: { gte: monthStart, lte: monthEnd }
-              }
-            }
-          }
-        }),
-        
-        prisma.userPointEvent.aggregate({
-          where: {
-            createdAt: { gte: monthStart, lte: monthEnd },
-            ...(cityId && {
-              deal: {
-                merchantId: { in: await getMerchantIdsForCity(parseInt(cityId)) }
-              }
-            })
-          },
-          _sum: { points: true }
-        }),
-        
-        prisma.user.findFirst({
-          where: {
-            ...userFilter,
-            pointEvents: {
-              some: {
-                createdAt: { gte: monthStart, lte: monthEnd }
-              }
-            }
-          },
-          orderBy: { points: 'desc' },
-          select: { id: true, name: true, points: true }
-        }),
-        
-        prisma.user.aggregate({
-          where: {
-            ...userFilter,
-            pointEvents: {
-              some: {
-                createdAt: { gte: monthStart, lte: monthEnd }
-              }
-            }
-          },
-          _avg: { points: true }
-        })
-      ]);
-      
-      historicalData.push({
-        month: monthStart.toISOString().substring(0, 7), // YYYY-MM format
-        monthName: monthStart.toLocaleDateString('en-US', { year: 'numeric', month: 'long' }),
-        totalParticipants,
-        totalPointsAwarded: Number(totalPointsAwarded._sum.points || 0),
-        topPerformer: {
-          userId: topPerformer?.id || null,
-          name: topPerformer?.name || null,
-          points: topPerformer?.points || 0
-        },
-        averagePoints: Number((averagePoints._avg.points || 0).toFixed(2))
-      });
-    }
-
-    logPerformanceMetrics('Bounties Historical', startTime, historicalData.length);
-
-    res.status(200).json({
-      success: true,
-      historicalData,
-      filters: {
-        cityId: cityId ? parseInt(cityId) : null,
-        months: parseInt(months)
-      }
-    });
-
-  } catch (error) {
-    console.error('Get bounties historical error:', error);
-    logPerformanceMetrics('Bounties Historical (Error)', startTime, 0);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: 'Failed to fetch bounties historical data'
     });
   }
 });
