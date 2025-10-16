@@ -2407,4 +2407,723 @@ router.get('/customers/analytics', protect, requireAdmin, async (req: AuthReques
   }
 });
 
+// ============================================================================
+// TAP-INS (CHECK-INS) STATISTICS APIs
+// ============================================================================
+
+// --- Endpoint: GET /api/admin/tap-ins/overview ---
+// Get comprehensive tap-ins overview with real-time stats from database
+router.get('/tap-ins/overview', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
+  
+  try {
+    const { period = '7d', cityId, merchantId } = req.query as any;
+    
+    // Validate period parameter
+    const periodValidation = validatePeriod(period);
+    if (!periodValidation.isValid) {
+      return res.status(400).json({ error: periodValidation.error });
+    }
+
+    // Calculate date ranges
+    const dateRanges = calculateDateRanges(periodValidation.days);
+
+    // Build merchant filter
+    let merchantIds: number[] | undefined;
+    
+    if (cityId) {
+      merchantIds = await getMerchantIdsForCity(parseInt(cityId));
+      if (merchantIds.length === 0) {
+        return res.status(200).json({
+          success: true,
+          period,
+          dateRange: {
+            from: dateRanges.current.from.toISOString(),
+            to: dateRanges.current.to.toISOString()
+          },
+          metrics: {
+            totalTapIns: { value: 0, change: 0, trend: 'up' },
+            uniqueUsers: { value: 0, change: 0, trend: 'up' },
+            averageDistance: { value: 0, change: 0, trend: 'up' },
+            topMerchant: { value: 0, change: 0, trend: 'up' }
+          },
+          filters: { cityId: parseInt(cityId), merchantId: null },
+          message: 'No approved merchants found in this city'
+        });
+      }
+    } else if (merchantId) {
+      const merchantValidation = await validateMerchant(parseInt(merchantId));
+      if (!merchantValidation.isValid) {
+        return res.status(400).json({ error: merchantValidation.error });
+      }
+      merchantIds = [parseInt(merchantId)];
+    }
+
+    // Build where clause
+    const whereClause: any = {
+      createdAt: { gte: dateRanges.current.from }
+    };
+    if (merchantIds) {
+      whereClause.merchantId = { in: merchantIds };
+    }
+
+    const prevWhereClause: any = {
+      createdAt: { 
+        gte: dateRanges.previous.from, 
+        lte: dateRanges.previous.to 
+      }
+    };
+    if (merchantIds) {
+      prevWhereClause.merchantId = { in: merchantIds };
+    }
+
+    // Get current and previous period metrics
+    const [
+      currentTapIns,
+      currentUniqueUsers,
+      currentAvgDistance,
+      currentTopMerchant,
+      prevTapIns,
+      prevUniqueUsers,
+      prevAvgDistance,
+      prevTopMerchant
+    ] = await Promise.all([
+      // Current period metrics
+      prisma.checkIn.count({ where: whereClause }),
+      prisma.checkIn.groupBy({
+        by: ['userId'],
+        where: whereClause
+      }).then(results => results.length),
+      prisma.checkIn.aggregate({
+        where: whereClause,
+        _avg: { distanceMeters: true }
+      }),
+      prisma.checkIn.groupBy({
+        by: ['merchantId'],
+        where: whereClause,
+        _count: { id: true },
+        orderBy: { _count: { id: 'desc' } },
+        take: 1
+      }).then(results => results[0]?._count.id || 0),
+      
+      // Previous period metrics
+      prisma.checkIn.count({ where: prevWhereClause }),
+      prisma.checkIn.groupBy({
+        by: ['userId'],
+        where: prevWhereClause
+      }).then(results => results.length),
+      prisma.checkIn.aggregate({
+        where: prevWhereClause,
+        _avg: { distanceMeters: true }
+      }),
+      prisma.checkIn.groupBy({
+        by: ['merchantId'],
+        where: prevWhereClause,
+        _count: { id: true },
+        orderBy: { _count: { id: 'desc' } },
+        take: 1
+      }).then(results => results[0]?._count.id || 0)
+    ]);
+
+    // Calculate metrics
+    const totalTapIns = currentTapIns;
+    const uniqueUsers = currentUniqueUsers;
+    const averageDistance = Number((currentAvgDistance._avg.distanceMeters || 0).toFixed(2));
+    const topMerchant = currentTopMerchant;
+
+    // Calculate percentage changes
+    const totalTapInsChange = calculatePercentageChange(totalTapIns, prevTapIns);
+    const uniqueUsersChange = calculatePercentageChange(uniqueUsers, prevUniqueUsers);
+    const avgDistancePrev = Number(prevAvgDistance._avg.distanceMeters || 0);
+    const averageDistanceChange = calculatePercentageChange(averageDistance, avgDistancePrev);
+    const topMerchantChange = calculatePercentageChange(topMerchant, prevTopMerchant);
+
+    logPerformanceMetrics('Tap-ins Overview', startTime, totalTapIns);
+
+    res.status(200).json({
+      success: true,
+      period,
+      dateRange: {
+        from: dateRanges.current.from.toISOString(),
+        to: dateRanges.current.to.toISOString()
+      },
+      metrics: {
+        totalTapIns: {
+          value: totalTapIns,
+          change: Number(totalTapInsChange.toFixed(1)),
+          trend: totalTapInsChange >= 0 ? 'up' : 'down'
+        },
+        uniqueUsers: {
+          value: uniqueUsers,
+          change: Number(uniqueUsersChange.toFixed(1)),
+          trend: uniqueUsersChange >= 0 ? 'up' : 'down'
+        },
+        averageDistance: {
+          value: averageDistance,
+          change: Number(averageDistanceChange.toFixed(1)),
+          trend: averageDistanceChange >= 0 ? 'up' : 'down'
+        },
+        topMerchant: {
+          value: topMerchant,
+          change: Number(topMerchantChange.toFixed(1)),
+          trend: topMerchantChange >= 0 ? 'up' : 'down'
+        }
+      },
+      filters: {
+        cityId: cityId ? parseInt(cityId) : null,
+        merchantId: merchantId ? parseInt(merchantId) : null
+      }
+    });
+
+  } catch (error) {
+    console.error('Get tap-ins overview error:', error);
+    logPerformanceMetrics('Tap-ins Overview (Error)', startTime, 0);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to fetch tap-ins overview'
+    });
+  }
+});
+
+// --- Endpoint: GET /api/admin/tap-ins/geographic ---
+// Get geographic distribution of tap-ins
+router.get('/tap-ins/geographic', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
+  
+  try {
+    const { period = '30d', cityId, merchantId } = req.query as any;
+    
+    // Validate period parameter
+    const periodValidation = validatePeriod(period);
+    if (!periodValidation.isValid) {
+      return res.status(400).json({ error: periodValidation.error });
+    }
+
+    // Calculate date ranges
+    const dateRanges = calculateDateRanges(periodValidation.days);
+
+    // Build merchant filter
+    let merchantIds: number[] | undefined;
+    
+    if (cityId) {
+      merchantIds = await getMerchantIdsForCity(parseInt(cityId));
+      if (merchantIds.length === 0) {
+        return res.status(200).json({
+          success: true,
+          period,
+          dateRange: {
+            from: dateRanges.current.from.toISOString(),
+            to: dateRanges.current.to.toISOString()
+          },
+          geographic: {
+            cityDistribution: [],
+            stateDistribution: [],
+            distanceAnalysis: { average: 0, median: 0, min: 0, max: 0, total: 0 }
+          },
+          filters: { cityId: parseInt(cityId), merchantId: null },
+          message: 'No approved merchants found in this city'
+        });
+      }
+    } else if (merchantId) {
+      const merchantValidation = await validateMerchant(parseInt(merchantId));
+      if (!merchantValidation.isValid) {
+        return res.status(400).json({ error: merchantValidation.error });
+      }
+      merchantIds = [parseInt(merchantId)];
+    }
+
+    // Build where clause
+    const whereClause: any = {
+      createdAt: { gte: dateRanges.current.from }
+    };
+    if (merchantIds) {
+      whereClause.merchantId = { in: merchantIds };
+    }
+
+    // Get geographic analytics
+    const [cityDistribution, stateDistribution, distanceAnalysis] = await Promise.all([
+      // City distribution
+      prisma.checkIn.groupBy({
+        by: ['merchantId'],
+        where: whereClause,
+        _count: { id: true }
+      }).then(async results => {
+        const merchantIds = results.map(r => r.merchantId);
+        const merchants = await prisma.merchant.findMany({
+          where: { id: { in: merchantIds } },
+          include: {
+            stores: {
+              include: {
+                city: {
+                  select: {
+                    id: true,
+                    name: true,
+                    state: true
+                  }
+                }
+              }
+            }
+          }
+        });
+        
+        const cityMap = new Map();
+        results.forEach(result => {
+          const merchant = merchants.find(m => m.id === result.merchantId);
+          if (merchant?.stores?.[0]?.city) {
+            const city = merchant.stores[0].city;
+            const key = `${city.name}, ${city.state}`;
+            cityMap.set(key, (cityMap.get(key) || 0) + result._count.id);
+          }
+        });
+        
+        return Array.from(cityMap.entries())
+          .map(([location, count]) => ({ location, count }))
+          .sort((a, b) => b.count - a.count);
+      }),
+      
+      // State distribution
+      prisma.checkIn.groupBy({
+        by: ['merchantId'],
+        where: whereClause,
+        _count: { id: true }
+      }).then(async results => {
+        const merchantIds = results.map(r => r.merchantId);
+        const merchants = await prisma.merchant.findMany({
+          where: { id: { in: merchantIds } },
+          include: {
+            stores: {
+              include: {
+                city: {
+                  select: {
+                    state: true
+                  }
+                }
+              }
+            }
+          }
+        });
+        
+        const stateMap = new Map();
+        results.forEach(result => {
+          const merchant = merchants.find(m => m.id === result.merchantId);
+          if (merchant?.stores?.[0]?.city) {
+            const state = merchant.stores[0].city.state;
+            stateMap.set(state, (stateMap.get(state) || 0) + result._count.id);
+          }
+        });
+        
+        return Array.from(stateMap.entries())
+          .map(([state, count]) => ({ state, count }))
+          .sort((a, b) => b.count - a.count);
+      }),
+      
+      // Distance analysis
+      prisma.checkIn.findMany({
+        where: whereClause,
+        select: { distanceMeters: true }
+      }).then(results => {
+        const distances = results.map(r => r.distanceMeters);
+        const sorted = distances.sort((a, b) => a - b);
+        
+        return {
+          average: Number((distances.reduce((sum, d) => sum + d, 0) / distances.length).toFixed(2)),
+          median: Number((sorted.length % 2 === 0 
+            ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+            : sorted[Math.floor(sorted.length / 2)]).toFixed(2)),
+          min: Number(sorted[0]?.toFixed(2) || 0),
+          max: Number(sorted[sorted.length - 1]?.toFixed(2) || 0),
+          total: distances.length
+        };
+      })
+    ]);
+
+    logPerformanceMetrics('Tap-ins Geographic', startTime, cityDistribution.length);
+
+    res.status(200).json({
+      success: true,
+      period,
+      dateRange: {
+        from: dateRanges.current.from.toISOString(),
+        to: dateRanges.current.to.toISOString()
+      },
+      geographic: {
+        cityDistribution,
+        stateDistribution,
+        distanceAnalysis
+      }
+    });
+
+  } catch (error) {
+    console.error('Get tap-ins geographic error:', error);
+    logPerformanceMetrics('Tap-ins Geographic (Error)', startTime, 0);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to fetch tap-ins geographic data'
+    });
+  }
+});
+
+// ============================================================================
+// BOUNTIES (MONTHLY LEADERBOARD) STATISTICS APIs
+// ============================================================================
+
+// --- Endpoint: GET /api/admin/bounties/overview ---
+// Get comprehensive bounties overview with monthly competition stats
+router.get('/bounties/overview', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
+  
+  try {
+    const { period = '30d', cityId } = req.query as any;
+    
+    // Validate period parameter
+    const periodValidation = validatePeriod(period);
+    if (!periodValidation.isValid) {
+      return res.status(400).json({ error: periodValidation.error });
+    }
+
+    // Calculate date ranges
+    const dateRanges = calculateDateRanges(periodValidation.days);
+
+    // Build user filter based on city (if provided)
+    let userFilter: any = { role: 'USER' };
+    if (cityId) {
+      // Get users who have interacted with merchants in this city
+      const cityMerchants = await getMerchantIdsForCity(parseInt(cityId));
+      if (cityMerchants.length === 0) {
+        return res.status(200).json({
+          success: true,
+          period,
+          dateRange: {
+            from: dateRanges.current.from.toISOString(),
+            to: dateRanges.current.to.toISOString()
+          },
+          metrics: {
+            totalParticipants: { value: 0, change: 0, trend: 'up' },
+            totalPointsAwarded: { value: 0, change: 0, trend: 'up' },
+            averagePointsPerUser: { value: 0, change: 0, trend: 'up' },
+            topPerformerPoints: { value: 0, change: 0, trend: 'up' }
+          },
+          filters: { cityId: parseInt(cityId) },
+          message: 'No approved merchants found in this city'
+        });
+      }
+      
+      // Filter users who have check-ins with merchants in this city
+      userFilter.checkIns = {
+        some: {
+          merchantId: { in: cityMerchants }
+        }
+      };
+    }
+
+    // Get current period metrics
+    const [
+      currentParticipants,
+      currentTotalPoints,
+      currentAvgPoints,
+      currentTopPerformer,
+      prevParticipants,
+      prevTotalPoints,
+      prevAvgPoints,
+      prevTopPerformer
+    ] = await Promise.all([
+      // Current period participants (users with points in period)
+      prisma.user.count({
+        where: {
+          ...userFilter,
+          pointEvents: {
+            some: {
+              createdAt: { gte: dateRanges.current.from }
+            }
+          }
+        }
+      }),
+      
+      // Current period total points awarded
+      prisma.userPointEvent.aggregate({
+        where: {
+          createdAt: { gte: dateRanges.current.from },
+          ...(cityId && {
+            deal: {
+              merchantId: { in: await getMerchantIdsForCity(parseInt(cityId)) }
+            }
+          })
+        },
+        _sum: { points: true }
+      }),
+      
+      // Current period average points per user
+      prisma.user.aggregate({
+        where: {
+          ...userFilter,
+          pointEvents: {
+            some: {
+              createdAt: { gte: dateRanges.current.from }
+            }
+          }
+        },
+        _avg: { points: true }
+      }),
+      
+      // Current period top performer
+      prisma.user.findFirst({
+        where: {
+          ...userFilter,
+          pointEvents: {
+            some: {
+              createdAt: { gte: dateRanges.current.from }
+            }
+          }
+        },
+        orderBy: { points: 'desc' },
+        select: { points: true }
+      }),
+      
+      // Previous period metrics
+      prisma.user.count({
+        where: {
+          ...userFilter,
+          pointEvents: {
+            some: {
+              createdAt: { 
+                gte: dateRanges.previous.from, 
+                lte: dateRanges.previous.to 
+              }
+            }
+          }
+        }
+      }),
+      
+      prisma.userPointEvent.aggregate({
+        where: {
+          createdAt: { 
+            gte: dateRanges.previous.from, 
+            lte: dateRanges.previous.to 
+          },
+          ...(cityId && {
+            deal: {
+              merchantId: { in: await getMerchantIdsForCity(parseInt(cityId)) }
+            }
+          })
+        },
+        _sum: { points: true }
+      }),
+      
+      prisma.user.aggregate({
+        where: {
+          ...userFilter,
+          pointEvents: {
+            some: {
+              createdAt: { 
+                gte: dateRanges.previous.from, 
+                lte: dateRanges.previous.to 
+              }
+            }
+          }
+        },
+        _avg: { points: true }
+      }),
+      
+      prisma.user.findFirst({
+        where: {
+          ...userFilter,
+          pointEvents: {
+            some: {
+              createdAt: { 
+                gte: dateRanges.previous.from, 
+                lte: dateRanges.previous.to 
+              }
+            }
+          }
+        },
+        orderBy: { points: 'desc' },
+        select: { points: true }
+      })
+    ]);
+
+    // Calculate metrics
+    const totalParticipants = currentParticipants;
+    const totalPointsAwarded = Number(currentTotalPoints._sum.points || 0);
+    const averagePointsPerUser = Number((currentAvgPoints._avg.points || 0).toFixed(2));
+    const topPerformerPoints = currentTopPerformer?.points || 0;
+
+    // Calculate percentage changes
+    const totalParticipantsChange = calculatePercentageChange(totalParticipants, prevParticipants);
+    const totalPointsAwardedPrev = Number(prevTotalPoints._sum.points || 0);
+    const totalPointsAwardedChange = calculatePercentageChange(totalPointsAwarded, totalPointsAwardedPrev);
+    const avgPointsPrev = Number(prevAvgPoints._avg.points || 0);
+    const averagePointsPerUserChange = calculatePercentageChange(averagePointsPerUser, avgPointsPrev);
+    const topPerformerPointsPrev = prevTopPerformer?.points || 0;
+    const topPerformerPointsChange = calculatePercentageChange(topPerformerPoints, topPerformerPointsPrev);
+
+    logPerformanceMetrics('Bounties Overview', startTime, totalParticipants);
+
+    res.status(200).json({
+      success: true,
+      period,
+      dateRange: {
+        from: dateRanges.current.from.toISOString(),
+        to: dateRanges.current.to.toISOString()
+      },
+      metrics: {
+        totalParticipants: {
+          value: totalParticipants,
+          change: Number(totalParticipantsChange.toFixed(1)),
+          trend: totalParticipantsChange >= 0 ? 'up' : 'down'
+        },
+        totalPointsAwarded: {
+          value: totalPointsAwarded,
+          change: Number(totalPointsAwardedChange.toFixed(1)),
+          trend: totalPointsAwardedChange >= 0 ? 'up' : 'down'
+        },
+        averagePointsPerUser: {
+          value: averagePointsPerUser,
+          change: Number(averagePointsPerUserChange.toFixed(1)),
+          trend: averagePointsPerUserChange >= 0 ? 'up' : 'down'
+        },
+        topPerformerPoints: {
+          value: topPerformerPoints,
+          change: Number(topPerformerPointsChange.toFixed(1)),
+          trend: topPerformerPointsChange >= 0 ? 'up' : 'down'
+        }
+      },
+      filters: {
+        cityId: cityId ? parseInt(cityId) : null
+      }
+    });
+
+  } catch (error) {
+    console.error('Get bounties overview error:', error);
+    logPerformanceMetrics('Bounties Overview (Error)', startTime, 0);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to fetch bounties overview'
+    });
+  }
+});
+
+// --- Endpoint: GET /api/admin/bounties/leaderboard ---
+// Get current monthly leaderboard with rankings
+router.get('/bounties/leaderboard', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
+  
+  try {
+    const { limit = 50, cityId, period = 'current' } = req.query as any;
+    
+    // Build user filter based on city (if provided)
+    let userFilter: any = { role: 'USER' };
+    if (cityId) {
+      const cityMerchants = await getMerchantIdsForCity(parseInt(cityId));
+      if (cityMerchants.length === 0) {
+        return res.status(200).json({
+          success: true,
+          period,
+          leaderboard: [],
+          filters: { cityId: parseInt(cityId) },
+          message: 'No approved merchants found in this city'
+        });
+      }
+      
+      userFilter.checkIns = {
+        some: {
+          merchantId: { in: cityMerchants }
+        }
+      };
+    }
+
+    let leaderboardData: any[];
+
+    if (period === 'current') {
+      // Current month leaderboard using monthlyPoints
+      leaderboardData = await prisma.user.findMany({
+        where: {
+          ...userFilter,
+          monthlyPoints: { gt: 0 }
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          points: true,
+          monthlyPoints: true,
+          createdAt: true
+        },
+        orderBy: { monthlyPoints: 'desc' },
+        take: parseInt(limit)
+      });
+    } else {
+      // Historical period leaderboard using point events
+      const periodValidation = validatePeriod(period);
+      if (!periodValidation.isValid) {
+        return res.status(400).json({ error: periodValidation.error });
+      }
+
+      const dateRanges = calculateDateRanges(periodValidation.days);
+      
+      leaderboardData = await prisma.user.findMany({
+        where: {
+          ...userFilter,
+          pointEvents: {
+            some: {
+              createdAt: { gte: dateRanges.current.from }
+            }
+          }
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          points: true,
+          monthlyPoints: true,
+          createdAt: true,
+          pointEvents: {
+            where: {
+              createdAt: { gte: dateRanges.current.from }
+            },
+            select: { points: true }
+          }
+        },
+        orderBy: { points: 'desc' },
+        take: parseInt(limit)
+      });
+
+      // Calculate period points for historical data
+      leaderboardData = leaderboardData.map(user => ({
+        ...user,
+        periodPoints: user.pointEvents.reduce((sum: number, event: { points: number }) => sum + event.points, 0)
+      }));
+    }
+
+    // Add rankings
+    const leaderboard = leaderboardData.map((user, index) => ({
+      rank: index + 1,
+      userId: user.id,
+      name: user.name || 'Anonymous',
+      email: user.email,
+      totalPoints: user.points,
+      periodPoints: period === 'current' ? user.monthlyPoints : user.periodPoints,
+      memberSince: user.createdAt.toISOString().split('T')[0]
+    }));
+
+    logPerformanceMetrics('Bounties Leaderboard', startTime, leaderboard.length);
+
+    res.status(200).json({
+      success: true,
+      period,
+      leaderboard,
+      filters: {
+        cityId: cityId ? parseInt(cityId) : null
+      }
+    });
+
+  } catch (error) {
+    console.error('Get bounties leaderboard error:', error);
+    logPerformanceMetrics('Bounties Leaderboard (Error)', startTime, 0);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to fetch bounties leaderboard'
+    });
+  }
+});
+
 export default router;
