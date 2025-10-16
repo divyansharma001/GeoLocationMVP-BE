@@ -1,6 +1,6 @@
 // src/routes/merchant.routes.ts
 import { Router, Response } from 'express';
-import { protect, isApprovedMerchant, AuthRequest } from '../middleware/auth.middleware';
+import { protect, isApprovedMerchant, isMerchant, AuthRequest } from '../middleware/auth.middleware';
 import prisma from '../lib/prisma';
 import { upload, uploadToCloudinary } from '../lib/cloudinary';
 import { slugify } from '../lib/slugify';
@@ -2128,9 +2128,9 @@ router.get('/merchants/dashboard/performance-comparison', protect, isApprovedMer
 export default router;
 
 // --- Endpoint: GET /api/merchants/me/menu ---
-// Returns menu items for the authenticated approved merchant.
+// Returns menu items for the authenticated merchant (any status).
 // Response: { menuItems: [ { id, name, price, category, imageUrl } ] }
-router.get('/merchants/me/menu', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+router.get('/merchants/me/menu', protect, isMerchant, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
@@ -2155,8 +2155,8 @@ router.get('/merchants/me/menu', protect, isApprovedMerchant, async (req: AuthRe
 });
 
 // --- Endpoint: POST /api/merchants/me/menu/item ---
-// Create a new menu item for the approved merchant
-router.post('/merchants/me/menu/item', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+// Create a new menu item for the merchant (any status)
+router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
@@ -2194,7 +2194,7 @@ router.post('/merchants/me/menu/item', protect, isApprovedMerchant, async (req: 
 
 // --- Endpoint: PUT /api/merchants/me/menu/item/:itemId ---
 // Update an existing menu item (must belong to merchant)
-router.put('/merchants/me/menu/item/:itemId', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
@@ -2247,7 +2247,7 @@ router.put('/merchants/me/menu/item/:itemId', protect, isApprovedMerchant, async
 
 // --- Endpoint: DELETE /api/merchants/me/menu/item/:itemId ---
 // Permanently deletes a menu item (consider soft delete later)
-router.delete('/merchants/me/menu/item/:itemId', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+router.delete('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });

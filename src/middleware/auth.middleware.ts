@@ -63,6 +63,33 @@ export const isApprovedMerchant = async (req: AuthRequest, res: Response, next: 
   }
 };
 
+// Middleware: require merchant profile (any status - PENDING, APPROVED, etc.)
+export const isMerchant = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+    const merchant = await prisma.merchant.findUnique({
+      where: { ownerId: userId },
+      select: { id: true, status: true },
+    });
+
+    if (!merchant) {
+      return res.status(403).json({ error: 'You do not have a merchant profile.' });
+    }
+
+    // Allow merchants with any status (PENDING, APPROVED, REJECTED, SUSPENDED)
+    // Attach merchant info to the request for use in the next handler
+    req.merchant = merchant;
+    next();
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to verify merchant status' });
+  }
+};
+
 // Middleware: require ADMIN role
 export const requireAdmin = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
