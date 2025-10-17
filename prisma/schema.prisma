@@ -51,6 +51,21 @@ enum PointEventType {
   CHECKIN
 }
 
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  OUT_OF_ORDER
+}
+
 // --- MASTER DATA TABLES ---
 model DealCategoryMaster {
   id          Int      @id @default(autoincrement())
@@ -142,6 +157,9 @@ model User {
   // Kickback events earned by this user
   kickbackEvents KickbackEvent[]
 
+  // Table bookings made by this user
+  bookings        Booking[]
+
   @@index([referredByUserId])
 }
 
@@ -178,6 +196,12 @@ model Merchant {
 
   // Kickback events associated with this merchant
   kickbackEvents KickbackEvent[]
+
+  // Table booking system relations
+  tables           Table[]
+  timeSlots        TimeSlot[]
+  bookings         Booking[]
+  bookingSettings  BookingSettings?
 }
 
 model Deal {
@@ -385,4 +409,104 @@ model KickbackEvent {
   @@index([userId])
   @@index([dealId])
   @@index([userId, createdAt])
+}
+
+// --- TABLE BOOKING SYSTEM ---
+
+// Restaurant/merchant tables with capacity and features
+model Table {
+  id          Int       @id @default(autoincrement())
+  merchantId  Int
+  name        String    // Table name/number (e.g., "Table 1", "Booth A")
+  capacity    Int       // Maximum number of people
+  features    String[]  // Special features (e.g., ["outdoor", "window", "private"])
+  status      TableStatus @default(AVAILABLE)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  merchant    Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  bookings    Booking[]
+
+  @@index([merchantId])
+  @@index([merchantId, status])
+  @@index([status])
+}
+
+// Time slots configuration for each merchant
+model TimeSlot {
+  id          Int       @id @default(autoincrement())
+  merchantId  Int
+  dayOfWeek   Int       // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  startTime   String    // Format: "HH:MM" (e.g., "09:00", "18:30")
+  endTime     String    // Format: "HH:MM" (e.g., "10:00", "19:30")
+  duration    Int       // Duration in minutes (e.g., 30, 60, 90)
+  maxBookings Int       // Maximum bookings per slot (default: 1)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  merchant    Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  bookings    Booking[]
+
+  @@index([merchantId, dayOfWeek])
+  @@index([merchantId, dayOfWeek, startTime])
+  @@index([isActive])
+}
+
+// Individual table bookings
+model Booking {
+  id              Int           @id @default(autoincrement())
+  merchantId      Int
+  tableId         Int
+  timeSlotId      Int
+  userId          Int
+  bookingDate     DateTime      // Date of the booking (YYYY-MM-DD)
+  partySize       Int           // Number of people
+  status          BookingStatus @default(PENDING)
+  specialRequests String?       // Special dietary requirements, celebrations, etc.
+  contactPhone    String?       // Contact phone number
+  contactEmail    String?       // Contact email
+  confirmationCode String       @unique // Unique confirmation code
+  notes           String?       // Internal merchant notes
+  confirmedAt     DateTime?     // When booking was confirmed
+  cancelledAt     DateTime?     // When booking was cancelled
+  cancelledBy     Int?          // User ID who cancelled (null if merchant cancelled)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  merchant        Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  table           Table         @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  timeSlot        TimeSlot      @relation(fields: [timeSlotId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, bookingDate])
+  @@index([merchantId, status])
+  @@index([userId])
+  @@index([tableId, bookingDate])
+  @@index([timeSlotId, bookingDate])
+  @@index([bookingDate, status])
+  @@index([confirmationCode])
+}
+
+// Merchant booking settings and policies
+model BookingSettings {
+  id                    Int     @id @default(autoincrement())
+  merchantId            Int     @unique
+  advanceBookingDays    Int     @default(30)  // How many days in advance can book
+  minPartySize          Int     @default(1)   // Minimum party size
+  maxPartySize          Int     @default(12)  // Maximum party size
+  bookingDuration       Int     @default(120) // Default booking duration in minutes
+  requiresConfirmation  Boolean @default(true) // Require merchant confirmation
+  allowsModifications   Boolean @default(true) // Allow users to modify bookings
+  allowsCancellations   Boolean @default(true) // Allow users to cancel bookings
+  cancellationHours    Int     @default(24)  // Hours before booking when cancellation allowed
+  autoConfirm           Boolean @default(false) // Auto-confirm bookings
+  sendReminders         Boolean @default(true)  // Send booking reminders
+  reminderHours         Int     @default(2)     // Hours before booking to send reminder
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
 }
