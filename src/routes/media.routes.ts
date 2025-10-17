@@ -1,10 +1,27 @@
 import { Router } from 'express';
 import { protect, AuthRequest } from '../middleware/auth.middleware';
-import { upload, uploadToCloudinary } from '../lib/cloudinary';
+import { uploadImage, uploadToCloudinary } from '../lib/cloudinary';
 import { slugify } from '../lib/slugify';
 import prisma from '../lib/prisma';
+import multer from 'multer';
 
 const router = Router();
+
+// Configure multer for file uploads
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'));
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  }
+});
 
 // Endpoint: POST /api/media/upload
 // Accepts multipart/form-data with 'file' and 'context' fields.

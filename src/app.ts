@@ -16,6 +16,7 @@ import cityRoutes from './routes/cities.routes';
 import masterDataRoutes from './routes/master-data.routes';
 import mediaRoutes from './routes/media.routes';
 import tableBookingRoutes from './routes/table-booking.routes';
+import profileRoutes from './routes/profile.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -55,6 +56,7 @@ app.use('/api/admin/master-data', masterDataRoutes);
 app.use('/api', cityRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/table-booking', tableBookingRoutes);
+app.use('/api/profile', profileRoutes);
 
 export default app;
 

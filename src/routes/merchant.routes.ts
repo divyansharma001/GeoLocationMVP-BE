@@ -2,11 +2,28 @@
 import { Router, Response } from 'express';
 import { protect, isApprovedMerchant, isMerchant, AuthRequest } from '../middleware/auth.middleware';
 import prisma from '../lib/prisma';
-import { upload, uploadToCloudinary } from '../lib/cloudinary';
+import { uploadImage, deleteImage, uploadToCloudinary } from '../lib/cloudinary';
 import { slugify } from '../lib/slugify';
+import multer from 'multer';
 
 
 const router = Router();
+
+// Configure multer for image uploads
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'));
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  }
+});
 
 // --- Endpoint: POST /api/merchants/register ---
 // Allows a user to register as a merchant.

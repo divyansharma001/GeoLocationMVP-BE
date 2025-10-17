@@ -1,68 +1,75 @@
-import { v2 as cloudinary, UploadApiResponse, UploadApiErrorResponse } from 'cloudinary';
-import multer from 'multer';
-import { Readable } from 'stream';
+import { v2 as cloudinary } from 'cloudinary';
 
-// Configure Cloudinary with credentials from environment variables
-cloudinary.config({ 
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
-  api_key: process.env.CLOUDINARY_API_KEY, 
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
-  secure: true
 });
 
-// Configure multer to handle file uploads in memory.
-// This prevents saving files to the server's disk.
-const storage = multer.memoryStorage();
-export const upload = multer({ 
-    storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 }, // Limit file size to 5MB
-    fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith('image/')) {
-            cb(null, true);
-        } else {
-            cb(new Error('Only image files are allowed!'));
-        }
-    }
-});
+export default cloudinary;
 
-/**
- * Upload an in‑memory image buffer to Cloudinary.
- *
- * If you supply a publicId we will attempt to overwrite the existing asset (idempotent updates).
- * If you omit it, Cloudinary auto-generates one.
- *
- * @param buffer   Raw image buffer (e.g. from multer memory storage)
- * @param options  Optional overrides
- */
-export const uploadToCloudinary = (
-  buffer: Buffer,
-  options?: { publicId?: string; folder?: string }
-): Promise<UploadApiResponse> => {
-  const { publicId, folder = 'deals' } = options || {};
-
-  return new Promise<UploadApiResponse>((resolve, reject) => {
-    const uploadOptions: Record<string, any> = {
+// Helper function to upload image to Cloudinary from file path
+export const uploadImage = async (file: Express.Multer.File, folder: string = 'user-avatars'): Promise<string> => {
+  try {
+    const result = await cloudinary.uploader.upload(file.path, {
       folder,
-      // Only set overwrite if caller provided a deterministic publicId
-      overwrite: !!publicId,
+      resource_type: 'image',
       transformation: [
-        { width: 1024, height: 1024, crop: 'limit' },
+        { width: 300, height: 300, crop: 'fill', gravity: 'face' },
         { quality: 'auto', fetch_format: 'auto' }
-      ]
-    };
-    if (publicId) {
-      uploadOptions.public_id = publicId;
-    }
+      ],
+      overwrite: true,
+      invalidate: true
+    });
+    
+    return result.secure_url;
+  } catch (error) {
+    console.error('Cloudinary upload error:', error);
+    throw new Error('Failed to upload image to Cloudinary');
+  }
+};
 
-    const uploadStream = cloudinary.uploader.upload_stream(
-      uploadOptions,
-      (error: UploadApiErrorResponse | undefined, result: UploadApiResponse | undefined) => {
-        if (error) return reject(error);
-        if (!result) return reject(new Error('Cloudinary upload failed without a result.'));
-        resolve(result);
+// Helper function to upload image to Cloudinary from buffer (for merchant routes)
+export const uploadToCloudinary = async (buffer: Buffer, options: { publicId?: string; folder?: string } = {}): Promise<{ secure_url: string; public_id: string }> => {
+  try {
+    const result = await cloudinary.uploader.upload(
+      `data:image/jpeg;base64,${buffer.toString('base64')}`,
+      {
+        public_id: options.publicId,
+        folder: options.folder || 'merchant-images',
+        resource_type: 'image',
+        transformation: [
+          { quality: 'auto', fetch_format: 'auto' }
+        ],
+        overwrite: true,
+        invalidate: true
       }
     );
+    
+    return {
+      secure_url: result.secure_url,
+      public_id: result.public_id
+    };
+  } catch (error) {
+    console.error('Cloudinary upload error:', error);
+    throw new Error('Failed to upload image to Cloudinary');
+  }
+};
 
-    Readable.from(buffer).pipe(uploadStream);
-  });
+// Helper function to delete image from Cloudinary
+export const deleteImage = async (publicId: string): Promise<void> => {
+  try {
+    await cloudinary.uploader.destroy(publicId);
+  } catch (error) {
+    console.error('Cloudinary delete error:', error);
+    throw new Error('Failed to delete image from Cloudinary');
+  }
+};
+
+// Helper function to extract public ID from Cloudinary URL
+export const extractPublicId = (url: string): string | null => {
+  const regex = /\/v\d+\/(.+)\.(jpg|jpeg|png|gif|webp)$/i;
+  const match = url.match(regex);
+  return match ? match[1] : null;
 };
