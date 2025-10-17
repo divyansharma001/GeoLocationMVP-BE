@@ -929,4 +929,360 @@ router.post('/deals/:id/share', async (req, res) => {
   }
 });
 
+// --- Endpoint: GET /api/menu/items ---
+// Public endpoint to filter and search menu items from approved merchants
+// Query parameters:
+// - merchantId: Filter by specific merchant
+// - category: Filter by menu category (e.g., "Appetizers", "Mains", "Desserts")
+// - subcategory: Filter by subcategory within a category
+// - minPrice: Minimum price filter
+// - maxPrice: Maximum price filter
+// - search: Text search in name and description
+// - cityId: Filter by city
+// - latitude, longitude, radius: Location-based filtering
+// - limit: Number of results (default 50, max 100)
+// - offset: Pagination offset
+router.get('/menu/items', async (req, res) => {
+  try {
+    const startTime = Date.now();
+    const {
+      merchantId,
+      category,
+      subcategory,
+      minPrice,
+      maxPrice,
+      search,
+      cityId,
+      latitude,
+      longitude,
+      radius,
+      limit: limitParam,
+      offset: offsetParam
+    } = req.query as any;
+
+    // Parse and validate pagination parameters
+    const limit = Math.min(parseInt(limitParam || '50', 10) || 50, 100);
+    const offset = Math.max(parseInt(offsetParam || '0', 10) || 0, 0);
+
+    // Build the where clause for filtering
+    const whereClause: any = {
+      // Only show menu items from approved merchants
+      merchant: {
+        status: 'APPROVED'
+      }
+    };
+
+    // Filter by specific merchant
+    if (merchantId) {
+      const merchantIdNum = parseInt(merchantId, 10);
+      if (isNaN(merchantIdNum)) {
+        return res.status(400).json({ error: 'Invalid merchantId parameter' });
+      }
+      whereClause.merchantId = merchantIdNum;
+    }
+
+    // Filter by category (case-insensitive)
+    if (category) {
+      whereClause.category = {
+        contains: category.trim(),
+        mode: 'insensitive'
+      };
+    }
+
+    // Filter by subcategory (case-insensitive)
+    if (subcategory) {
+      whereClause.category = {
+        contains: subcategory.trim(),
+        mode: 'insensitive'
+      };
+    }
+
+    // Price range filtering
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      whereClause.price = {};
+      
+      if (minPrice !== undefined) {
+        const minPriceNum = parseFloat(minPrice);
+        if (isNaN(minPriceNum) || minPriceNum < 0) {
+          return res.status(400).json({ error: 'Invalid minPrice parameter' });
+        }
+        whereClause.price.gte = minPriceNum;
+      }
+      
+      if (maxPrice !== undefined) {
+        const maxPriceNum = parseFloat(maxPrice);
+        if (isNaN(maxPriceNum) || maxPriceNum < 0) {
+          return res.status(400).json({ error: 'Invalid maxPrice parameter' });
+        }
+        whereClause.price.lte = maxPriceNum;
+      }
+    }
+
+    // Text search in name and description
+    if (search) {
+      const searchTerm = search.trim();
+      if (searchTerm.length === 0) {
+        return res.status(400).json({ error: 'Search term cannot be empty' });
+      }
+      whereClause.OR = [
+        {
+          name: {
+            contains: searchTerm,
+            mode: 'insensitive'
+          }
+        },
+        {
+          description: {
+            contains: searchTerm,
+            mode: 'insensitive'
+          }
+        }
+      ];
+    }
+
+    // Location-based filtering
+    if (cityId) {
+      const cityIdNum = parseInt(cityId, 10);
+      if (isNaN(cityIdNum)) {
+        return res.status(400).json({ error: 'Invalid cityId parameter' });
+      }
+      
+      whereClause.merchant = {
+        ...whereClause.merchant,
+        stores: {
+          some: {
+            cityId: cityIdNum,
+            active: true
+          }
+        }
+      };
+    } else if (latitude && longitude && radius) {
+      // Geolocation-based filtering using merchant's primary location
+      const lat = parseFloat(latitude);
+      const lng = parseFloat(longitude);
+      const rad = parseFloat(radius);
+
+      if (isNaN(lat) || isNaN(lng) || isNaN(rad)) {
+        return res.status(400).json({ 
+          error: 'Invalid latitude, longitude, or radius parameters' 
+        });
+      }
+
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return res.status(400).json({ 
+          error: 'Latitude must be between -90 and 90, longitude between -180 and 180' 
+        });
+      }
+
+      if (rad <= 0 || rad > 1000) {
+        return res.status(400).json({ 
+          error: 'Radius must be between 0 and 1000 kilometers' 
+        });
+      }
+
+      // Add geolocation filter using merchant's coordinates
+      whereClause.merchant = {
+        ...whereClause.merchant,
+        latitude: { not: null },
+        longitude: { not: null }
+      };
+    }
+
+    // Execute the query with pagination
+    const [menuItems, totalCount] = await Promise.all([
+      prisma.menuItem.findMany({
+        where: whereClause,
+        include: {
+          merchant: {
+            select: {
+              id: true,
+              businessName: true,
+              address: true,
+              latitude: true,
+              longitude: true,
+              logoUrl: true,
+              description: true,
+              stores: {
+                where: { active: true },
+                select: {
+                  id: true,
+                  address: true,
+                  city: {
+                    select: {
+                      id: true,
+                      name: true,
+                      state: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        orderBy: [
+          { category: 'asc' },
+          { price: 'asc' },
+          { name: 'asc' }
+        ],
+        take: limit,
+        skip: offset
+      }),
+      prisma.menuItem.count({ where: whereClause })
+    ]);
+
+    // If geolocation filtering was requested, filter results by distance
+    let filteredMenuItems = menuItems;
+    if (latitude && longitude && radius) {
+      const lat = parseFloat(latitude);
+      const lng = parseFloat(longitude);
+      const rad = parseFloat(radius);
+
+      filteredMenuItems = menuItems.filter(item => {
+        if (!item.merchant.latitude || !item.merchant.longitude) return false;
+        
+        const distance = calculateDistance(
+          lat, lng,
+          item.merchant.latitude, item.merchant.longitude
+        );
+        
+        return distance <= rad;
+      });
+    }
+
+    // Format the response
+    const formattedMenuItems = filteredMenuItems.map(item => ({
+      id: item.id,
+      name: item.name,
+      description: item.description,
+      price: item.price,
+      category: item.category,
+      imageUrl: item.imageUrl,
+      createdAt: item.createdAt,
+      merchant: {
+        id: item.merchant.id,
+        businessName: item.merchant.businessName,
+        address: item.merchant.address,
+        latitude: item.merchant.latitude,
+        longitude: item.merchant.longitude,
+        logoUrl: item.merchant.logoUrl,
+        description: item.merchant.description,
+        stores: item.merchant.stores
+      }
+    }));
+
+    // Calculate pagination metadata
+    const hasMore = offset + limit < totalCount;
+    const totalPages = Math.ceil(totalCount / limit);
+    const currentPage = Math.floor(offset / limit) + 1;
+
+    // Log performance for slow queries
+    logQueryPerformance(
+      'menu-items-filter',
+      startTime,
+      formattedMenuItems.length,
+      { category, subcategory, merchantId, search, cityId, limit, offset }
+    );
+
+    res.status(200).json({
+      menuItems: formattedMenuItems,
+      pagination: {
+        total: totalCount,
+        limit,
+        offset,
+        hasMore,
+        currentPage,
+        totalPages
+      },
+      filters: {
+        category: category || null,
+        subcategory: subcategory || null,
+        merchantId: merchantId || null,
+        minPrice: minPrice ? parseFloat(minPrice) : null,
+        maxPrice: maxPrice ? parseFloat(maxPrice) : null,
+        search: search || null,
+        cityId: cityId ? parseInt(cityId, 10) : null,
+        location: (latitude && longitude && radius) ? {
+          latitude: parseFloat(latitude),
+          longitude: parseFloat(longitude),
+          radius: parseFloat(radius)
+        } : null
+      }
+    });
+
+  } catch (error) {
+    console.error('Menu items filter error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/menu/categories ---
+// Returns all unique menu categories from approved merchants
+// Query parameters:
+// - merchantId: Filter categories by specific merchant
+// - cityId: Filter categories by city
+router.get('/menu/categories', async (req, res) => {
+  try {
+    const { merchantId, cityId } = req.query as any;
+
+    const whereClause: any = {
+      merchant: {
+        status: 'APPROVED'
+      }
+    };
+
+    // Filter by specific merchant
+    if (merchantId) {
+      const merchantIdNum = parseInt(merchantId, 10);
+      if (isNaN(merchantIdNum)) {
+        return res.status(400).json({ error: 'Invalid merchantId parameter' });
+      }
+      whereClause.merchantId = merchantIdNum;
+    }
+
+    // Filter by city
+    if (cityId) {
+      const cityIdNum = parseInt(cityId, 10);
+      if (isNaN(cityIdNum)) {
+        return res.status(400).json({ error: 'Invalid cityId parameter' });
+      }
+      
+      whereClause.merchant = {
+        ...whereClause.merchant,
+        stores: {
+          some: {
+            cityId: cityIdNum,
+            active: true
+          }
+        }
+      };
+    }
+
+    // Get unique categories with counts
+    const categories = await prisma.menuItem.groupBy({
+      by: ['category'],
+      where: whereClause,
+      _count: {
+        category: true
+      },
+      orderBy: {
+        category: 'asc'
+      }
+    });
+
+    const formattedCategories = categories.map(cat => ({
+      name: cat.category,
+      count: cat._count.category
+    }));
+
+    res.status(200).json({
+      categories: formattedCategories,
+      total: formattedCategories.length
+    });
+
+  } catch (error) {
+    console.error('Menu categories error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;

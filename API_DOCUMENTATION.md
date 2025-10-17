@@ -16,15 +16,16 @@ The GeolocationMVPBackend is a Node.js/TypeScript backend for a geolocation-base
 4. [Merchant Dashboard](#merchant-dashboard)
 5. [Enhanced Merchant Dashboard Analytics](#enhanced-merchant-dashboard-analytics)
 6. [Deal Discovery](#deal-discovery)
-7. [User Interactions](#user-interactions)
-8. [Leaderboard](#leaderboard)
-9. [Admin Functions](#admin-functions)
-10. [Admin Performance Analytics](#admin-performance-analytics)
-11. [Customer Management](#customer-management)
-12. [Media Upload](#media-upload)
-13. [Health & Monitoring](#health--monitoring)
-14. [Data Models](#data-models)
-15. [Error Handling](#error-handling)
+7. [Public Menu Discovery](#public-menu-discovery)
+8. [User Interactions](#user-interactions)
+9. [Leaderboard](#leaderboard)
+10. [Admin Functions](#admin-functions)
+11. [Admin Performance Analytics](#admin-performance-analytics)
+12. [Customer Management](#customer-management)
+13. [Media Upload](#media-upload)
+14. [Health & Monitoring](#health--monitoring)
+15. [Data Models](#data-models)
+16. [Error Handling](#error-handling)
 
 ## Authentication
 
@@ -244,6 +245,118 @@ Update a menu item.
 
 #### DELETE /api/merchants/me/menu/item/:itemId
 Delete a menu item.
+
+## Public Menu Discovery
+
+### GET /api/menu/items
+Public endpoint to filter and search menu items from approved merchants.
+
+**Query Parameters:**
+- `merchantId` (optional): Filter by specific merchant ID
+- `category` (optional): Filter by menu category (e.g., "Appetizers", "Mains", "Desserts")
+- `subcategory` (optional): Filter by subcategory within a category
+- `minPrice` (optional): Minimum price filter
+- `maxPrice` (optional): Maximum price filter
+- `search` (optional): Text search in name and description
+- `cityId` (optional): Filter by city ID
+- `latitude` (optional): Latitude for location-based filtering (requires longitude and radius)
+- `longitude` (optional): Longitude for location-based filtering (requires latitude and radius)
+- `radius` (optional): Radius in kilometers for location-based filtering (requires latitude and longitude)
+- `limit` (optional): Number of results per page (default: 50, max: 100)
+- `offset` (optional): Pagination offset (default: 0)
+
+**Example Request:**
+```
+GET /api/menu/items?category=Mains&minPrice=10&maxPrice=20&search=pizza&limit=20
+```
+
+**Response:**
+```json
+{
+  "menuItems": [
+    {
+      "id": 1,
+      "name": "Margherita Pizza",
+      "description": "Classic tomato and mozzarella",
+      "price": 18.0,
+      "category": "Mains",
+      "imageUrl": "https://example.com/pizza.jpg",
+      "createdAt": "2024-01-15T10:30:00Z",
+      "merchant": {
+        "id": 1,
+        "businessName": "Mario's Pizza",
+        "address": "123 Main St",
+        "latitude": 40.7128,
+        "longitude": -74.0060,
+        "logoUrl": "https://example.com/logo.jpg",
+        "description": "Authentic Italian pizza",
+        "stores": [
+          {
+            "id": 1,
+            "address": "123 Main St",
+            "city": {
+              "id": 1,
+              "name": "New York",
+              "state": "NY"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "pagination": {
+    "total": 45,
+    "limit": 20,
+    "offset": 0,
+    "hasMore": true,
+    "currentPage": 1,
+    "totalPages": 3
+  },
+  "filters": {
+    "category": "Mains",
+    "subcategory": null,
+    "merchantId": null,
+    "minPrice": 10,
+    "maxPrice": 20,
+    "search": "pizza",
+    "cityId": null,
+    "location": null
+  }
+}
+```
+
+### GET /api/menu/categories
+Returns all unique menu categories from approved merchants with item counts.
+
+**Query Parameters:**
+- `merchantId` (optional): Filter categories by specific merchant ID
+- `cityId` (optional): Filter categories by city ID
+
+**Example Request:**
+```
+GET /api/menu/categories?cityId=1
+```
+
+**Response:**
+```json
+{
+  "categories": [
+    {
+      "name": "Appetizers",
+      "count": 15
+    },
+    {
+      "name": "Mains",
+      "count": 42
+    },
+    {
+      "name": "Desserts",
+      "count": 18
+    }
+  ],
+  "total": 3
+}
+```
 
 ### Store Management
 
@@ -774,6 +887,136 @@ Get period-over-period performance comparisons with trend analysis.
 }
 ```
 
+### GET /api/merchants/dashboard/performance-comparison-custom
+Get customizable period-over-period performance comparisons with flexible time periods and advanced filtering options.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+- `currentPeriod` (optional): Predefined current period (default: 'last_30_days')
+- `comparePeriod` (optional): Predefined comparison period (default: 'previous_30_days')
+- `currentFrom` (optional): Custom current period start date (ISO 8601 format)
+- `currentTo` (optional): Custom current period end date (ISO 8601 format)
+- `compareFrom` (optional): Custom comparison period start date (ISO 8601 format)
+- `compareTo` (optional): Custom comparison period end date (ISO 8601 format)
+- `metrics` (optional): Filter specific metrics (default: 'all')
+- `granularity` (optional): Time granularity for time series data (default: 'day')
+- `groupBy` (optional): Grouping option for data (default: 'date')
+
+**Available Current Periods:**
+- `last_7_days`, `last_30_days`, `last_90_days`
+- `this_month`, `last_month`
+- `this_quarter`, `last_quarter`
+- `this_year`, `last_year`
+
+**Available Comparison Periods:**
+- `previous_7_days`, `previous_30_days`, `previous_90_days`
+- `previous_month`, `same_month_last_year`
+- `previous_quarter`, `same_quarter_last_year`
+- `previous_year`
+
+**Available Metrics Filters:**
+- `all`: All metrics (default)
+- `checkins`: Check-in data only
+- `deals`: Deal saves and active deals only
+- `sales`: Sales and kickback data only
+- `kickbacks`: Kickback events only
+- `users`: Unique user data only
+
+**Available Granularity Options:**
+- `day`: Daily data points
+- `week`: Weekly data points
+- `month`: Monthly data points
+
+**Example Requests:**
+```
+# Predefined periods
+GET /api/merchants/dashboard/performance-comparison-custom?currentPeriod=last_30_days&comparePeriod=same_month_last_year
+
+# Custom date ranges
+GET /api/merchants/dashboard/performance-comparison-custom?currentFrom=2024-01-01T00:00:00Z&currentTo=2024-01-31T23:59:59Z&compareFrom=2023-01-01T00:00:00Z&compareTo=2023-01-31T23:59:59Z
+
+# Filtered metrics with weekly granularity
+GET /api/merchants/dashboard/performance-comparison-custom?metrics=sales&granularity=week&currentPeriod=last_90_days&comparePeriod=previous_90_days
+```
+
+**Response:**
+```json
+{
+  "currentPeriod": "last_30_days",
+  "comparePeriod": "previous_30_days",
+  "customDates": false,
+  "currentMetrics": {
+    "checkIns": 45,
+    "dealSaves": 23,
+    "grossSales": 1250.75,
+    "kickbackPaid": 125.08,
+    "uniqueUsers": 18,
+    "activeDeals": 5
+  },
+  "compareMetrics": {
+    "checkIns": 32,
+    "dealSaves": 18,
+    "grossSales": 980.50,
+    "kickbackPaid": 98.05,
+    "uniqueUsers": 15,
+    "activeDeals": 4
+  },
+  "changes": {
+    "checkIns": 40.63,
+    "dealSaves": 27.78,
+    "grossSales": 27.57,
+    "kickbackPaid": 27.57,
+    "uniqueUsers": 20.00,
+    "activeDeals": 25.00
+  },
+  "trends": {
+    "checkIns": "up",
+    "dealSaves": "up",
+    "grossSales": "up",
+    "kickbackPaid": "up",
+    "uniqueUsers": "up",
+    "activeDeals": "up"
+  },
+  "dateRanges": {
+    "current": {
+      "from": "2024-01-01T00:00:00Z",
+      "to": "2024-01-31T23:59:59Z"
+    },
+    "compare": {
+      "from": "2023-12-02T00:00:00Z",
+      "to": "2024-01-01T00:00:00Z"
+    }
+  },
+  "timeSeriesData": [
+    {
+      "period": "current",
+      "date": "2024-01-01",
+      "checkIns": 5,
+      "dealSaves": 3,
+      "grossSales": 125.50
+    },
+    {
+      "period": "compare",
+      "date": "2023-12-02",
+      "checkIns": 4,
+      "dealSaves": 2,
+      "grossSales": 98.25
+    }
+  ],
+  "filters": {
+    "metrics": "all",
+    "granularity": "day",
+    "groupBy": "date"
+  },
+  "summary": {
+    "totalDaysCurrent": 30,
+    "totalDaysCompare": 30,
+    "periodDifference": 0
+  }
+}
+```
+
 ## Deal Discovery
 
 ### GET /api/deals
@@ -945,43 +1188,480 @@ Get comprehensive deal details for detailed view with enhanced social proof, use
 }
 ```
 
-## Leaderboard
+## Enhanced Leaderboard System
 
 ### GET /api/leaderboard
-Get leaderboard rankings.
+Get basic leaderboard rankings with optional authentication and period filtering.
+
+**Headers:** `Authorization: Bearer <token>` (optional)
 
 **Query Parameters:**
-- `period` (string): Time period (day, week, month, year, all_time)
-- `limit` (number): Number of entries (1-50, default 10)
-- `includeSelf` (boolean): Include current user if not in top (default true)
-- `year` (number): Specific year for custom period
-- `month` (number): Specific month for custom period
+- `period` (string): Time period - `day`, `week`, `month`, `all-time`, `custom`
+- `limit` (number): Number of users to return (1-50, default: 10)
+- `includeSelf` (boolean): Include authenticated user's position (default: true)
+- `year` (number): Specific year for period
+- `month` (number): Specific month for period (1-12)
+- `from` (string): Custom start date (ISO 8601 format)
+- `to` (string): Custom end date (ISO 8601 format)
 
 **Response:**
 ```json
 {
   "period": {
     "granularity": "month",
-    "start": "2024-01-01T00:00:00Z",
-    "endExclusive": "2024-02-01T00:00:00Z",
+    "start": "2024-01-01T00:00:00.000Z",
+    "endExclusive": "2024-02-01T00:00:00.000Z",
     "label": "January 2024"
   },
   "top": [
     {
-      "userId": 1,
+      "userId": 123,
       "name": "John Doe",
-      "periodPoints": 150,
-      "totalPoints": 300,
+      "periodPoints": 450,
+      "totalPoints": 1250,
       "rank": 1
     }
   ],
   "me": {
-    "userId": 2,
+    "userId": 456,
     "name": "Jane Smith",
-    "periodPoints": 75,
-    "totalPoints": 200,
-    "rank": 5,
+    "periodPoints": 320,
+    "totalPoints": 980,
+    "rank": 15,
     "inTop": false
+  }
+}
+```
+
+### GET /api/leaderboard/global
+Get enhanced global leaderboard with detailed analytics and statistics.
+
+**Headers:** `Authorization: Bearer <token>` (optional)
+
+**Query Parameters:**
+- `period` (string): Time period (default: 'last_30_days')
+  - Available: `today`, `this_week`, `this_month`, `this_quarter`, `this_year`
+  - Available: `last_7_days`, `last_30_days`, `last_90_days`
+- `limit` (number): Number of users to return (default: 50, max: 100)
+- `includeSelf` (boolean): Include authenticated user's position (default: true)
+- `includeStats` (boolean): Include global statistics (default: true)
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "last_30_days",
+  "dateRange": {
+    "from": "2024-01-01T00:00:00.000Z",
+    "to": "2024-01-31T23:59:59.999Z"
+  },
+  "leaderboard": [
+    {
+      "rank": 1,
+      "userId": 123,
+      "name": "John Doe",
+      "email": "john@example.com",
+      "avatarUrl": "https://example.com/avatar.jpg",
+      "totalPoints": 1250,
+      "periodPoints": 450,
+      "monthlyPoints": 450,
+      "eventCount": 45,
+      "checkInCount": 30,
+      "uniqueDealsCheckedIn": 25,
+      "memberSince": "2023-06-15",
+      "inTop": true
+    }
+  ],
+  "personalPosition": {
+    "rank": 15,
+    "userId": 456,
+    "name": "Jane Smith",
+    "email": "jane@example.com",
+    "avatarUrl": null,
+    "totalPoints": 980,
+    "periodPoints": 320,
+    "monthlyPoints": 320,
+    "eventCount": 32,
+    "checkInCount": 20,
+    "uniqueDealsCheckedIn": 15,
+    "inTop": false
+  },
+  "globalStats": {
+    "totalUsers": 1250,
+    "activeUsers": 890,
+    "avgPointsPerUser": 125.5,
+    "maxPoints": 1250,
+    "minPoints": 0,
+    "totalPointsEarned": 156875,
+    "totalCheckIns": 4450,
+    "uniqueDealsUsed": 125,
+    "distribution": {
+      "p25": 25.0,
+      "p50": 75.0,
+      "p75": 150.0,
+      "p90": 300.0,
+      "p95": 500.0,
+      "p99": 1000.0
+    }
+  },
+  "metadata": {
+    "totalShown": 50,
+    "limit": 50,
+    "includeSelf": true,
+    "includeStats": true,
+    "queryTime": 245
+  }
+}
+```
+
+### GET /api/leaderboard/cities
+Get city comparison leaderboard with performance metrics.
+
+**Headers:** `Authorization: Bearer <token>` (optional)
+
+**Query Parameters:**
+- `period` (string): Time period (default: 'last_30_days')
+- `limit` (number): Number of cities to return (default: 20, max: 50)
+- `includeInactive` (boolean): Include inactive cities (default: false)
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "last_30_days",
+  "dateRange": {
+    "from": "2024-01-01T00:00:00.000Z",
+    "to": "2024-01-31T23:59:59.999Z"
+  },
+  "cities": [
+    {
+      "rank": 1,
+      "cityId": 1,
+      "cityName": "New York",
+      "state": "NY",
+      "active": true,
+      "totalUsers": 450,
+      "activeUsers": 320,
+      "avgPointsPerUser": 145.5,
+      "maxPoints": 1250,
+      "totalPointsEarned": 65475,
+      "totalCheckIns": 1800,
+      "uniqueDealsUsed": 85,
+      "activeMerchants": 25,
+      "engagementRate": 0.711
+    }
+  ],
+  "metadata": {
+    "totalShown": 20,
+    "limit": 20,
+    "includeInactive": false,
+    "queryTime": 180
+  }
+}
+```
+
+### GET /api/leaderboard/cities/:cityId
+Get detailed city-specific leaderboard with local analytics.
+
+**Headers:** `Authorization: Bearer <token>` (optional)
+
+**Query Parameters:**
+- `period` (string): Time period (default: 'last_30_days')
+- `limit` (number): Number of users to return (default: 50, max: 100)
+- `includeSelf` (boolean): Include authenticated user's position (default: true)
+- `includeStats` (boolean): Include city statistics (default: true)
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "last_30_days",
+  "dateRange": {
+    "from": "2024-01-01T00:00:00.000Z",
+    "to": "2024-01-31T23:59:59.999Z"
+  },
+  "city": {
+    "id": 1,
+    "name": "New York",
+    "state": "NY",
+    "active": true,
+    "activeMerchants": 25
+  },
+  "leaderboard": [
+    {
+      "rank": 1,
+      "userId": 123,
+      "name": "John Doe",
+      "email": "john@example.com",
+      "avatarUrl": "https://example.com/avatar.jpg",
+      "totalPoints": 1250,
+      "periodPoints": 450,
+      "monthlyPoints": 450,
+      "eventCount": 45,
+      "checkInCount": 30,
+      "uniqueDealsCheckedIn": 25,
+      "uniqueMerchantsVisited": 15,
+      "memberSince": "2023-06-15",
+      "inTop": true
+    }
+  ],
+  "personalPosition": {
+    "rank": 8,
+    "userId": 456,
+    "name": "Jane Smith",
+    "periodPoints": 320,
+    "uniqueMerchantsVisited": 10,
+    "inTop": false
+  },
+  "cityStats": {
+    "totalUsers": 450,
+    "activeUsers": 320,
+    "avgPointsPerUser": 145.5,
+    "maxPoints": 1250,
+    "totalPointsEarned": 65475,
+    "totalCheckIns": 1800,
+    "uniqueDealsUsed": 85,
+    "uniqueMerchantsUsed": 25
+  },
+  "metadata": {
+    "totalShown": 50,
+    "limit": 50,
+    "includeSelf": true,
+    "includeStats": true,
+    "queryTime": 195
+  }
+}
+```
+
+### GET /api/leaderboard/analytics
+Get comprehensive point distribution and statistical analytics.
+
+**Headers:** `Authorization: Bearer <token>` (optional)
+
+**Query Parameters:**
+- `period` (string): Time period (default: 'last_30_days')
+- `cityId` (number): Filter by specific city (optional)
+- `includeDistribution` (boolean): Include point distribution histogram (default: true)
+- `includeTrends` (boolean): Include trend analysis (default: true)
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "last_30_days",
+  "dateRange": {
+    "from": "2024-01-01T00:00:00.000Z",
+    "to": "2024-01-31T23:59:59.999Z"
+  },
+  "cityId": null,
+  "analytics": {
+    "summary": {
+      "totalUsers": 1250,
+      "activeUsers": 890,
+      "inactiveUsers": 360,
+      "avgPoints": 125.5,
+      "medianPoints": 75.0,
+      "maxPoints": 1250,
+      "minPoints": 0,
+      "stdDevPoints": 180.2,
+      "avgEvents": 12.5,
+      "avgCheckIns": 8.2,
+      "avgUniqueDeals": 6.8,
+      "avgUniqueMerchants": 4.5,
+      "avgCategoriesUsed": 3.2,
+      "p25": 25.0,
+      "p50": 75.0,
+      "p75": 150.0,
+      "p90": 300.0,
+      "p95": 500.0,
+      "p99": 1000.0
+    },
+    "distribution": [
+      {
+        "pointRange": "0",
+        "userCount": 360
+      },
+      {
+        "pointRange": "1-10",
+        "userCount": 150
+      },
+      {
+        "pointRange": "11-25",
+        "userCount": 200
+      },
+      {
+        "pointRange": "26-50",
+        "userCount": 180
+      },
+      {
+        "pointRange": "51-100",
+        "userCount": 160
+      },
+      {
+        "pointRange": "101-250",
+        "userCount": 120
+      },
+      {
+        "pointRange": "251-500",
+        "userCount": 50
+      },
+      {
+        "pointRange": "501-1000",
+        "userCount": 20
+      },
+      {
+        "pointRange": "1000+",
+        "userCount": 10
+      }
+    ],
+    "trends": [
+      {
+        "date": "2024-01-01",
+        "activeUsers": 45,
+        "totalEvents": 120,
+        "totalPointsEarned": 1250,
+        "totalCheckIns": 80,
+        "avgActiveUsers7d": 42.5,
+        "avgPointsEarned7d": 1150.0
+      }
+    ]
+  },
+  "metadata": {
+    "includeDistribution": true,
+    "includeTrends": true,
+    "queryTime": 320
+  }
+}
+```
+
+### GET /api/leaderboard/categories
+Get category-based leaderboards showing top users by deal categories.
+
+**Headers:** `Authorization: Bearer <token>` (optional)
+
+**Query Parameters:**
+- `period` (string): Time period (default: 'last_30_days')
+- `categoryId` (number): Filter by specific deal category (optional)
+- `limit` (number): Number of users per category (default: 20, max: 50)
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "last_30_days",
+  "dateRange": {
+    "from": "2024-01-01T00:00:00.000Z",
+    "to": "2024-01-31T23:59:59.999Z"
+  },
+  "categoryId": null,
+  "categories": [
+    {
+      "categoryId": 1,
+      "categoryName": "Food & Beverage",
+      "categoryColor": "#FF5733",
+      "leaderboard": [
+        {
+          "rank": 1,
+          "userId": 123,
+          "name": "John Doe",
+          "email": "john@example.com",
+          "avatarUrl": "https://example.com/avatar.jpg",
+          "totalPoints": 1250,
+          "periodPoints": 200,
+          "monthlyPoints": 200,
+          "eventCount": 20,
+          "checkInCount": 15,
+          "uniqueDealsCheckedIn": 12
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "totalCategories": 5,
+    "limit": 20,
+    "queryTime": 280
+  }
+}
+```
+
+### GET /api/leaderboard/insights
+Get advanced insights including user engagement segments and top performers.
+
+**Headers:** `Authorization: Bearer <token>` (optional)
+
+**Query Parameters:**
+- `period` (string): Time period (default: 'last_30_days')
+- `cityId` (number): Filter by specific city (optional)
+- `includePredictions` (boolean): Include predictive insights (default: true)
+
+**Response:**
+```json
+{
+  "success": true,
+  "period": "last_30_days",
+  "dateRange": {
+    "from": "2024-01-01T00:00:00.000Z",
+    "to": "2024-01-31T23:59:59.999Z"
+  },
+  "cityId": null,
+  "insights": {
+    "engagementSegments": [
+      {
+        "engagementSegment": "Inactive",
+        "userCount": 360,
+        "avgPoints": 0,
+        "avgCheckIns": 0,
+        "avgUniqueDeals": 0,
+        "avgUniqueMerchants": 0
+      },
+      {
+        "engagementSegment": "Low Activity",
+        "userCount": 350,
+        "avgPoints": 15.5,
+        "avgCheckIns": 2.1,
+        "avgUniqueDeals": 1.8,
+        "avgUniqueMerchants": 1.2
+      },
+      {
+        "engagementSegment": "Moderate Activity",
+        "userCount": 300,
+        "avgPoints": 65.0,
+        "avgCheckIns": 8.5,
+        "avgUniqueDeals": 6.2,
+        "avgUniqueMerchants": 3.8
+      },
+      {
+        "engagementSegment": "High Activity",
+        "userCount": 200,
+        "avgPoints": 250.0,
+        "avgCheckIns": 25.0,
+        "avgUniqueDeals": 18.5,
+        "avgUniqueMerchants": 12.0
+      },
+      {
+        "engagementSegment": "Power Users",
+        "userCount": 40,
+        "avgPoints": 850.0,
+        "avgCheckIns": 85.0,
+        "avgUniqueDeals": 65.0,
+        "avgUniqueMerchants": 35.0
+      }
+    ],
+    "topPerformers": [
+      {
+        "rank": 1,
+        "id": 123,
+        "name": "John Doe",
+        "avatarUrl": "https://example.com/avatar.jpg",
+        "periodPoints": 1250,
+        "uniqueMerchantsVisited": 25,
+        "uniqueDealsCheckedIn": 30
+      }
+    ]
+  },
+  "metadata": {
+    "includePredictions": true,
+    "queryTime": 250
   }
 }
 ```

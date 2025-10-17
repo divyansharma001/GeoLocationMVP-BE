@@ -2125,6 +2125,451 @@ router.get('/merchants/dashboard/performance-comparison', protect, isApprovedMer
   }
 });
 
+// --- Endpoint: GET /api/merchants/dashboard/performance-comparison-custom ---
+// Returns customizable period-over-period performance comparisons with flexible time periods
+router.get('/merchants/dashboard/performance-comparison-custom', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { 
+      currentPeriod = 'last_30_days', 
+      comparePeriod = 'previous_30_days',
+      // Custom date range options
+      currentFrom: currentFromParam,
+      currentTo: currentToParam,
+      compareFrom: compareFromParam,
+      compareTo: compareToParam,
+      // Metric filters
+      metrics = 'all', // 'all', 'checkins', 'deals', 'sales', 'kickbacks', 'users'
+      granularity = 'day', // 'day', 'week', 'month'
+      groupBy = 'date' // 'date', 'deal', 'category', 'dealType'
+    } = req.query as any;
+    
+    const now = new Date();
+    let currentFrom: Date, currentTo: Date, compareFrom: Date, compareTo: Date;
+
+    // Initialize default values to avoid TypeScript errors
+    currentFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+    currentTo = now;
+    compareFrom = new Date(currentFrom.getTime() - (30 * 24 * 60 * 60 * 1000));
+    compareTo = new Date(currentFrom.getTime() - 1);
+
+    // Handle custom date ranges or predefined periods
+    if (currentFromParam && currentToParam && compareFromParam && compareToParam) {
+      // Custom date range mode
+      currentFrom = new Date(currentFromParam);
+      currentTo = new Date(currentToParam);
+      compareFrom = new Date(compareFromParam);
+      compareTo = new Date(compareToParam);
+      
+      // Validate custom dates
+      if (isNaN(currentFrom.getTime()) || isNaN(currentTo.getTime()) || 
+          isNaN(compareFrom.getTime()) || isNaN(compareTo.getTime())) {
+        return res.status(400).json({ error: 'Invalid date format. Use ISO 8601 format (YYYY-MM-DDTHH:mm:ss.sssZ)' });
+      }
+      
+      if (currentFrom >= currentTo || compareFrom >= compareTo) {
+        return res.status(400).json({ error: 'Start date must be before end date for both periods' });
+      }
+      
+      if (currentTo > now) {
+        return res.status(400).json({ error: 'Current period end date cannot be in the future' });
+      }
+      
+      // Check if date ranges are reasonable (not more than 2 years apart)
+      const maxDaysDiff = 365 * 2;
+      const currentDaysDiff = Math.ceil((currentTo.getTime() - currentFrom.getTime()) / (1000 * 60 * 60 * 24));
+      const compareDaysDiff = Math.ceil((compareTo.getTime() - compareFrom.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (currentDaysDiff > maxDaysDiff || compareDaysDiff > maxDaysDiff) {
+        return res.status(400).json({ error: 'Date range cannot exceed 2 years' });
+      }
+      
+    } else {
+      // Predefined period mode
+      // Calculate current period
+      switch (currentPeriod) {
+        case 'last_7_days':
+          currentFrom = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+          currentTo = now;
+          break;
+        case 'last_30_days':
+          currentFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+          currentTo = now;
+          break;
+        case 'last_90_days':
+          currentFrom = new Date(now.getTime() - (90 * 24 * 60 * 60 * 1000));
+          currentTo = now;
+          break;
+        case 'this_month':
+          currentFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+          currentTo = now;
+          break;
+        case 'last_month':
+          currentFrom = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          currentTo = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+          break;
+        case 'this_quarter':
+          const quarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+          currentFrom = new Date(now.getFullYear(), quarterStartMonth, 1);
+          currentTo = now;
+          break;
+        case 'last_quarter':
+          const lastQuarterStartMonth = Math.floor(now.getMonth() / 3) * 3 - 3;
+          const lastQuarterYear = lastQuarterStartMonth < 0 ? now.getFullYear() - 1 : now.getFullYear();
+          const adjustedMonth = lastQuarterStartMonth < 0 ? lastQuarterStartMonth + 12 : lastQuarterStartMonth;
+          currentFrom = new Date(lastQuarterYear, adjustedMonth, 1);
+          currentTo = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 0, 23, 59, 59, 999);
+          break;
+        case 'this_year':
+          currentFrom = new Date(now.getFullYear(), 0, 1);
+          currentTo = now;
+          break;
+        case 'last_year':
+          currentFrom = new Date(now.getFullYear() - 1, 0, 1);
+          currentTo = new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
+          break;
+        default:
+          currentFrom = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+          currentTo = now;
+      }
+
+      // Calculate comparison period
+      // Initialize default values to avoid TypeScript errors
+      let compareTo = new Date(currentFrom.getTime() - 1);
+      let compareFrom = new Date(compareTo.getTime() - (30 * 24 * 60 * 60 * 1000));
+      
+      switch (comparePeriod) {
+        case 'previous_7_days':
+          compareTo = new Date(currentFrom.getTime() - 1);
+          compareFrom = new Date(compareTo.getTime() - (7 * 24 * 60 * 60 * 1000));
+          break;
+        case 'previous_30_days':
+          const daysDiff = Math.ceil((currentTo.getTime() - currentFrom.getTime()) / (1000 * 60 * 60 * 24));
+          compareTo = new Date(currentFrom.getTime() - 1);
+          compareFrom = new Date(compareTo.getTime() - (daysDiff * 24 * 60 * 60 * 1000));
+          break;
+        case 'previous_90_days':
+          compareTo = new Date(currentFrom.getTime() - 1);
+          compareFrom = new Date(compareTo.getTime() - (90 * 24 * 60 * 60 * 1000));
+          break;
+        case 'previous_month':
+          compareTo = new Date(currentFrom.getTime() - 1);
+          compareFrom = new Date(compareTo.getFullYear(), compareTo.getMonth(), 1);
+          break;
+        case 'same_month_last_year':
+          compareFrom = new Date(currentFrom.getFullYear() - 1, currentFrom.getMonth(), currentFrom.getDate());
+          compareTo = new Date(currentTo.getFullYear() - 1, currentTo.getMonth(), currentTo.getDate());
+          break;
+        case 'previous_quarter':
+          compareTo = new Date(currentFrom.getTime() - 1);
+          const prevQuarterStartMonth = Math.floor(compareTo.getMonth() / 3) * 3 - 3;
+          const prevQuarterYear = prevQuarterStartMonth < 0 ? compareTo.getFullYear() - 1 : compareTo.getFullYear();
+          const prevAdjustedMonth = prevQuarterStartMonth < 0 ? prevQuarterStartMonth + 12 : prevQuarterStartMonth;
+          compareFrom = new Date(prevQuarterYear, prevAdjustedMonth, 1);
+          compareTo = new Date(compareTo.getFullYear(), Math.floor(compareTo.getMonth() / 3) * 3, 0, 23, 59, 59, 999);
+          break;
+        case 'same_quarter_last_year':
+          const currentQuarterStartMonth = Math.floor(currentFrom.getMonth() / 3) * 3;
+          compareFrom = new Date(currentFrom.getFullYear() - 1, currentQuarterStartMonth, currentFrom.getDate());
+          compareTo = new Date(currentTo.getFullYear() - 1, currentQuarterStartMonth + 2, currentTo.getDate());
+          break;
+        case 'previous_year':
+          compareTo = new Date(currentFrom.getTime() - 1);
+          compareFrom = new Date(compareTo.getFullYear() - 1, 0, 1);
+          compareTo = new Date(compareFrom.getFullYear(), 11, 31, 23, 59, 59, 999);
+          break;
+        default:
+          const daysDiffDefault = Math.ceil((currentTo.getTime() - currentFrom.getTime()) / (1000 * 60 * 60 * 24));
+          compareTo = new Date(currentFrom.getTime() - 1);
+          compareFrom = new Date(compareTo.getTime() - (daysDiffDefault * 24 * 60 * 60 * 1000));
+      }
+    }
+
+    // Validate granularity parameter
+    const validGranularities = ['day', 'week', 'month'];
+    if (!validGranularities.includes(granularity)) {
+      return res.status(400).json({ error: 'Invalid granularity. Must be one of: day, week, month' });
+    }
+
+    // Validate metrics parameter
+    const validMetrics = ['all', 'checkins', 'deals', 'sales', 'kickbacks', 'users'];
+    if (!validMetrics.includes(metrics)) {
+      return res.status(400).json({ error: 'Invalid metrics. Must be one of: all, checkins, deals, sales, kickbacks, users' });
+    }
+
+    // Validate groupBy parameter
+    const validGroupBy = ['date', 'deal', 'category', 'dealType'];
+    if (!validGroupBy.includes(groupBy)) {
+      return res.status(400).json({ error: 'Invalid groupBy. Must be one of: date, deal, category, dealType' });
+    }
+
+    // Helper function to calculate change percentage
+    const calculateChange = (current: number, previous: number) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return Number(((current - previous) / previous * 100).toFixed(2));
+    };
+
+    // Get comprehensive metrics for current period
+    const currentMetrics = await Promise.all([
+      // Check-ins
+      metrics === 'all' || metrics === 'checkins' ? prisma.checkIn.count({
+        where: {
+          merchantId,
+          createdAt: { gte: currentFrom, lte: currentTo }
+        }
+      }) : 0,
+      
+      // Deal saves
+      metrics === 'all' || metrics === 'deals' ? prisma.userDeal.count({
+        where: {
+          deal: { merchantId },
+          savedAt: { gte: currentFrom, lte: currentTo }
+        }
+      }) : 0,
+      
+      // Gross sales from kickback events
+      metrics === 'all' || metrics === 'sales' ? prisma.kickbackEvent.aggregate({
+        where: {
+          merchantId,
+          createdAt: { gte: currentFrom, lte: currentTo }
+        },
+        _sum: {
+          sourceAmountSpent: true,
+          amountEarned: true
+        }
+      }) : { _sum: { sourceAmountSpent: 0, amountEarned: 0 } },
+      
+      // Unique users
+      metrics === 'all' || metrics === 'users' ? prisma.user.count({
+        where: {
+          OR: [
+            { checkIns: { some: { merchantId, createdAt: { gte: currentFrom, lte: currentTo } } } },
+            { savedDeals: { some: { deal: { merchantId }, savedAt: { gte: currentFrom, lte: currentTo } } } }
+          ]
+        }
+      }) : 0,
+      
+      // Active deals
+      metrics === 'all' || metrics === 'deals' ? prisma.deal.count({
+        where: {
+          merchantId,
+          createdAt: { gte: currentFrom, lte: currentTo }
+        }
+      }) : 0
+    ]);
+
+    // Get comprehensive metrics for comparison period
+    const compareMetrics = await Promise.all([
+      // Check-ins
+      metrics === 'all' || metrics === 'checkins' ? prisma.checkIn.count({
+        where: {
+          merchantId,
+          createdAt: { gte: compareFrom, lte: compareTo }
+        }
+      }) : 0,
+      
+      // Deal saves
+      metrics === 'all' || metrics === 'deals' ? prisma.userDeal.count({
+        where: {
+          deal: { merchantId },
+          savedAt: { gte: compareFrom, lte: compareTo }
+        }
+      }) : 0,
+      
+      // Gross sales from kickback events
+      metrics === 'all' || metrics === 'sales' ? prisma.kickbackEvent.aggregate({
+        where: {
+          merchantId,
+          createdAt: { gte: compareFrom, lte: compareTo }
+        },
+        _sum: {
+          sourceAmountSpent: true,
+          amountEarned: true
+        }
+      }) : { _sum: { sourceAmountSpent: 0, amountEarned: 0 } },
+      
+      // Unique users
+      metrics === 'all' || metrics === 'users' ? prisma.user.count({
+        where: {
+          OR: [
+            { checkIns: { some: { merchantId, createdAt: { gte: compareFrom, lte: compareTo } } } },
+            { savedDeals: { some: { deal: { merchantId }, savedAt: { gte: compareFrom, lte: compareTo } } } }
+          ]
+        }
+      }) : 0,
+      
+      // Active deals
+      metrics === 'all' || metrics === 'deals' ? prisma.deal.count({
+        where: {
+          merchantId,
+          createdAt: { gte: compareFrom, lte: compareTo }
+        }
+      }) : 0
+    ]);
+
+    // Format metrics
+    const currentFormatted = {
+      checkIns: currentMetrics[0],
+      dealSaves: currentMetrics[1],
+      grossSales: Number((currentMetrics[2]._sum.sourceAmountSpent || 0).toFixed(2)),
+      kickbackPaid: Number((currentMetrics[2]._sum.amountEarned || 0).toFixed(2)),
+      uniqueUsers: currentMetrics[3],
+      activeDeals: currentMetrics[4]
+    };
+
+    const compareFormatted = {
+      checkIns: compareMetrics[0],
+      dealSaves: compareMetrics[1],
+      grossSales: Number((compareMetrics[2]._sum.sourceAmountSpent || 0).toFixed(2)),
+      kickbackPaid: Number((compareMetrics[2]._sum.amountEarned || 0).toFixed(2)),
+      uniqueUsers: compareMetrics[3],
+      activeDeals: compareMetrics[4]
+    };
+
+    // Calculate changes
+    const changes = {
+      checkIns: calculateChange(currentFormatted.checkIns, compareFormatted.checkIns),
+      dealSaves: calculateChange(currentFormatted.dealSaves, compareFormatted.dealSaves),
+      grossSales: calculateChange(currentFormatted.grossSales, compareFormatted.grossSales),
+      kickbackPaid: calculateChange(currentFormatted.kickbackPaid, compareFormatted.kickbackPaid),
+      uniqueUsers: calculateChange(currentFormatted.uniqueUsers, compareFormatted.uniqueUsers),
+      activeDeals: calculateChange(currentFormatted.activeDeals, compareFormatted.activeDeals)
+    };
+
+    // Get time-series data based on granularity
+    let timeSeriesData: any[] = [];
+    
+    if (granularity === 'day' || granularity === 'week' || granularity === 'month') {
+      const intervals = [];
+      const current = new Date(currentFrom);
+      const compare = new Date(compareFrom);
+      
+      while (current <= currentTo) {
+        let intervalEnd = new Date(current);
+        
+        switch (granularity) {
+          case 'day':
+            intervalEnd.setDate(current.getDate() + 1);
+            break;
+          case 'week':
+            intervalEnd.setDate(current.getDate() + 7);
+            break;
+          case 'month':
+            intervalEnd.setMonth(current.getMonth() + 1);
+            break;
+        }
+        
+        intervals.push({
+          period: 'current',
+          start: new Date(current),
+          end: new Date(Math.min(intervalEnd.getTime(), currentTo.getTime()))
+        });
+        
+        current.setTime(intervalEnd.getTime());
+      }
+      
+      // Add comparison period intervals
+      while (compare <= compareTo) {
+        let intervalEnd = new Date(compare);
+        
+        switch (granularity) {
+          case 'day':
+            intervalEnd.setDate(compare.getDate() + 1);
+            break;
+          case 'week':
+            intervalEnd.setDate(compare.getDate() + 7);
+            break;
+          case 'month':
+            intervalEnd.setMonth(compare.getMonth() + 1);
+            break;
+        }
+        
+        intervals.push({
+          period: 'compare',
+          start: new Date(compare),
+          end: new Date(Math.min(intervalEnd.getTime(), compareTo.getTime()))
+        });
+        
+        compare.setTime(intervalEnd.getTime());
+      }
+      
+      // Get data for each interval
+      timeSeriesData = await Promise.all(intervals.map(async (interval) => {
+        const [checkIns, dealSaves, sales] = await Promise.all([
+          metrics === 'all' || metrics === 'checkins' ? prisma.checkIn.count({
+            where: {
+              merchantId,
+              createdAt: { gte: interval.start, lte: interval.end }
+            }
+          }) : 0,
+          
+          metrics === 'all' || metrics === 'deals' ? prisma.userDeal.count({
+            where: {
+              deal: { merchantId },
+              savedAt: { gte: interval.start, lte: interval.end }
+            }
+          }) : 0,
+          
+          metrics === 'all' || metrics === 'sales' ? prisma.kickbackEvent.aggregate({
+            where: {
+              merchantId,
+              createdAt: { gte: interval.start, lte: interval.end }
+            },
+            _sum: { sourceAmountSpent: true }
+          }) : { _sum: { sourceAmountSpent: 0 } }
+        ]);
+        
+        return {
+          period: interval.period,
+          date: interval.start.toISOString().split('T')[0],
+          checkIns,
+          dealSaves,
+          grossSales: Number((sales._sum.sourceAmountSpent || 0).toFixed(2))
+        };
+      }));
+    }
+
+    res.status(200).json({
+      currentPeriod,
+      comparePeriod,
+      customDates: !!(currentFromParam && currentToParam && compareFromParam && compareToParam),
+      currentMetrics: currentFormatted,
+      compareMetrics: compareFormatted,
+      changes,
+      trends: {
+        checkIns: changes.checkIns > 0 ? 'up' : changes.checkIns < 0 ? 'down' : 'stable',
+        dealSaves: changes.dealSaves > 0 ? 'up' : changes.dealSaves < 0 ? 'down' : 'stable',
+        grossSales: changes.grossSales > 0 ? 'up' : changes.grossSales < 0 ? 'down' : 'stable',
+        kickbackPaid: changes.kickbackPaid > 0 ? 'up' : changes.kickbackPaid < 0 ? 'down' : 'stable',
+        uniqueUsers: changes.uniqueUsers > 0 ? 'up' : changes.uniqueUsers < 0 ? 'down' : 'stable',
+        activeDeals: changes.activeDeals > 0 ? 'up' : changes.activeDeals < 0 ? 'down' : 'stable'
+      },
+      dateRanges: {
+        current: { from: currentFrom, to: currentTo },
+        compare: { from: compareFrom, to: compareTo }
+      },
+      timeSeriesData,
+      filters: {
+        metrics,
+        granularity,
+        groupBy
+      },
+      summary: {
+        totalDaysCurrent: Math.ceil((currentTo.getTime() - currentFrom.getTime()) / (1000 * 60 * 60 * 24)),
+        totalDaysCompare: Math.ceil((compareTo.getTime() - compareFrom.getTime()) / (1000 * 60 * 60 * 24)),
+        periodDifference: Math.abs(Math.ceil((currentTo.getTime() - currentFrom.getTime()) / (1000 * 60 * 60 * 24)) - 
+                                  Math.ceil((compareTo.getTime() - compareFrom.getTime()) / (1000 * 60 * 60 * 24)))
+      }
+    });
+
+  } catch (error) {
+    console.error('Custom performance comparison error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;
 
 // --- Endpoint: GET /api/merchants/me/menu ---
