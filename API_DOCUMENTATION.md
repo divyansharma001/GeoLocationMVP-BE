@@ -166,11 +166,14 @@ Register as a merchant (requires authentication).
   "description": "Best pizza in town",
   "logoUrl": "https://example.com/logo.jpg",
   "phoneNumber": "+1-555-123-4567",
+  "businessType": "LOCAL",
   "latitude": 40.7128,
   "longitude": -74.0060,
   "cityId": 1
 }
 ```
+
+**Note:** `businessType` must be either `"NATIONAL"` (for chains like McDonald's) or `"LOCAL"` (for local restaurants). Defaults to `"LOCAL"` if not provided.
 
 ### GET /api/merchants/status
 Get merchant status for the authenticated user.

@@ -1021,7 +1021,8 @@ router.get('/performance/cities', protect, requireAdmin, async (req: AuthRequest
               select: {
                 id: true,
                 status: true,
-                businessName: true
+                businessName: true,
+                businessType: true
               }
             }
           }
@@ -1251,7 +1252,8 @@ router.get('/performance/sales-by-store', protect, requireAdmin, async (req: Aut
       include: {
         merchant: {
           select: {
-            businessName: true
+            businessName: true,
+            businessType: true
           }
         },
         city: {
@@ -1350,6 +1352,7 @@ router.get('/performance/top-merchants', protect, requireAdmin, async (req: Auth
       select: {
         id: true,
         businessName: true,
+        businessType: true,
         description: true,
         logoUrl: true
       }

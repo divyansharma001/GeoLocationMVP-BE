@@ -24,6 +24,11 @@ enum MerchantStatus {
   SUSPENDED
 }
 
+enum BusinessType {
+  NATIONAL
+  LOCAL
+}
+
 enum DealCategory {
   FOOD_AND_BEVERAGE
   RETAIL
@@ -171,6 +176,7 @@ model Merchant {
   logoUrl       String?
   phoneNumber   String?  // Phone number for contact/call functionality
   status        MerchantStatus @default(PENDING) // New merchants are PENDING by default
+  businessType  BusinessType @default(LOCAL) // National chain or local business
   
   // Geolocation fields
   latitude      Float?

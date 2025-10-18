@@ -29,7 +29,7 @@ const upload = multer({
 // Allows a user to register as a merchant.
 router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
   try {
-  const { businessName, address, description, logoUrl, phoneNumber, latitude, longitude, cityId } = req.body;
+  const { businessName, address, description, logoUrl, phoneNumber, latitude, longitude, cityId, businessType } = req.body;
     const userId = req.user?.id;
 
     if (!userId) {
@@ -38,6 +38,11 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
 
     if (!businessName || !address) {
       return res.status(400).json({ error: 'Business name and address are required' });
+    }
+
+    // Validate businessType if provided
+    if (businessType && !['NATIONAL', 'LOCAL'].includes(businessType)) {
+      return res.status(400).json({ error: 'Business type must be either NATIONAL or LOCAL' });
     }
 
     // Validate coordinates if provided
@@ -92,6 +97,7 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
           description,
           logoUrl,
           phoneNumber: phoneNumber || null,
+          businessType: businessType || 'LOCAL', // Default to LOCAL if not provided
           latitude: latitude ? parseFloat(latitude) : null,
           longitude: longitude ? parseFloat(longitude) : null,
           // legacy free-form city usage disabled for new merchants
@@ -146,6 +152,7 @@ router.get('/merchants/status', protect, async (req: AuthRequest, res) => {
         id: true,
         status: true,
         businessName: true,
+        businessType: true,
         address: true,
         description: true,
         logoUrl: true,
@@ -620,6 +627,7 @@ router.put('/merchants/coordinates', protect, isApprovedMerchant, async (req: Au
       select: {
         id: true,
         businessName: true,
+        businessType: true,
         latitude: true,
         longitude: true,
         address: true,

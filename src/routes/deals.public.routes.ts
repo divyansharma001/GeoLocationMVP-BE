@@ -465,6 +465,7 @@ router.get('/deals/featured', async (req, res) => {
           select: {
             id: true,
             businessName: true,
+            businessType: true,
             address: true,
             description: true,
             logoUrl: true,
@@ -878,7 +879,8 @@ router.post('/deals/:id/share', async (req, res) => {
         merchant: {
           select: {
             status: true,
-            businessName: true
+            businessName: true,
+            businessType: true
           }
         }
       }

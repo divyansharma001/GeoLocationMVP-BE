@@ -65,6 +65,7 @@ router.get('/cities/:cityId/stores', async (req, res) => {
           select: {
             id: true,
             businessName: true,
+            businessType: true,
             status: true,
             logoUrl: true,
           }
