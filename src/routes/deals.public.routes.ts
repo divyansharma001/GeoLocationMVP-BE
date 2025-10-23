@@ -942,6 +942,8 @@ router.post('/deals/:id/share', async (req, res) => {
 // - search: Text search in name and description
 // - cityId: Filter by city
 // - latitude, longitude, radius: Location-based filtering
+// - isHappyHour: Filter by Happy Hour items (true/false)
+// - dealType: Filter by specific deal type (HAPPY_HOUR_BOUNTY, HAPPY_HOUR_SURPRISE, etc.)
 // - limit: Number of results (default 50, max 100)
 // - offset: Pagination offset
 router.get('/menu/items', async (req, res) => {
@@ -958,6 +960,8 @@ router.get('/menu/items', async (req, res) => {
       latitude,
       longitude,
       radius,
+      isHappyHour,
+      dealType,
       limit: limitParam,
       offset: offsetParam
     } = req.query as any;
@@ -1040,6 +1044,28 @@ router.get('/menu/items', async (req, res) => {
           }
         }
       ];
+    }
+
+    // Happy Hour filtering
+    if (isHappyHour !== undefined) {
+      const isHappyHourBool = isHappyHour === 'true' || isHappyHour === true;
+      if (typeof isHappyHour !== 'boolean' && isHappyHour !== 'true' && isHappyHour !== 'false') {
+        return res.status(400).json({ error: 'isHappyHour must be true or false' });
+      }
+      whereClause.isHappyHour = isHappyHourBool;
+    }
+
+    // Deal type filtering
+    if (dealType !== undefined) {
+      const validDealTypes = [
+        'HAPPY_HOUR_BOUNTY', 'HAPPY_HOUR_SURPRISE', 'HAPPY_HOUR_LATE_NIGHT', 
+        'HAPPY_HOUR_MID_DAY', 'HAPPY_HOUR_MORNINGS', 'REDEEM_NOW_BOUNTY', 
+        'REDEEM_NOW_SURPRISE', 'STANDARD', 'RECURRING'
+      ];
+      if (!validDealTypes.includes(dealType)) {
+        return res.status(400).json({ error: `dealType must be one of: ${validDealTypes.join(', ')}` });
+      }
+      whereClause.dealType = dealType;
     }
 
     // Location-based filtering
@@ -1159,6 +1185,14 @@ router.get('/menu/items', async (req, res) => {
       price: item.price,
       category: item.category,
       imageUrl: item.imageUrl,
+      isHappyHour: item.isHappyHour,
+      happyHourPrice: item.happyHourPrice,
+      dealType: item.dealType,
+      validStartTime: item.validStartTime,
+      validEndTime: item.validEndTime,
+      validDays: item.validDays,
+      isSurprise: item.isSurprise,
+      surpriseRevealTime: item.surpriseRevealTime,
       createdAt: item.createdAt,
       merchant: {
         id: item.merchant.id,
@@ -1283,6 +1317,342 @@ router.get('/menu/categories', async (req, res) => {
 
   } catch (error) {
     console.error('Menu categories error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/menu/happy-hour ---
+// Dedicated endpoint for Happy Hour menu items from approved merchants
+// Query parameters:
+// - merchantId: Filter by specific merchant
+// - category: Filter by menu category
+// - minPrice: Minimum price filter
+// - maxPrice: Maximum price filter
+// - search: Text search in name and description
+// - cityId: Filter by city
+// - latitude, longitude, radius: Location-based filtering
+// - limit: Number of results (default 50, max 100)
+// - offset: Pagination offset
+router.get('/menu/happy-hour', async (req, res) => {
+  try {
+    const startTime = Date.now();
+    const {
+      merchantId,
+      category,
+      minPrice,
+      maxPrice,
+      search,
+      cityId,
+      latitude,
+      longitude,
+      radius,
+      limit: limitParam,
+      offset: offsetParam
+    } = req.query as any;
+
+    // Parse and validate pagination parameters
+    const limit = Math.min(parseInt(limitParam || '50', 10) || 50, 100);
+    const offset = Math.max(parseInt(offsetParam || '0', 10) || 0, 0);
+
+    // Build the where clause for filtering - only Happy Hour items
+    const whereClause: any = {
+      isHappyHour: true, // Only Happy Hour items
+      merchant: {
+        status: 'APPROVED'
+      }
+    };
+
+    // Filter by specific merchant
+    if (merchantId) {
+      const merchantIdNum = parseInt(merchantId, 10);
+      if (isNaN(merchantIdNum)) {
+        return res.status(400).json({ error: 'Invalid merchantId parameter' });
+      }
+      whereClause.merchantId = merchantIdNum;
+    }
+
+    // Filter by category (case-insensitive)
+    if (category) {
+      whereClause.category = {
+        contains: category.trim(),
+        mode: 'insensitive'
+      };
+    }
+
+    // Price range filtering
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      whereClause.price = {};
+      
+      if (minPrice !== undefined) {
+        const minPriceNum = parseFloat(minPrice);
+        if (isNaN(minPriceNum) || minPriceNum < 0) {
+          return res.status(400).json({ error: 'Invalid minPrice parameter' });
+        }
+        whereClause.price.gte = minPriceNum;
+      }
+      
+      if (maxPrice !== undefined) {
+        const maxPriceNum = parseFloat(maxPrice);
+        if (isNaN(maxPriceNum) || maxPriceNum < 0) {
+          return res.status(400).json({ error: 'Invalid maxPrice parameter' });
+        }
+        whereClause.price.lte = maxPriceNum;
+      }
+    }
+
+    // Text search in name and description
+    if (search) {
+      const searchTerm = search.trim();
+      if (searchTerm.length === 0) {
+        return res.status(400).json({ error: 'Search term cannot be empty' });
+      }
+      whereClause.OR = [
+        {
+          name: {
+            contains: searchTerm,
+            mode: 'insensitive'
+          }
+        },
+        {
+          description: {
+            contains: searchTerm,
+            mode: 'insensitive'
+          }
+        }
+      ];
+    }
+
+    // Location-based filtering
+    if (cityId) {
+      const cityIdNum = parseInt(cityId, 10);
+      if (isNaN(cityIdNum)) {
+        return res.status(400).json({ error: 'Invalid cityId parameter' });
+      }
+      
+      whereClause.merchant = {
+        ...whereClause.merchant,
+        stores: {
+          some: {
+            cityId: cityIdNum,
+            active: true
+          }
+        }
+      };
+    }
+
+    // Geolocation filtering
+    if (latitude && longitude && radius) {
+      const lat = parseFloat(latitude);
+      const lng = parseFloat(longitude);
+      const rad = parseFloat(radius);
+
+      if (isNaN(lat) || isNaN(lng) || isNaN(rad) || rad <= 0) {
+        return res.status(400).json({ error: 'Invalid geolocation parameters' });
+      }
+
+      whereClause.merchant = {
+        ...whereClause.merchant,
+        latitude: { not: null },
+        longitude: { not: null }
+      };
+    }
+
+    // Execute the query with pagination
+    const [menuItems, totalCount] = await Promise.all([
+      prisma.menuItem.findMany({
+        where: whereClause,
+        include: {
+          merchant: {
+            select: {
+              id: true,
+              businessName: true,
+              address: true,
+              latitude: true,
+              longitude: true,
+              logoUrl: true,
+              description: true,
+              stores: {
+                where: { active: true },
+                select: {
+                  id: true,
+                  address: true,
+                  city: {
+                    select: {
+                      id: true,
+                      name: true,
+                      state: true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        orderBy: [
+          { category: 'asc' },
+          { price: 'asc' },
+          { name: 'asc' }
+        ],
+        take: limit,
+        skip: offset
+      }),
+      prisma.menuItem.count({ where: whereClause })
+    ]);
+
+    // If geolocation filtering was requested, filter results by distance
+    let filteredMenuItems = menuItems;
+    if (latitude && longitude && radius) {
+      const lat = parseFloat(latitude);
+      const lng = parseFloat(longitude);
+      const rad = parseFloat(radius);
+
+      filteredMenuItems = menuItems.filter(item => {
+        if (!item.merchant.latitude || !item.merchant.longitude) return false;
+        
+        const distance = calculateDistance(
+          lat, lng,
+          item.merchant.latitude, item.merchant.longitude
+        );
+        
+        return distance <= rad;
+      });
+    }
+
+    // Format the response
+    const formattedMenuItems = filteredMenuItems.map(item => ({
+      id: item.id,
+      name: item.name,
+      description: item.description,
+      price: item.price,
+      category: item.category,
+      imageUrl: item.imageUrl,
+      isHappyHour: item.isHappyHour,
+      happyHourPrice: item.happyHourPrice,
+      dealType: item.dealType,
+      validStartTime: item.validStartTime,
+      validEndTime: item.validEndTime,
+      validDays: item.validDays,
+      isSurprise: item.isSurprise,
+      surpriseRevealTime: item.surpriseRevealTime,
+      createdAt: item.createdAt,
+      merchant: {
+        id: item.merchant.id,
+        businessName: item.merchant.businessName,
+        address: item.merchant.address,
+        latitude: item.merchant.latitude,
+        longitude: item.merchant.longitude,
+        logoUrl: item.merchant.logoUrl,
+        description: item.merchant.description,
+        stores: item.merchant.stores
+      }
+    }));
+
+    // Calculate pagination metadata
+    const hasMore = offset + limit < totalCount;
+    const totalPages = Math.ceil(totalCount / limit);
+    const currentPage = Math.floor(offset / limit) + 1;
+
+    // Log performance for slow queries
+    logQueryPerformance(
+      'happy-hour-menu-filter',
+      startTime,
+      formattedMenuItems.length,
+      { category, merchantId, search, cityId, limit, offset }
+    );
+
+    res.status(200).json({
+      menuItems: formattedMenuItems,
+      pagination: {
+        total: totalCount,
+        limit,
+        offset,
+        hasMore,
+        totalPages,
+        currentPage
+      },
+      filters: {
+        merchantId: merchantId || null,
+        category: category || null,
+        search: search || null,
+        cityId: cityId || null,
+        isHappyHour: true
+      }
+    });
+
+  } catch (error) {
+    console.error('Happy Hour menu items error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/menu/deal-types ---
+// Get all available deal types with descriptions
+router.get('/menu/deal-types', async (req, res) => {
+  try {
+    const dealTypes = [
+      {
+        value: 'HAPPY_HOUR_BOUNTY',
+        label: 'Happy Hour Bounty',
+        description: 'Happy Hour bounty - redeem now',
+        category: 'Happy Hour'
+      },
+      {
+        value: 'HAPPY_HOUR_SURPRISE',
+        label: 'Happy Hour Surprise',
+        description: 'Happy Hour surprise deal',
+        category: 'Happy Hour'
+      },
+      {
+        value: 'HAPPY_HOUR_LATE_NIGHT',
+        label: 'Happy Hour Late Night',
+        description: 'Happy Hour late night specials',
+        category: 'Happy Hour'
+      },
+      {
+        value: 'HAPPY_HOUR_MID_DAY',
+        label: 'Happy Hour Mid Day',
+        description: 'Happy Hour mid day specials',
+        category: 'Happy Hour'
+      },
+      {
+        value: 'HAPPY_HOUR_MORNINGS',
+        label: 'Happy Hour Mornings',
+        description: 'Happy Hour morning specials',
+        category: 'Happy Hour'
+      },
+      {
+        value: 'REDEEM_NOW_BOUNTY',
+        label: 'Redeem Now Bounty',
+        description: 'Redeem now bounty',
+        category: 'Redeem Now'
+      },
+      {
+        value: 'REDEEM_NOW_SURPRISE',
+        label: 'Redeem Now Surprise',
+        description: 'Redeem now surprise deal',
+        category: 'Redeem Now'
+      },
+      {
+        value: 'STANDARD',
+        label: 'Standard',
+        description: 'Regular menu item',
+        category: 'Standard'
+      },
+      {
+        value: 'RECURRING',
+        label: 'Recurring',
+        description: 'Recurring deal',
+        category: 'Standard'
+      }
+    ];
+
+    res.status(200).json({
+      dealTypes,
+      total: dealTypes.length
+    });
+
+  } catch (error) {
+    console.error('Deal types error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -2599,7 +2599,7 @@ export default router;
 
 // --- Endpoint: GET /api/merchants/me/menu ---
 // Returns menu items for the authenticated merchant (any status).
-// Response: { menuItems: [ { id, name, price, category, imageUrl } ] }
+// Response: { menuItems: [ { id, name, price, category, imageUrl, isHappyHour, happyHourPrice, dealType, validStartTime, validEndTime, validDays, isSurprise, surpriseRevealTime } ] }
 router.get('/merchants/me/menu', protect, isMerchant, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
@@ -2615,6 +2615,14 @@ router.get('/merchants/me/menu', protect, isMerchant, async (req: AuthRequest, r
         price: true,
         category: true,
         imageUrl: true,
+        isHappyHour: true,
+        happyHourPrice: true,
+        dealType: true,
+        validStartTime: true,
+        validEndTime: true,
+        validDays: true,
+        isSurprise: true,
+        surpriseRevealTime: true,
       }
     });
     res.status(200).json({ menuItems });
@@ -2631,7 +2639,21 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
 
-    const { name, price, category, description, imageUrl } = req.body || {};
+    const { 
+      name, 
+      price, 
+      category, 
+      description, 
+      imageUrl,
+      isHappyHour,
+      happyHourPrice,
+      dealType,
+      validStartTime,
+      validEndTime,
+      validDays,
+      isSurprise,
+      surpriseRevealTime
+    } = req.body || {};
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return res.status(400).json({ error: 'name is required' });
@@ -2643,6 +2665,48 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
       return res.status(400).json({ error: 'category is required' });
     }
 
+    // Validate Happy Hour fields
+    if (isHappyHour !== undefined && typeof isHappyHour !== 'boolean') {
+      return res.status(400).json({ error: 'isHappyHour must be a boolean' });
+    }
+    if (happyHourPrice !== undefined && happyHourPrice !== null) {
+      if (isNaN(Number(happyHourPrice)) || Number(happyHourPrice) <= 0) {
+        return res.status(400).json({ error: 'happyHourPrice must be a positive number' });
+      }
+    }
+
+    // Validate deal type
+    const validDealTypes = [
+      'HAPPY_HOUR_BOUNTY', 'HAPPY_HOUR_SURPRISE', 'HAPPY_HOUR_LATE_NIGHT', 
+      'HAPPY_HOUR_MID_DAY', 'HAPPY_HOUR_MORNINGS', 'REDEEM_NOW_BOUNTY', 
+      'REDEEM_NOW_SURPRISE', 'STANDARD', 'RECURRING'
+    ];
+    if (dealType !== undefined && !validDealTypes.includes(dealType)) {
+      return res.status(400).json({ error: `dealType must be one of: ${validDealTypes.join(', ')}` });
+    }
+
+    // Validate time fields
+    if (validStartTime !== undefined && validStartTime !== null) {
+      if (!/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(validStartTime)) {
+        return res.status(400).json({ error: 'validStartTime must be in HH:MM format' });
+      }
+    }
+    if (validEndTime !== undefined && validEndTime !== null) {
+      if (!/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(validEndTime)) {
+        return res.status(400).json({ error: 'validEndTime must be in HH:MM format' });
+      }
+    }
+    if (surpriseRevealTime !== undefined && surpriseRevealTime !== null) {
+      if (!/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(surpriseRevealTime)) {
+        return res.status(400).json({ error: 'surpriseRevealTime must be in HH:MM format' });
+      }
+    }
+
+    // Validate surprise fields
+    if (isSurprise !== undefined && typeof isSurprise !== 'boolean') {
+      return res.status(400).json({ error: 'isSurprise must be a boolean' });
+    }
+
     // @ts-ignore
     const created = await prisma.menuItem.create({
       data: {
@@ -2652,8 +2716,31 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
         category: category.trim(),
         description: description ? String(description).trim() : null,
         imageUrl: imageUrl ? String(imageUrl).trim() : null,
+        isHappyHour: Boolean(isHappyHour) || false,
+        happyHourPrice: happyHourPrice !== undefined && happyHourPrice !== null ? Number(happyHourPrice) : null,
+        dealType: dealType || 'STANDARD',
+        validStartTime: validStartTime ? String(validStartTime).trim() : null,
+        validEndTime: validEndTime ? String(validEndTime).trim() : null,
+        validDays: validDays ? String(validDays).trim() : null,
+        isSurprise: Boolean(isSurprise) || false,
+        surpriseRevealTime: surpriseRevealTime ? String(surpriseRevealTime).trim() : null,
       },
-      select: { id: true, name: true, price: true, category: true, imageUrl: true, description: true }
+      select: { 
+        id: true, 
+        name: true, 
+        price: true, 
+        category: true, 
+        imageUrl: true, 
+        description: true,
+        isHappyHour: true,
+        happyHourPrice: true,
+        dealType: true,
+        validStartTime: true,
+        validEndTime: true,
+        validDays: true,
+        isSurprise: true,
+        surpriseRevealTime: true
+      }
     });
     res.status(201).json({ menuItem: created });
   } catch (e) {
@@ -2677,7 +2764,21 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
       return res.status(404).json({ error: 'Menu item not found' });
     }
 
-    const { name, price, category, description, imageUrl } = req.body || {};
+    const { 
+      name, 
+      price, 
+      category, 
+      description, 
+      imageUrl, 
+      isHappyHour, 
+      happyHourPrice,
+      dealType,
+      validStartTime,
+      validEndTime,
+      validDays,
+      isSurprise,
+      surpriseRevealTime
+    } = req.body || {};
     const data: any = {};
     if (name !== undefined) {
       if (!name || typeof name !== 'string' || name.trim().length === 0) return res.status(400).json({ error: 'name cannot be empty' });
@@ -2697,6 +2798,52 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
     if (imageUrl !== undefined) {
       data.imageUrl = imageUrl ? String(imageUrl).trim() : null;
     }
+    if (isHappyHour !== undefined) {
+      if (typeof isHappyHour !== 'boolean') return res.status(400).json({ error: 'isHappyHour must be a boolean' });
+      data.isHappyHour = isHappyHour;
+    }
+    if (happyHourPrice !== undefined) {
+      if (happyHourPrice !== null && (isNaN(Number(happyHourPrice)) || Number(happyHourPrice) <= 0)) {
+        return res.status(400).json({ error: 'happyHourPrice must be a positive number or null' });
+      }
+      data.happyHourPrice = happyHourPrice !== null ? Number(happyHourPrice) : null;
+    }
+    if (dealType !== undefined) {
+      const validDealTypes = [
+        'HAPPY_HOUR_BOUNTY', 'HAPPY_HOUR_SURPRISE', 'HAPPY_HOUR_LATE_NIGHT', 
+        'HAPPY_HOUR_MID_DAY', 'HAPPY_HOUR_MORNINGS', 'REDEEM_NOW_BOUNTY', 
+        'REDEEM_NOW_SURPRISE', 'STANDARD', 'RECURRING'
+      ];
+      if (!validDealTypes.includes(dealType)) {
+        return res.status(400).json({ error: `dealType must be one of: ${validDealTypes.join(', ')}` });
+      }
+      data.dealType = dealType;
+    }
+    if (validStartTime !== undefined) {
+      if (validStartTime !== null && !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(validStartTime)) {
+        return res.status(400).json({ error: 'validStartTime must be in HH:MM format or null' });
+      }
+      data.validStartTime = validStartTime ? String(validStartTime).trim() : null;
+    }
+    if (validEndTime !== undefined) {
+      if (validEndTime !== null && !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(validEndTime)) {
+        return res.status(400).json({ error: 'validEndTime must be in HH:MM format or null' });
+      }
+      data.validEndTime = validEndTime ? String(validEndTime).trim() : null;
+    }
+    if (validDays !== undefined) {
+      data.validDays = validDays ? String(validDays).trim() : null;
+    }
+    if (isSurprise !== undefined) {
+      if (typeof isSurprise !== 'boolean') return res.status(400).json({ error: 'isSurprise must be a boolean' });
+      data.isSurprise = isSurprise;
+    }
+    if (surpriseRevealTime !== undefined) {
+      if (surpriseRevealTime !== null && !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(surpriseRevealTime)) {
+        return res.status(400).json({ error: 'surpriseRevealTime must be in HH:MM format or null' });
+      }
+      data.surpriseRevealTime = surpriseRevealTime ? String(surpriseRevealTime).trim() : null;
+    }
 
     if (Object.keys(data).length === 0) {
       return res.status(400).json({ error: 'No valid fields provided for update' });
@@ -2706,7 +2853,22 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
     const updated = await prisma.menuItem.update({
       where: { id: itemId },
       data,
-      select: { id: true, name: true, price: true, category: true, imageUrl: true, description: true }
+      select: { 
+        id: true, 
+        name: true, 
+        price: true, 
+        category: true, 
+        imageUrl: true, 
+        description: true,
+        isHappyHour: true,
+        happyHourPrice: true,
+        dealType: true,
+        validStartTime: true,
+        validEndTime: true,
+        validDays: true,
+        isSurprise: true,
+        surpriseRevealTime: true
+      }
     });
     res.status(200).json({ menuItem: updated });
   } catch (e) {

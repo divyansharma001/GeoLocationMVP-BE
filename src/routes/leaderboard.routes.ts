@@ -23,10 +23,13 @@ async function optionalAuth(req: AuthRequest, _res: Response, next: NextFunction
 // GET /api/leaderboard
 router.get('/', optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const { period, limit, includeSelf, year, month, from, to } = req.query;
+    const { period, limit, includeSelf, year, month, from, to, showMore } = req.query;
     const selfUserId = req.user?.id;
 
-    const limitNum = limit ? parseInt(String(limit), 10) : undefined;
+    // Default to 5 entries unless showMore is true or limit is explicitly set
+    const showMoreBool = showMore === 'true';
+    const defaultLimit = showMoreBool ? 50 : 5;
+    const limitNum = limit ? parseInt(String(limit), 10) : defaultLimit;
     const includeSelfBool = includeSelf === undefined ? true : String(includeSelf).toLowerCase() === 'true';
 
     const yearNum = year ? parseInt(String(year), 10) : undefined;
@@ -43,7 +46,18 @@ router.get('/', optionalAuth, async (req: AuthRequest, res: Response) => {
       to: to as string | undefined,
     });
 
-    res.status(200).json(result);
+    // Add pagination metadata
+    const response = {
+      ...result,
+      pagination: {
+        defaultLimit: 5,
+        currentLimit: limitNum,
+        showMore: showMoreBool,
+        hasMore: limitNum < 50 && result.top && result.top.length >= limitNum
+      }
+    };
+
+    res.status(200).json(response);
   } catch (e: any) {
     if (/period/i.test(e.message) || /custom period/i.test(e.message) || /limit/i.test(e.message) || /month must be/.test(e.message)) {
       return res.status(400).json({ error: e.message });
@@ -118,13 +132,18 @@ router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
     const startTime = Date.now();
     const { 
       period = 'last_30_days', 
-      limit = 50, 
+      limit, 
       includeSelf = 'true',
-      includeStats = 'true'
+      includeStats = 'true',
+      showMore
     } = req.query as any;
     
     const selfUserId = req.user?.id;
-    const limitNum = Math.min(parseInt(limit) || 50, 100);
+    
+    // Default to 5 entries unless showMore is true or limit is explicitly set
+    const showMoreBool = showMore === 'true';
+    const defaultLimit = showMoreBool ? 50 : 5;
+    const limitNum = Math.min(parseInt(limit) || defaultLimit, 100);
     const includeSelfBool = includeSelf === 'true';
     const includeStatsBool = includeStats === 'true';
 
@@ -276,6 +295,12 @@ router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
       leaderboard: formattedLeaderboard,
       personalPosition,
       globalStats,
+      pagination: {
+        defaultLimit: 5,
+        currentLimit: limitNum,
+        showMore: showMoreBool,
+        hasMore: limitNum < 100 && formattedLeaderboard.length >= limitNum
+      },
       metadata: {
         totalShown: formattedLeaderboard.length,
         limit: limitNum,
@@ -303,11 +328,15 @@ router.get('/cities', optionalAuth, async (req: AuthRequest, res: Response) => {
     const startTime = Date.now();
     const { 
       period = 'last_30_days', 
-      limit = 20,
-      includeInactive = 'false'
+      limit,
+      includeInactive = 'false',
+      showMore
     } = req.query as any;
 
-    const limitNum = Math.min(parseInt(limit) || 20, 50);
+    // Default to 5 entries unless showMore is true or limit is explicitly set
+    const showMoreBool = showMore === 'true';
+    const defaultLimit = showMoreBool ? 20 : 5;
+    const limitNum = Math.min(parseInt(limit) || defaultLimit, 50);
     const includeInactiveBool = includeInactive === 'true';
     const { from, to } = calculateDateRange(period);
 
@@ -364,6 +393,12 @@ router.get('/cities', optionalAuth, async (req: AuthRequest, res: Response) => {
       period,
       dateRange: { from: from.toISOString(), to: to.toISOString() },
       cities: formattedCities,
+      pagination: {
+        defaultLimit: 5,
+        currentLimit: limitNum,
+        showMore: showMoreBool,
+        hasMore: limitNum < 50 && formattedCities.length >= limitNum
+      },
       metadata: {
         totalShown: formattedCities.length,
         limit: limitNum,
@@ -389,16 +424,20 @@ router.get('/cities/:cityId', optionalAuth, async (req: AuthRequest, res: Respon
     const cityId = parseInt(req.params.cityId);
     const { 
       period = 'last_30_days', 
-      limit = 50, 
+      limit, 
       includeSelf = 'true',
-      includeStats = 'true'
+      includeStats = 'true',
+      showMore
     } = req.query as any;
 
     if (isNaN(cityId)) {
       return res.status(400).json({ error: 'Invalid city ID' });
     }
 
-    const limitNum = Math.min(parseInt(limit) || 50, 100);
+    // Default to 5 entries unless showMore is true or limit is explicitly set
+    const showMoreBool = showMore === 'true';
+    const defaultLimit = showMoreBool ? 50 : 5;
+    const limitNum = Math.min(parseInt(limit) || defaultLimit, 100);
     const includeSelfBool = includeSelf === 'true';
     const includeStatsBool = includeStats === 'true';
     const selfUserId = req.user?.id;
@@ -560,6 +599,12 @@ router.get('/cities/:cityId', optionalAuth, async (req: AuthRequest, res: Respon
       leaderboard: formattedLeaderboard,
       personalPosition,
       cityStats,
+      pagination: {
+        defaultLimit: 5,
+        currentLimit: limitNum,
+        showMore: showMoreBool,
+        hasMore: limitNum < 100 && formattedLeaderboard.length >= limitNum
+      },
       metadata: {
         totalShown: formattedLeaderboard.length,
         limit: limitNum,
@@ -793,11 +838,16 @@ router.get('/categories', optionalAuth, async (req: AuthRequest, res: Response) 
     const { 
       period = 'last_30_days',
       categoryId,
-      limit = 20
+      limit,
+      showMore
     } = req.query as any;
 
     const { from, to } = calculateDateRange(period);
-    const limitNum = Math.min(parseInt(limit) || 20, 50);
+    
+    // Default to 5 entries unless showMore is true or limit is explicitly set
+    const showMoreBool = showMore === 'true';
+    const defaultLimit = showMoreBool ? 20 : 5;
+    const limitNum = Math.min(parseInt(limit) || defaultLimit, 50);
 
     let whereClause = 'WHERE u.role = \'USER\'';
     let params: any[] = [from, to];
@@ -899,6 +949,12 @@ router.get('/categories', optionalAuth, async (req: AuthRequest, res: Response) 
       dateRange: { from: from.toISOString(), to: to.toISOString() },
       categoryId: categoryId ? parseInt(categoryId) : null,
       categories,
+      pagination: {
+        defaultLimit: 5,
+        currentLimit: limitNum,
+        showMore: showMoreBool,
+        hasMore: limitNum < 50 && categories.length >= limitNum
+      },
       metadata: {
         totalCategories: categories.length,
         limit: limitNum,

@@ -49,6 +49,24 @@ enum DealType {
   RECURRING
 }
 
+// Comprehensive deal type system for menu items and deals
+enum MenuDealType {
+  // Happy Hour variants
+  HAPPY_HOUR_BOUNTY        // Happy Hour bounty - redeem now
+  HAPPY_HOUR_SURPRISE      // Happy Hour surprise deal
+  HAPPY_HOUR_LATE_NIGHT    // Happy Hour late night
+  HAPPY_HOUR_MID_DAY       // Happy Hour mid day  
+  HAPPY_HOUR_MORNINGS      // Happy Hour mornings
+  
+  // Redeem now variants
+  REDEEM_NOW_BOUNTY        // Redeem now bounty
+  REDEEM_NOW_SURPRISE      // Redeem now surprise deal
+  
+  // Standard types
+  STANDARD                 // Regular menu item
+  RECURRING                // Recurring deal
+}
+
 // --- GAMIFICATION ---
 enum PointEventType {
   SIGNUP
@@ -369,6 +387,21 @@ model MenuItem {
   price       Float     // Consider Decimal for money values
   category    String
   imageUrl    String?
+  
+  // Comprehensive deal type system
+  dealType    MenuDealType @default(STANDARD) // Type of deal/promotion
+  isHappyHour Boolean   @default(false) // Legacy field - use dealType instead
+  happyHourPrice Float? // Special price for Happy Hour deals (optional)
+  
+  // Time-based deal settings
+  validStartTime String? // HH:MM format for when deal becomes valid (e.g., "17:00")
+  validEndTime   String? // HH:MM format for when deal expires (e.g., "19:00")
+  validDays      String? // Comma-separated days (e.g., "MONDAY,TUESDAY,WEDNESDAY")
+  
+  // Surprise deal settings
+  isSurprise     Boolean @default(false) // Whether this is a surprise deal
+  surpriseRevealTime String? // When to reveal surprise (HH:MM format)
+  
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -378,6 +411,9 @@ model MenuItem {
   dealLinks   DealMenuItem[]
 
   @@index([merchantId])
+  @@index([merchantId, dealType])
+  @@index([merchantId, isHappyHour])
+  @@index([dealType])
 }
 
 // Join table for many-to-many relationship between Deal and MenuItem with ability to hide items for specific deals

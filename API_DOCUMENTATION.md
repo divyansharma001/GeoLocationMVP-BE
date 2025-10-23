@@ -265,6 +265,7 @@ Public endpoint to filter and search menu items from approved merchants.
 - `latitude` (optional): Latitude for location-based filtering (requires longitude and radius)
 - `longitude` (optional): Longitude for location-based filtering (requires latitude and radius)
 - `radius` (optional): Radius in kilometers for location-based filtering (requires latitude and longitude)
+- `isHappyHour` (optional): Filter by Happy Hour items (true/false)
 - `limit` (optional): Number of results per page (default: 50, max: 100)
 - `offset` (optional): Pagination offset (default: 0)
 
@@ -284,6 +285,8 @@ GET /api/menu/items?category=Mains&minPrice=10&maxPrice=20&search=pizza&limit=20
       "price": 18.0,
       "category": "Mains",
       "imageUrl": "https://example.com/pizza.jpg",
+      "isHappyHour": true,
+      "happyHourPrice": 12.0,
       "createdAt": "2024-01-15T10:30:00Z",
       "merchant": {
         "id": 1,
@@ -324,6 +327,71 @@ GET /api/menu/items?category=Mains&minPrice=10&maxPrice=20&search=pizza&limit=20
     "search": "pizza",
     "cityId": null,
     "location": null
+  }
+}
+```
+
+### GET /api/menu/happy-hour
+Dedicated endpoint for Happy Hour menu items from approved merchants.
+
+**Query Parameters:**
+- `merchantId` (optional): Filter by specific merchant ID
+- `category` (optional): Filter by menu category
+- `minPrice` (optional): Minimum price filter
+- `maxPrice` (optional): Maximum price filter
+- `search` (optional): Text search in name and description
+- `cityId` (optional): Filter by city ID
+- `latitude` (optional): Latitude for location-based filtering (requires longitude and radius)
+- `longitude` (optional): Longitude for location-based filtering (requires latitude and radius)
+- `radius` (optional): Radius in kilometers for location-based filtering (requires latitude and longitude)
+- `limit` (optional): Number of results per page (default: 50, max: 100)
+- `offset` (optional): Pagination offset (default: 0)
+
+**Example Request:**
+```
+GET /api/menu/happy-hour?category=Drinks&minPrice=5&maxPrice=15
+```
+
+**Response:**
+```json
+{
+  "menuItems": [
+    {
+      "id": 2,
+      "name": "Craft Beer",
+      "description": "Local IPA",
+      "price": 8.0,
+      "category": "Drinks",
+      "imageUrl": "https://example.com/beer.jpg",
+      "isHappyHour": true,
+      "happyHourPrice": 5.0,
+      "createdAt": "2024-01-15T10:30:00Z",
+      "merchant": {
+        "id": 2,
+        "businessName": "The Local Pub",
+        "address": "456 Oak St",
+        "latitude": 40.7589,
+        "longitude": -73.9851,
+        "logoUrl": "https://example.com/pub-logo.jpg",
+        "description": "Neighborhood pub",
+        "stores": []
+      }
+    }
+  ],
+  "pagination": {
+    "total": 12,
+    "limit": 50,
+    "offset": 0,
+    "hasMore": false,
+    "currentPage": 1,
+    "totalPages": 1
+  },
+  "filters": {
+    "merchantId": null,
+    "category": "Drinks",
+    "search": null,
+    "cityId": null,
+    "isHappyHour": true
   }
 }
 ```
@@ -1200,7 +1268,8 @@ Get basic leaderboard rankings with optional authentication and period filtering
 
 **Query Parameters:**
 - `period` (string): Time period - `day`, `week`, `month`, `all-time`, `custom`
-- `limit` (number): Number of users to return (1-50, default: 10)
+- `limit` (number): Number of users to return (1-50, default: 5)
+- `showMore` (boolean): Show more entries (default: false, shows 5 entries by default)
 - `includeSelf` (boolean): Include authenticated user's position (default: true)
 - `year` (number): Specific year for period
 - `month` (number): Specific month for period (1-12)
@@ -1232,6 +1301,12 @@ Get basic leaderboard rankings with optional authentication and period filtering
     "totalPoints": 980,
     "rank": 15,
     "inTop": false
+  },
+  "pagination": {
+    "defaultLimit": 5,
+    "currentLimit": 5,
+    "showMore": false,
+    "hasMore": true
   }
 }
 ```
@@ -1245,7 +1320,8 @@ Get enhanced global leaderboard with detailed analytics and statistics.
 - `period` (string): Time period (default: 'last_30_days')
   - Available: `today`, `this_week`, `this_month`, `this_quarter`, `this_year`
   - Available: `last_7_days`, `last_30_days`, `last_90_days`
-- `limit` (number): Number of users to return (default: 50, max: 100)
+- `limit` (number): Number of users to return (default: 5, max: 100)
+- `showMore` (boolean): Show more entries (default: false, shows 5 entries by default)
 - `includeSelf` (boolean): Include authenticated user's position (default: true)
 - `includeStats` (boolean): Include global statistics (default: true)
 
@@ -1307,9 +1383,15 @@ Get enhanced global leaderboard with detailed analytics and statistics.
       "p99": 1000.0
     }
   },
+  "pagination": {
+    "defaultLimit": 5,
+    "currentLimit": 5,
+    "showMore": false,
+    "hasMore": true
+  },
   "metadata": {
-    "totalShown": 50,
-    "limit": 50,
+    "totalShown": 5,
+    "limit": 5,
     "includeSelf": true,
     "includeStats": true,
     "queryTime": 245
@@ -1324,7 +1406,8 @@ Get city comparison leaderboard with performance metrics.
 
 **Query Parameters:**
 - `period` (string): Time period (default: 'last_30_days')
-- `limit` (number): Number of cities to return (default: 20, max: 50)
+- `limit` (number): Number of cities to return (default: 5, max: 50)
+- `showMore` (boolean): Show more entries (default: false, shows 5 entries by default)
 - `includeInactive` (boolean): Include inactive cities (default: false)
 
 **Response:**
@@ -1354,9 +1437,15 @@ Get city comparison leaderboard with performance metrics.
       "engagementRate": 0.711
     }
   ],
+  "pagination": {
+    "defaultLimit": 5,
+    "currentLimit": 5,
+    "showMore": false,
+    "hasMore": true
+  },
   "metadata": {
-    "totalShown": 20,
-    "limit": 20,
+    "totalShown": 5,
+    "limit": 5,
     "includeInactive": false,
     "queryTime": 180
   }
@@ -1370,7 +1459,8 @@ Get detailed city-specific leaderboard with local analytics.
 
 **Query Parameters:**
 - `period` (string): Time period (default: 'last_30_days')
-- `limit` (number): Number of users to return (default: 50, max: 100)
+- `limit` (number): Number of users to return (default: 5, max: 100)
+- `showMore` (boolean): Show more entries (default: false, shows 5 entries by default)
 - `includeSelf` (boolean): Include authenticated user's position (default: true)
 - `includeStats` (boolean): Include city statistics (default: true)
 
@@ -1426,9 +1516,15 @@ Get detailed city-specific leaderboard with local analytics.
     "uniqueDealsUsed": 85,
     "uniqueMerchantsUsed": 25
   },
+  "pagination": {
+    "defaultLimit": 5,
+    "currentLimit": 5,
+    "showMore": false,
+    "hasMore": true
+  },
   "metadata": {
-    "totalShown": 50,
-    "limit": 50,
+    "totalShown": 5,
+    "limit": 5,
     "includeSelf": true,
     "includeStats": true,
     "queryTime": 195
@@ -1545,7 +1641,8 @@ Get category-based leaderboards showing top users by deal categories.
 **Query Parameters:**
 - `period` (string): Time period (default: 'last_30_days')
 - `categoryId` (number): Filter by specific deal category (optional)
-- `limit` (number): Number of users per category (default: 20, max: 50)
+- `limit` (number): Number of users per category (default: 5, max: 50)
+- `showMore` (boolean): Show more entries (default: false, shows 5 entries by default)
 
 **Response:**
 ```json
@@ -1579,9 +1676,15 @@ Get category-based leaderboards showing top users by deal categories.
       ]
     }
   ],
+  "pagination": {
+    "defaultLimit": 5,
+    "currentLimit": 5,
+    "showMore": false,
+    "hasMore": true
+  },
   "metadata": {
     "totalCategories": 5,
-    "limit": 20,
+    "limit": 5,
     "queryTime": 280
   }
 }
