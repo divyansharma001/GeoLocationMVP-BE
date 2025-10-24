@@ -5,6 +5,7 @@ import prisma from '../lib/prisma';
 import { uploadImage, deleteImage, uploadToCloudinary } from '../lib/cloudinary';
 import { slugify } from '../lib/slugify';
 import multer from 'multer';
+import * as XLSX from 'xlsx';
 
 
 const router = Router();
@@ -22,6 +23,26 @@ const upload = multer({
   },
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB limit
+  }
+});
+
+// Configure multer for Excel uploads
+const excelUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'application/vnd.ms-excel', // .xls
+      'text/csv' // .csv
+    ];
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only Excel (.xlsx, .xls) and CSV files are allowed!'));
+    }
+  },
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit for Excel files
   }
 });
 
@@ -2746,6 +2767,202 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
   } catch (e) {
     console.error('Create menu item failed', e);
     res.status(500).json({ error: 'Failed to create menu item' });
+  }
+});
+
+// --- Endpoint: POST /api/merchants/me/menu/bulk-upload ---
+// Bulk upload menu items from Excel/CSV file
+router.post('/merchants/me/menu/bulk-upload', protect, isMerchant, excelUpload.single('file'), async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded. Please upload an Excel (.xlsx, .xls) or CSV file.' });
+    }
+
+    // Parse the Excel file
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+    if (!jsonData || jsonData.length === 0) {
+      return res.status(400).json({ error: 'The uploaded file is empty or has no valid data.' });
+    }
+
+    // Validate and prepare menu items
+    const validDealTypes = [
+      'HAPPY_HOUR_BOUNTY', 'HAPPY_HOUR_SURPRISE', 'HAPPY_HOUR_LATE_NIGHT', 
+      'HAPPY_HOUR_MID_DAY', 'HAPPY_HOUR_MORNINGS', 'REDEEM_NOW_BOUNTY', 
+      'REDEEM_NOW_SURPRISE', 'STANDARD', 'RECURRING'
+    ];
+
+    const validDays = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+    const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+
+    const errors: Array<{ row: number; field: string; message: string }> = [];
+    const menuItems: any[] = [];
+
+    // Process each row
+    jsonData.forEach((row: any, index: number) => {
+      const rowNumber = index + 2; // Excel row number (1-indexed + header row)
+      const item: any = {
+        merchantId,
+      };
+
+      // Required fields validation
+      if (!row.name || typeof row.name !== 'string' || row.name.trim().length === 0) {
+        errors.push({ row: rowNumber, field: 'name', message: 'Name is required and must be a non-empty string' });
+      } else {
+        item.name = row.name.trim();
+      }
+
+      if (row.price === undefined || row.price === null || isNaN(Number(row.price)) || Number(row.price) <= 0) {
+        errors.push({ row: rowNumber, field: 'price', message: 'Price must be a positive number' });
+      } else {
+        item.price = Number(row.price);
+      }
+
+      if (!row.category || typeof row.category !== 'string' || row.category.trim().length === 0) {
+        errors.push({ row: rowNumber, field: 'category', message: 'Category is required' });
+      } else {
+        item.category = row.category.trim();
+      }
+
+      // Optional fields
+      if (row.description) {
+        item.description = String(row.description).trim();
+      }
+
+      if (row.imageUrl) {
+        item.imageUrl = String(row.imageUrl).trim();
+      }
+
+      // Happy Hour fields
+      if (row.isHappyHour !== undefined) {
+        const isHH = String(row.isHappyHour).toLowerCase();
+        if (['true', '1', 'yes'].includes(isHH)) {
+          item.isHappyHour = true;
+        } else if (['false', '0', 'no'].includes(isHH)) {
+          item.isHappyHour = false;
+        } else {
+          errors.push({ row: rowNumber, field: 'isHappyHour', message: 'isHappyHour must be true/false, yes/no, or 1/0' });
+        }
+      } else {
+        item.isHappyHour = false;
+      }
+
+      if (row.happyHourPrice !== undefined && row.happyHourPrice !== null && row.happyHourPrice !== '') {
+        if (isNaN(Number(row.happyHourPrice)) || Number(row.happyHourPrice) <= 0) {
+          errors.push({ row: rowNumber, field: 'happyHourPrice', message: 'happyHourPrice must be a positive number' });
+        } else {
+          item.happyHourPrice = Number(row.happyHourPrice);
+        }
+      }
+
+      // Deal type validation
+      if (row.dealType) {
+        const dealType = String(row.dealType).trim().toUpperCase().replace(/\s+/g, '_');
+        if (!validDealTypes.includes(dealType)) {
+          errors.push({ row: rowNumber, field: 'dealType', message: `dealType must be one of: ${validDealTypes.join(', ')}` });
+        } else {
+          item.dealType = dealType;
+        }
+      } else {
+        item.dealType = 'STANDARD';
+      }
+
+      // Time validation
+      if (row.validStartTime) {
+        const time = String(row.validStartTime).trim();
+        if (!timeRegex.test(time)) {
+          errors.push({ row: rowNumber, field: 'validStartTime', message: 'validStartTime must be in HH:MM format (e.g., 17:00)' });
+        } else {
+          item.validStartTime = time;
+        }
+      }
+
+      if (row.validEndTime) {
+        const time = String(row.validEndTime).trim();
+        if (!timeRegex.test(time)) {
+          errors.push({ row: rowNumber, field: 'validEndTime', message: 'validEndTime must be in HH:MM format (e.g., 19:00)' });
+        } else {
+          item.validEndTime = time;
+        }
+      }
+
+      // Valid days validation
+      if (row.validDays) {
+        const days = String(row.validDays).toUpperCase().split(',').map((d: string) => d.trim());
+        const invalidDays = days.filter((d: string) => !validDays.includes(d));
+        if (invalidDays.length > 0) {
+          errors.push({ row: rowNumber, field: 'validDays', message: `Invalid days: ${invalidDays.join(', ')}. Must be comma-separated: ${validDays.join(', ')}` });
+        } else {
+          item.validDays = days.join(',');
+        }
+      }
+
+      // Surprise deal fields
+      if (row.isSurprise !== undefined) {
+        const isSurp = String(row.isSurprise).toLowerCase();
+        if (['true', '1', 'yes'].includes(isSurp)) {
+          item.isSurprise = true;
+        } else if (['false', '0', 'no'].includes(isSurp)) {
+          item.isSurprise = false;
+        } else {
+          errors.push({ row: rowNumber, field: 'isSurprise', message: 'isSurprise must be true/false, yes/no, or 1/0' });
+        }
+      } else {
+        item.isSurprise = false;
+      }
+
+      if (row.surpriseRevealTime) {
+        const time = String(row.surpriseRevealTime).trim();
+        if (!timeRegex.test(time)) {
+          errors.push({ row: rowNumber, field: 'surpriseRevealTime', message: 'surpriseRevealTime must be in HH:MM format' });
+        } else {
+          item.surpriseRevealTime = time;
+        }
+      }
+
+      // Only add if no errors for this row
+      if (errors.filter(e => e.row === rowNumber).length === 0) {
+        menuItems.push(item);
+      }
+    });
+
+    // If there are validation errors, return them
+    if (errors.length > 0) {
+      return res.status(400).json({ 
+        error: 'Validation failed for some rows',
+        errors,
+        totalRows: jsonData.length,
+        validRows: menuItems.length,
+        errorRows: errors.length
+      });
+    }
+
+    // Bulk insert menu items
+    // @ts-ignore
+    const created = await prisma.menuItem.createMany({
+      data: menuItems,
+      skipDuplicates: true
+    });
+
+    res.status(201).json({ 
+      message: `Successfully uploaded ${created.count} menu items`,
+      created: created.count,
+      totalRows: jsonData.length,
+      skipped: jsonData.length - created.count
+    });
+
+  } catch (e: any) {
+    console.error('Bulk upload menu items failed', e);
+    if (e.message && e.message.includes('Only Excel')) {
+      return res.status(400).json({ error: e.message });
+    }
+    res.status(500).json({ error: 'Failed to upload menu items', details: e.message });
   }
 });
 

@@ -243,6 +243,76 @@ Create a new menu item.
 }
 ```
 
+#### POST /api/merchants/me/menu/bulk-upload
+**NEW** Bulk upload menu items from Excel/CSV file.
+
+**Headers:** 
+- `Authorization: Bearer <token>`
+- `Content-Type: multipart/form-data`
+
+**Form Data:**
+- `file`: Excel file (.xlsx, .xls) or CSV file containing menu items
+
+**Excel/CSV Format:**
+
+Required columns:
+- `name` - Menu item name
+- `price` - Item price (positive number)
+- `category` - Menu category
+
+Optional columns:
+- `description` - Item description
+- `imageUrl` - URL to item image
+- `isHappyHour` - Boolean (true/false, yes/no, 1/0)
+- `happyHourPrice` - Happy Hour price
+- `dealType` - Deal type (STANDARD, HAPPY_HOUR_BOUNTY, REDEEM_NOW_SURPRISE, etc.)
+- `validStartTime` - Start time in HH:MM format (e.g., 17:00)
+- `validEndTime` - End time in HH:MM format (e.g., 19:00)
+- `validDays` - Comma-separated days (e.g., MONDAY,TUESDAY,FRIDAY)
+- `isSurprise` - Boolean for surprise deals
+- `surpriseRevealTime` - Reveal time in HH:MM format
+
+**Example cURL:**
+```bash
+curl -X POST http://localhost:3000/api/merchants/me/menu/bulk-upload \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@menu_items.xlsx"
+```
+
+**Success Response (201):**
+```json
+{
+  "message": "Successfully uploaded 25 menu items",
+  "created": 25,
+  "totalRows": 25,
+  "skipped": 0
+}
+```
+
+**Validation Error Response (400):**
+```json
+{
+  "error": "Validation failed for some rows",
+  "errors": [
+    {
+      "row": 3,
+      "field": "price",
+      "message": "Price must be a positive number"
+    }
+  ],
+  "totalRows": 25,
+  "validRows": 23,
+  "errorRows": 2
+}
+```
+
+**Notes:**
+- Maximum file size: 10MB
+- Supported formats: .xlsx, .xls, .csv
+- All or nothing upload - if any row fails validation, entire upload is rejected
+- Detailed error messages include row numbers and field names
+- See `docs/menu-bulk-upload.md` for complete documentation and examples
+
 #### PUT /api/merchants/me/menu/item/:itemId
 Update a menu item.
 
