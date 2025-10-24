@@ -520,6 +520,123 @@ Create a new store.
 
 ## Merchant Dashboard
 
+### GET /api/merchants/check-ins
+Get all check-ins (tap-ins) for the merchant with user details including profile pictures.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+- `page` (number, optional): Page number (default: 1)
+- `limit` (number, optional): Items per page, max 100 (default: 20)
+- `dealId` (number, optional): Filter by specific deal
+- `startDate` (string, optional): Filter from date (ISO format)
+- `endDate` (string, optional): Filter to date (ISO format)
+- `sortBy` (string, optional): Sort field - `createdAt`, `distanceMeters` (default: `createdAt`)
+- `sortOrder` (string, optional): Sort order - `asc`, `desc` (default: `desc`)
+
+**Response:**
+```json
+{
+  "success": true,
+  "checkIns": [
+    {
+      "id": 123,
+      "userId": 456,
+      "user": {
+        "id": 456,
+        "name": "John Doe",
+        "email": "john@example.com",
+        "avatarUrl": "https://cloudinary.com/user/profile.jpg",
+        "profilePicture": "https://cloudinary.com/user/profile.jpg",
+        "points": 250
+      },
+      "deal": {
+        "id": 789,
+        "title": "50% Off Lunch Special",
+        "description": "Get 50% off on all lunch items",
+        "imageUrl": "https://cloudinary.com/deal/image.jpg",
+        "category": "FOOD_AND_BEVERAGE"
+      },
+      "location": {
+        "latitude": 40.7128,
+        "longitude": -74.0060,
+        "distanceMeters": 45.67
+      },
+      "checkedInAt": "2025-10-25T14:30:00.000Z"
+    }
+  ],
+  "pagination": {
+    "currentPage": 1,
+    "totalPages": 5,
+    "totalCount": 100,
+    "limit": 20,
+    "hasNextPage": true,
+    "hasPrevPage": false
+  },
+  "filters": {
+    "dealId": null,
+    "startDate": null,
+    "endDate": null,
+    "sortBy": "createdAt",
+    "sortOrder": "desc"
+  }
+}
+```
+
+**Use Case:** Display a feed of customers who have tapped in, showing their profile pictures and which deals they're checking in for.
+
+### GET /api/merchants/check-ins/stats
+Get check-in statistics and analytics for the merchant.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+- `dealId` (number, optional): Filter stats by specific deal
+- `startDate` (string, optional): Filter from date (ISO format)
+- `endDate` (string, optional): Filter to date (ISO format)
+
+**Response:**
+```json
+{
+  "success": true,
+  "stats": {
+    "totalCheckIns": 250,
+    "uniqueUsers": 85,
+    "averageCheckInsPerUser": 2.94
+  },
+  "topDeals": [
+    {
+      "dealId": 789,
+      "dealTitle": "50% Off Lunch Special",
+      "dealImageUrl": "https://cloudinary.com/deal/image.jpg",
+      "checkInCount": 45
+    }
+  ],
+  "recentCheckIns": [
+    {
+      "id": 500,
+      "user": {
+        "id": 456,
+        "name": "John Doe",
+        "avatarUrl": "https://cloudinary.com/user/profile.jpg"
+      },
+      "deal": {
+        "id": 789,
+        "title": "50% Off Lunch Special"
+      },
+      "checkedInAt": "2025-10-25T14:30:00.000Z"
+    }
+  ],
+  "filters": {
+    "dealId": null,
+    "startDate": null,
+    "endDate": null
+  }
+}
+```
+
+**Use Case:** Dashboard analytics showing total check-ins, most popular deals, and recent customer activity.
+
 ### GET /api/merchants/dashboard/stats
 Get key performance indicators for the merchant dashboard.
 

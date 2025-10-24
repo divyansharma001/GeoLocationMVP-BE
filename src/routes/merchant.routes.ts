@@ -2616,6 +2616,324 @@ router.get('/merchants/dashboard/performance-comparison-custom', protect, isAppr
   }
 });
 
+// --- Endpoint: GET /api/merchants/check-ins ---
+// Get all check-ins for the merchant with user details including profile pictures
+router.get('/merchants/check-ins', protect, isMerchant, async (req: AuthRequest, res: Response) => {
+  try {
+    const merchantId = req.merchant?.id;
+
+    if (!merchantId) {
+      return res.status(401).json({ error: 'Merchant authentication required' });
+    }
+
+    // Parse query parameters for filtering and pagination
+    const { 
+      dealId, 
+      startDate, 
+      endDate, 
+      page = '1', 
+      limit = '20',
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    const pageNum = parseInt(page as string, 10);
+    const limitNum = parseInt(limit as string, 10);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Validate pagination
+    if (isNaN(pageNum) || pageNum < 1) {
+      return res.status(400).json({ error: 'Invalid page number' });
+    }
+
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
+      return res.status(400).json({ error: 'Limit must be between 1 and 100' });
+    }
+
+    // Build where clause
+    const whereClause: any = {
+      merchantId: merchantId
+    };
+
+    if (dealId) {
+      const dealIdNum = parseInt(dealId as string, 10);
+      if (isNaN(dealIdNum)) {
+        return res.status(400).json({ error: 'Invalid deal ID' });
+      }
+      whereClause.dealId = dealIdNum;
+    }
+
+    if (startDate || endDate) {
+      whereClause.createdAt = {};
+      if (startDate) {
+        whereClause.createdAt.gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        const endDateTime = new Date(endDate as string);
+        endDateTime.setHours(23, 59, 59, 999);
+        whereClause.createdAt.lte = endDateTime;
+      }
+    }
+
+    // Build order by clause
+    const validSortFields = ['createdAt', 'distanceMeters'];
+    const validSortOrders = ['asc', 'desc'];
+    
+    const sortField = validSortFields.includes(sortBy as string) ? sortBy as string : 'createdAt';
+    const sortDirection = validSortOrders.includes(sortOrder as string) ? sortOrder as string : 'desc';
+
+    // Fetch check-ins with user details
+    const [checkIns, totalCount] = await Promise.all([
+      prisma.checkIn.findMany({
+        where: whereClause,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              avatarUrl: true,
+              points: true
+            }
+          },
+          deal: {
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              imageUrls: true,
+              category: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: {
+          [sortField]: sortDirection
+        },
+        skip: skip,
+        take: limitNum
+      }),
+      prisma.checkIn.count({
+        where: whereClause
+      })
+    ]);
+
+    // Format check-ins for response
+    const formattedCheckIns = checkIns.map(checkIn => ({
+      id: checkIn.id,
+      userId: checkIn.userId,
+      user: {
+        id: checkIn.user.id,
+        name: checkIn.user.name || 'Anonymous User',
+        email: checkIn.user.email,
+        avatarUrl: checkIn.user.avatarUrl || null,
+        profilePicture: checkIn.user.avatarUrl || null, // Alias for easier frontend use
+        points: checkIn.user.points
+      },
+      deal: {
+        id: checkIn.deal.id,
+        title: checkIn.deal.title,
+        description: checkIn.deal.description,
+        imageUrl: checkIn.deal.imageUrls && checkIn.deal.imageUrls.length > 0 
+          ? checkIn.deal.imageUrls[0] 
+          : null,
+        category: checkIn.deal.category.name
+      },
+      location: {
+        latitude: checkIn.latitude,
+        longitude: checkIn.longitude,
+        distanceMeters: Math.round(checkIn.distanceMeters * 100) / 100
+      },
+      checkedInAt: checkIn.createdAt.toISOString()
+    }));
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(totalCount / limitNum);
+    const hasNextPage = pageNum < totalPages;
+    const hasPrevPage = pageNum > 1;
+
+    return res.status(200).json({
+      success: true,
+      checkIns: formattedCheckIns,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: totalPages,
+        totalCount: totalCount,
+        limit: limitNum,
+        hasNextPage: hasNextPage,
+        hasPrevPage: hasPrevPage
+      },
+      filters: {
+        dealId: dealId ? parseInt(dealId as string) : null,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        sortBy: sortField,
+        sortOrder: sortDirection
+      }
+    });
+
+  } catch (error) {
+    console.error('Get merchant check-ins error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/merchants/check-ins/stats ---
+// Get check-in statistics and summary for the merchant
+router.get('/merchants/check-ins/stats', protect, isMerchant, async (req: AuthRequest, res: Response) => {
+  try {
+    const merchantId = req.merchant?.id;
+
+    if (!merchantId) {
+      return res.status(401).json({ error: 'Merchant authentication required' });
+    }
+
+    const { startDate, endDate, dealId } = req.query;
+
+    // Build where clause
+    const whereClause: any = {
+      merchantId: merchantId
+    };
+
+    if (dealId) {
+      const dealIdNum = parseInt(dealId as string, 10);
+      if (!isNaN(dealIdNum)) {
+        whereClause.dealId = dealIdNum;
+      }
+    }
+
+    if (startDate || endDate) {
+      whereClause.createdAt = {};
+      if (startDate) {
+        whereClause.createdAt.gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        const endDateTime = new Date(endDate as string);
+        endDateTime.setHours(23, 59, 59, 999);
+        whereClause.createdAt.lte = endDateTime;
+      }
+    }
+
+    // Get total check-ins
+    const totalCheckIns = await prisma.checkIn.count({
+      where: whereClause
+    });
+
+    // Get unique users who checked in
+    const uniqueUsers = await prisma.checkIn.findMany({
+      where: whereClause,
+      select: {
+        userId: true
+      },
+      distinct: ['userId']
+    });
+
+    // Get check-ins by deal
+    const checkInsByDeal = await prisma.checkIn.groupBy({
+      by: ['dealId'],
+      where: whereClause,
+      _count: {
+        id: true
+      },
+      orderBy: {
+        _count: {
+          id: 'desc'
+        }
+      },
+      take: 10
+    });
+
+    // Get deal details for top deals
+    const dealIds = checkInsByDeal.map(item => item.dealId);
+    const deals = await prisma.deal.findMany({
+      where: {
+        id: { in: dealIds }
+      },
+      select: {
+        id: true,
+        title: true,
+        imageUrls: true
+      }
+    });
+
+    const dealMap = new Map(deals.map(deal => [deal.id, deal]));
+
+    const topDeals = checkInsByDeal.map(item => {
+      const deal = dealMap.get(item.dealId);
+      return {
+        dealId: item.dealId,
+        dealTitle: deal?.title || 'Unknown Deal',
+        dealImageUrl: deal?.imageUrls && deal.imageUrls.length > 0 ? deal.imageUrls[0] : null,
+        checkInCount: item._count.id
+      };
+    });
+
+    // Get recent check-ins with user info (last 5)
+    const recentCheckIns = await prisma.checkIn.findMany({
+      where: whereClause,
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            avatarUrl: true
+          }
+        },
+        deal: {
+          select: {
+            id: true,
+            title: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      },
+      take: 5
+    });
+
+    const formattedRecentCheckIns = recentCheckIns.map(checkIn => ({
+      id: checkIn.id,
+      user: {
+        id: checkIn.user.id,
+        name: checkIn.user.name || 'Anonymous User',
+        avatarUrl: checkIn.user.avatarUrl || null
+      },
+      deal: {
+        id: checkIn.deal.id,
+        title: checkIn.deal.title
+      },
+      checkedInAt: checkIn.createdAt.toISOString()
+    }));
+
+    return res.status(200).json({
+      success: true,
+      stats: {
+        totalCheckIns: totalCheckIns,
+        uniqueUsers: uniqueUsers.length,
+        averageCheckInsPerUser: uniqueUsers.length > 0 
+          ? Math.round((totalCheckIns / uniqueUsers.length) * 100) / 100 
+          : 0
+      },
+      topDeals: topDeals,
+      recentCheckIns: formattedRecentCheckIns,
+      filters: {
+        dealId: dealId ? parseInt(dealId as string) : null,
+        startDate: startDate || null,
+        endDate: endDate || null
+      }
+    });
+
+  } catch (error) {
+    console.error('Get check-in stats error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;
 
 // --- Endpoint: GET /api/merchants/me/menu ---
