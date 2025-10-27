@@ -218,6 +218,9 @@ model Merchant {
   // A Merchant can have many menu items (for Happy Hour / detailed deals)
   menuItems     MenuItem[]
 
+  // A Merchant can have many menu collections (grouped menu items)
+  menuCollections MenuCollection[]
+
   // Kickback events associated with this merchant
   kickbackEvents KickbackEvent[]
 
@@ -410,6 +413,9 @@ model MenuItem {
   // Back relation to deals via join table
   dealLinks   DealMenuItem[]
 
+  // Back relation to menu collections
+  collectionItems MenuCollectionItem[]
+
   @@index([merchantId])
   @@index([merchantId, dealType])
   @@index([merchantId, isHappyHour])
@@ -430,6 +436,45 @@ model DealMenuItem {
   @@id([dealId, menuItemId])
   @@index([menuItemId])
   @@index([dealId])
+}
+
+// Menu Collections - Allow merchants to group menu items into reusable collections
+model MenuCollection {
+  id          Int       @id @default(autoincrement())
+  merchantId  Int
+  name        String    // "Happy Hour Menu", "Weekend Specials", "Brunch Menu"
+  description String?   // Optional description of the collection
+  isActive    Boolean   @default(true) // Whether the collection is active
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  merchant    Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  items       MenuCollectionItem[]
+
+  @@index([merchantId])
+  @@index([merchantId, isActive])
+  @@index([name])
+}
+
+// Join table for MenuCollection and MenuItem with additional metadata
+model MenuCollectionItem {
+  collectionId Int
+  menuItemId   Int
+  sortOrder    Int       @default(0) // For ordering items within collection
+  isActive     Boolean   @default(true) // Whether this item is active in this collection
+  customPrice  Float?    // Override price for this collection (optional)
+  customDiscount Float?  // Custom discount for this collection (optional)
+  notes        String?   // Optional notes for this item in this collection
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  collection   MenuCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  menuItem     MenuItem       @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, menuItemId])
+  @@index([collectionId])
+  @@index([menuItemId])
+  @@index([collectionId, sortOrder])
 }
 
 // Tracks kickback events where a user earns rewards based on invitees' spending

@@ -230,6 +230,7 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
       
       // Menu integration
       menuItems, // [{ id, isHidden, customPrice?, customDiscount? }]
+      menuCollectionId, // ID of menu collection to use
       
       // Advanced settings
       maxRedemptions, // Maximum number of redemptions allowed
@@ -550,6 +551,42 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
         if (dealMenuItemsData.length) {
           // @ts-ignore - DealMenuItem model available after generate
           await tx.dealMenuItem.createMany({ data: dealMenuItemsData });
+        }
+      }
+
+      // Handle menu collection if provided
+      if (menuCollectionId && Number.isFinite(Number(menuCollectionId))) {
+        // Verify collection belongs to merchant
+        const collection = await tx.menuCollection.findFirst({
+          where: {
+            id: Number(menuCollectionId),
+            merchantId,
+            isActive: true
+          },
+          include: {
+            items: {
+              where: { isActive: true },
+              include: {
+                menuItem: true
+              }
+            }
+          }
+        });
+
+        if (collection) {
+          // Add all active items from collection to deal
+          const collectionDealItems = collection.items.map(item => ({
+            dealId: createdDeal.id,
+            menuItemId: item.menuItemId,
+            isHidden: false, // Default to visible
+            customPrice: item.customPrice,
+            customDiscount: item.customDiscount
+          }));
+
+          if (collectionDealItems.length > 0) {
+            // @ts-ignore - DealMenuItem model available after generate
+            await tx.dealMenuItem.createMany({ data: collectionDealItems });
+          }
         }
       }
 
@@ -3703,4 +3740,640 @@ router.post('/deals/upload-image', protect, isApprovedMerchant, upload.single('i
         }
         res.status(500).json({ error: 'Internal server error during file upload.' });
     }
+});
+
+// ========================================
+// MENU COLLECTIONS ENDPOINTS
+// ========================================
+
+// --- Endpoint: GET /api/merchants/me/menu-collections ---
+// Get all menu collections for the authenticated merchant
+router.get('/merchants/me/menu-collections', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const collections = await prisma.menuCollection.findMany({
+      where: { merchantId },
+      include: {
+        items: {
+          include: {
+            menuItem: {
+              select: {
+                id: true,
+                name: true,
+                price: true,
+                category: true,
+                imageUrl: true,
+                description: true,
+                dealType: true,
+                isHappyHour: true,
+                happyHourPrice: true
+              }
+            }
+          },
+          orderBy: { sortOrder: 'asc' }
+        },
+        _count: {
+          select: { items: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.status(200).json({ collections });
+  } catch (error) {
+    console.error('Get menu collections error:', error);
+    res.status(500).json({ error: 'Failed to fetch menu collections' });
+  }
+});
+
+// --- Endpoint: POST /api/merchants/me/menu-collections ---
+// Create a new menu collection
+router.post('/merchants/me/menu-collections', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { name, description, menuItems } = req.body;
+
+    // Validation
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({ error: 'Collection name is required' });
+    }
+
+    if (name.trim().length > 100) {
+      return res.status(400).json({ error: 'Collection name must be 100 characters or less' });
+    }
+
+    // Check if collection name already exists for this merchant
+    const existingCollection = await prisma.menuCollection.findFirst({
+      where: { 
+        merchantId, 
+        name: name.trim(),
+        isActive: true 
+      }
+    });
+
+    if (existingCollection) {
+      return res.status(409).json({ error: 'A collection with this name already exists' });
+    }
+
+    // Create collection with items in a transaction
+    const collection = await prisma.$transaction(async (tx) => {
+      // Create the collection
+      const newCollection = await tx.menuCollection.create({
+        data: {
+          merchantId,
+          name: name.trim(),
+          description: description ? description.trim() : null
+        }
+      });
+
+      // Add menu items if provided
+      if (menuItems && Array.isArray(menuItems) && menuItems.length > 0) {
+        const collectionItems = menuItems.map((item: any, index: number) => ({
+          collectionId: newCollection.id,
+          menuItemId: Number(item.id),
+          sortOrder: item.sortOrder || index,
+          customPrice: item.customPrice ? parseFloat(item.customPrice) : null,
+          customDiscount: item.customDiscount ? parseFloat(item.customDiscount) : null,
+          notes: item.notes ? item.notes.trim() : null
+        }));
+
+        await tx.menuCollectionItem.createMany({
+          data: collectionItems
+        });
+      }
+
+      return newCollection;
+    });
+
+    // Fetch the created collection with items
+    const createdCollection = await prisma.menuCollection.findUnique({
+      where: { id: collection.id },
+      include: {
+        items: {
+          include: {
+            menuItem: {
+              select: {
+                id: true,
+                name: true,
+                price: true,
+                category: true,
+                imageUrl: true,
+                description: true,
+                dealType: true,
+                isHappyHour: true,
+                happyHourPrice: true
+              }
+            }
+          },
+          orderBy: { sortOrder: 'asc' }
+        },
+        _count: {
+          select: { items: true }
+        }
+      }
+    });
+
+    res.status(201).json({ collection: createdCollection });
+  } catch (error) {
+    console.error('Create menu collection error:', error);
+    res.status(500).json({ error: 'Failed to create menu collection' });
+  }
+});
+
+// --- Endpoint: GET /api/merchants/me/menu-collections/:collectionId ---
+// Get a specific menu collection with its items
+router.get('/merchants/me/menu-collections/:collectionId', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const collectionId = Number(req.params.collectionId);
+    if (!Number.isFinite(collectionId)) {
+      return res.status(400).json({ error: 'Invalid collection ID' });
+    }
+
+    const collection = await prisma.menuCollection.findFirst({
+      where: { 
+        id: collectionId, 
+        merchantId 
+      },
+      include: {
+        items: {
+          include: {
+            menuItem: {
+              select: {
+                id: true,
+                name: true,
+                price: true,
+                category: true,
+                imageUrl: true,
+                description: true,
+                dealType: true,
+                isHappyHour: true,
+                happyHourPrice: true
+              }
+            }
+          },
+          orderBy: { sortOrder: 'asc' }
+        },
+        _count: {
+          select: { items: true }
+        }
+      }
+    });
+
+    if (!collection) {
+      return res.status(404).json({ error: 'Menu collection not found' });
+    }
+
+    res.status(200).json({ collection });
+  } catch (error) {
+    console.error('Get menu collection error:', error);
+    res.status(500).json({ error: 'Failed to fetch menu collection' });
+  }
+});
+
+// --- Endpoint: PUT /api/merchants/me/menu-collections/:collectionId ---
+// Update a menu collection
+router.put('/merchants/me/menu-collections/:collectionId', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const collectionId = Number(req.params.collectionId);
+    if (!Number.isFinite(collectionId)) {
+      return res.status(400).json({ error: 'Invalid collection ID' });
+    }
+
+    const { name, description, isActive } = req.body;
+
+    // Check if collection exists and belongs to merchant
+    const existingCollection = await prisma.menuCollection.findFirst({
+      where: { 
+        id: collectionId, 
+        merchantId 
+      }
+    });
+
+    if (!existingCollection) {
+      return res.status(404).json({ error: 'Menu collection not found' });
+    }
+
+    // Validate name if provided
+    if (name !== undefined) {
+      if (!name || typeof name !== 'string' || name.trim().length === 0) {
+        return res.status(400).json({ error: 'Collection name cannot be empty' });
+      }
+      if (name.trim().length > 100) {
+        return res.status(400).json({ error: 'Collection name must be 100 characters or less' });
+      }
+
+      // Check for duplicate name (excluding current collection)
+      const duplicateCollection = await prisma.menuCollection.findFirst({
+        where: { 
+          merchantId, 
+          name: name.trim(),
+          isActive: true,
+          id: { not: collectionId }
+        }
+      });
+
+      if (duplicateCollection) {
+        return res.status(409).json({ error: 'A collection with this name already exists' });
+      }
+    }
+
+    // Update collection
+    const updatedCollection = await prisma.menuCollection.update({
+      where: { id: collectionId },
+      data: {
+        ...(name !== undefined && { name: name.trim() }),
+        ...(description !== undefined && { description: description ? description.trim() : null }),
+        ...(isActive !== undefined && { isActive: Boolean(isActive) })
+      },
+      include: {
+        items: {
+          include: {
+            menuItem: {
+              select: {
+                id: true,
+                name: true,
+                price: true,
+                category: true,
+                imageUrl: true,
+                description: true,
+                dealType: true,
+                isHappyHour: true,
+                happyHourPrice: true
+              }
+            }
+          },
+          orderBy: { sortOrder: 'asc' }
+        },
+        _count: {
+          select: { items: true }
+        }
+      }
+    });
+
+    res.status(200).json({ collection: updatedCollection });
+  } catch (error) {
+    console.error('Update menu collection error:', error);
+    res.status(500).json({ error: 'Failed to update menu collection' });
+  }
+});
+
+// --- Endpoint: DELETE /api/merchants/me/menu-collections/:collectionId ---
+// Delete a menu collection (soft delete by setting isActive to false)
+router.delete('/merchants/me/menu-collections/:collectionId', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const collectionId = Number(req.params.collectionId);
+    if (!Number.isFinite(collectionId)) {
+      return res.status(400).json({ error: 'Invalid collection ID' });
+    }
+
+    // Check if collection exists and belongs to merchant
+    const existingCollection = await prisma.menuCollection.findFirst({
+      where: { 
+        id: collectionId, 
+        merchantId 
+      }
+    });
+
+    if (!existingCollection) {
+      return res.status(404).json({ error: 'Menu collection not found' });
+    }
+
+    // Soft delete by setting isActive to false
+    await prisma.menuCollection.update({
+      where: { id: collectionId },
+      data: { isActive: false }
+    });
+
+    res.status(204).send();
+  } catch (error) {
+    console.error('Delete menu collection error:', error);
+    res.status(500).json({ error: 'Failed to delete menu collection' });
+  }
+});
+
+// ========================================
+// MENU COLLECTION ITEMS MANAGEMENT
+// ========================================
+
+// --- Endpoint: POST /api/merchants/me/menu-collections/:collectionId/items ---
+// Add menu items to a collection
+router.post('/merchants/me/menu-collections/:collectionId/items', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const collectionId = Number(req.params.collectionId);
+    if (!Number.isFinite(collectionId)) {
+      return res.status(400).json({ error: 'Invalid collection ID' });
+    }
+
+    const { menuItems } = req.body;
+
+    if (!menuItems || !Array.isArray(menuItems) || menuItems.length === 0) {
+      return res.status(400).json({ error: 'Menu items array is required' });
+    }
+
+    // Check if collection exists and belongs to merchant
+    const collection = await prisma.menuCollection.findFirst({
+      where: { 
+        id: collectionId, 
+        merchantId,
+        isActive: true 
+      }
+    });
+
+    if (!collection) {
+      return res.status(404).json({ error: 'Menu collection not found' });
+    }
+
+    // Validate menu items belong to merchant
+    const menuItemIds = menuItems.map((item: any) => Number(item.id));
+    const existingMenuItems = await prisma.menuItem.findMany({
+      where: {
+        id: { in: menuItemIds },
+        merchantId
+      },
+      select: { id: true }
+    });
+
+    if (existingMenuItems.length !== menuItemIds.length) {
+      return res.status(400).json({ error: 'Some menu items do not belong to this merchant' });
+    }
+
+    // Check for duplicates
+    const existingCollectionItems = await prisma.menuCollectionItem.findMany({
+      where: {
+        collectionId,
+        menuItemId: { in: menuItemIds }
+      },
+      select: { menuItemId: true }
+    });
+
+    const duplicateIds = existingCollectionItems.map(item => item.menuItemId);
+    if (duplicateIds.length > 0) {
+      return res.status(409).json({ 
+        error: 'Some menu items are already in this collection',
+        duplicateIds 
+      });
+    }
+
+    // Add items to collection
+    const collectionItems = menuItems.map((item: any, index: number) => ({
+      collectionId,
+      menuItemId: Number(item.id),
+      sortOrder: item.sortOrder || (1000 + index), // Default high sort order
+      customPrice: item.customPrice ? parseFloat(item.customPrice) : null,
+      customDiscount: item.customDiscount ? parseFloat(item.customDiscount) : null,
+      notes: item.notes ? item.notes.trim() : null
+    }));
+
+    await prisma.menuCollectionItem.createMany({
+      data: collectionItems
+    });
+
+    // Return updated collection
+    const updatedCollection = await prisma.menuCollection.findUnique({
+      where: { id: collectionId },
+      include: {
+        items: {
+          include: {
+            menuItem: {
+              select: {
+                id: true,
+                name: true,
+                price: true,
+                category: true,
+                imageUrl: true,
+                description: true,
+                dealType: true,
+                isHappyHour: true,
+                happyHourPrice: true
+              }
+            }
+          },
+          orderBy: { sortOrder: 'asc' }
+        },
+        _count: {
+          select: { items: true }
+        }
+      }
+    });
+
+    res.status(201).json({ collection: updatedCollection });
+  } catch (error) {
+    console.error('Add items to collection error:', error);
+    res.status(500).json({ error: 'Failed to add items to collection' });
+  }
+});
+
+// --- Endpoint: PUT /api/merchants/me/menu-collections/:collectionId/items/:itemId ---
+// Update a specific item in a collection
+router.put('/merchants/me/menu-collections/:collectionId/items/:itemId', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const collectionId = Number(req.params.collectionId);
+    const itemId = Number(req.params.itemId);
+    
+    if (!Number.isFinite(collectionId) || !Number.isFinite(itemId)) {
+      return res.status(400).json({ error: 'Invalid collection ID or item ID' });
+    }
+
+    const { sortOrder, customPrice, customDiscount, notes, isActive } = req.body;
+
+    // Check if collection item exists and belongs to merchant
+    const collectionItem = await prisma.menuCollectionItem.findFirst({
+      where: {
+        collectionId,
+        menuItemId: itemId,
+        collection: {
+          merchantId,
+          isActive: true
+        }
+      }
+    });
+
+    if (!collectionItem) {
+      return res.status(404).json({ error: 'Collection item not found' });
+    }
+
+    // Update collection item
+    const updatedItem = await prisma.menuCollectionItem.update({
+      where: {
+        collectionId_menuItemId: {
+          collectionId,
+          menuItemId: itemId
+        }
+      },
+      data: {
+        ...(sortOrder !== undefined && { sortOrder: Number(sortOrder) }),
+        ...(customPrice !== undefined && { customPrice: customPrice ? parseFloat(customPrice) : null }),
+        ...(customDiscount !== undefined && { customDiscount: customDiscount ? parseFloat(customDiscount) : null }),
+        ...(notes !== undefined && { notes: notes ? notes.trim() : null }),
+        ...(isActive !== undefined && { isActive: Boolean(isActive) })
+      },
+      include: {
+        menuItem: {
+          select: {
+            id: true,
+            name: true,
+            price: true,
+            category: true,
+            imageUrl: true,
+            description: true,
+            dealType: true,
+            isHappyHour: true,
+            happyHourPrice: true
+          }
+        }
+      }
+    });
+
+    res.status(200).json({ collectionItem: updatedItem });
+  } catch (error) {
+    console.error('Update collection item error:', error);
+    res.status(500).json({ error: 'Failed to update collection item' });
+  }
+});
+
+// --- Endpoint: DELETE /api/merchants/me/menu-collections/:collectionId/items/:itemId ---
+// Remove an item from a collection
+router.delete('/merchants/me/menu-collections/:collectionId/items/:itemId', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const collectionId = Number(req.params.collectionId);
+    const itemId = Number(req.params.itemId);
+    
+    if (!Number.isFinite(collectionId) || !Number.isFinite(itemId)) {
+      return res.status(400).json({ error: 'Invalid collection ID or item ID' });
+    }
+
+    // Check if collection item exists and belongs to merchant
+    const collectionItem = await prisma.menuCollectionItem.findFirst({
+      where: {
+        collectionId,
+        menuItemId: itemId,
+        collection: {
+          merchantId,
+          isActive: true
+        }
+      }
+    });
+
+    if (!collectionItem) {
+      return res.status(404).json({ error: 'Collection item not found' });
+    }
+
+    // Remove item from collection
+    await prisma.menuCollectionItem.delete({
+      where: {
+        collectionId_menuItemId: {
+          collectionId,
+          menuItemId: itemId
+        }
+      }
+    });
+
+    res.status(204).send();
+  } catch (error) {
+    console.error('Remove item from collection error:', error);
+    res.status(500).json({ error: 'Failed to remove item from collection' });
+  }
+});
+
+// --- Endpoint: PUT /api/merchants/me/menu-collections/:collectionId/items/reorder ---
+// Reorder items in a collection
+router.put('/merchants/me/menu-collections/:collectionId/items/reorder', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const collectionId = Number(req.params.collectionId);
+    if (!Number.isFinite(collectionId)) {
+      return res.status(400).json({ error: 'Invalid collection ID' });
+    }
+
+    const { itemOrders } = req.body; // [{ itemId: 1, sortOrder: 0 }, { itemId: 2, sortOrder: 1 }]
+
+    if (!itemOrders || !Array.isArray(itemOrders)) {
+      return res.status(400).json({ error: 'itemOrders array is required' });
+    }
+
+    // Check if collection exists and belongs to merchant
+    const collection = await prisma.menuCollection.findFirst({
+      where: { 
+        id: collectionId, 
+        merchantId,
+        isActive: true 
+      }
+    });
+
+    if (!collection) {
+      return res.status(404).json({ error: 'Menu collection not found' });
+    }
+
+    // Update sort orders in a transaction
+    await prisma.$transaction(async (tx) => {
+      for (const itemOrder of itemOrders) {
+        await tx.menuCollectionItem.updateMany({
+          where: {
+            collectionId,
+            menuItemId: Number(itemOrder.itemId)
+          },
+          data: {
+            sortOrder: Number(itemOrder.sortOrder)
+          }
+        });
+      }
+    });
+
+    // Return updated collection
+    const updatedCollection = await prisma.menuCollection.findUnique({
+      where: { id: collectionId },
+      include: {
+        items: {
+          include: {
+            menuItem: {
+              select: {
+                id: true,
+                name: true,
+                price: true,
+                category: true,
+                imageUrl: true,
+                description: true,
+                dealType: true,
+                isHappyHour: true,
+                happyHourPrice: true
+              }
+            }
+          },
+          orderBy: { sortOrder: 'asc' }
+        },
+        _count: {
+          select: { items: true }
+        }
+      }
+    });
+
+    res.status(200).json({ collection: updatedCollection });
+  } catch (error) {
+    console.error('Reorder collection items error:', error);
+    res.status(500).json({ error: 'Failed to reorder collection items' });
+  }
 });

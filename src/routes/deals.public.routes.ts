@@ -1657,4 +1657,55 @@ router.get('/menu/deal-types', async (req, res) => {
   }
 });
 
+// --- Endpoint: GET /api/menu-collections/:merchantId ---
+// Get menu collections for a specific approved merchant (public endpoint)
+router.get('/menu-collections/:merchantId', async (req, res) => {
+  try {
+    const merchantId = Number(req.params.merchantId);
+    if (!Number.isFinite(merchantId)) {
+      return res.status(400).json({ error: 'Invalid merchant ID' });
+    }
+
+    const collections = await prisma.menuCollection.findMany({
+      where: {
+        merchantId,
+        isActive: true,
+        merchant: {
+          status: 'APPROVED'
+        }
+      },
+      include: {
+        items: {
+          where: { isActive: true },
+          include: {
+            menuItem: {
+              select: {
+                id: true,
+                name: true,
+                price: true,
+                category: true,
+                imageUrl: true,
+                description: true,
+                dealType: true,
+                isHappyHour: true,
+                happyHourPrice: true
+              }
+            }
+          },
+          orderBy: { sortOrder: 'asc' }
+        },
+        _count: {
+          select: { items: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.status(200).json({ collections });
+  } catch (error) {
+    console.error('Get menu collections error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;
