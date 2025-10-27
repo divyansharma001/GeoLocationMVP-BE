@@ -107,13 +107,13 @@ model BookingSettings {
 - `DELETE /api/table-booking/merchant/tables/:tableId` - Delete table
 
 #### Time Slot Management
-- `GET /api/table-booking/merchant/time-slots` - Get merchant's time slots
+- `GET /api/table-booking/merchant/time-slots?dayOfWeek=N` - Get merchant's time slots (optional day filter)
 - `POST /api/table-booking/merchant/time-slots` - Create time slot
 - `PUT /api/table-booking/merchant/time-slots/:timeSlotId` - Update time slot
 - `DELETE /api/table-booking/merchant/time-slots/:timeSlotId` - Delete time slot
 
 #### Booking Management
-- `GET /api/table-booking/merchant/bookings` - Get merchant's bookings
+- `GET /api/table-booking/merchant/bookings?status=PENDING&date=2024-01-15&page=1&limit=20` - Get merchant's bookings with advanced filtering
 - `PUT /api/table-booking/merchant/bookings/:bookingId/status` - Update booking status
 
 #### Settings Management
@@ -123,9 +123,9 @@ model BookingSettings {
 ### Public Endpoints
 
 #### Availability & Booking
-- `GET /api/table-booking/merchants/:merchantId/availability` - Get available time slots
+- `GET /api/table-booking/merchants/:merchantId/availability?date=YYYY-MM-DD&partySize=N` - Get available time slots with next available time suggestion
 - `POST /api/table-booking/bookings` - Create booking
-- `GET /api/table-booking/bookings` - Get user's bookings
+- `GET /api/table-booking/bookings?status=CONFIRMED&page=1&limit=20` - Get user's bookings
 - `GET /api/table-booking/bookings/:confirmationCode` - Get booking by confirmation code
 - `PUT /api/table-booking/bookings/:bookingId` - Update booking
 - `DELETE /api/table-booking/bookings/:bookingId` - Cancel booking
@@ -460,6 +460,42 @@ Content-Type: application/json
 GET /api/table-booking/merchants/1/availability?date=2024-01-15&partySize=2
 ```
 
+**Enhanced Response with Next Available Time:**
+```json
+{
+  "success": true,
+  "date": "2024-01-15",
+  "partySize": 4,
+  "availableTimeSlots": [
+    {
+      "id": 5,
+      "startTime": "18:00",
+      "endTime": "19:00",
+      "duration": 60,
+      "maxBookings": 3,
+      "currentBookings": 1,
+      "availableSpots": 2
+    }
+  ],
+  "availableTables": [
+    {
+      "id": 1,
+      "name": "Table 1",
+      "capacity": 4,
+      "features": ["window", "outdoor"]
+    }
+  ],
+  "nextAvailableSlot": {
+    "id": 5,
+    "startTime": "18:00",
+    "endTime": "19:00",
+    "duration": 60,
+    "isNextAvailable": true
+  },
+  "nextAvailableDate": null
+}
+```
+
 ### Create a Booking
 ```bash
 POST /api/table-booking/bookings
@@ -476,5 +512,63 @@ Content-Type: application/json
   "contactEmail": "customer@example.com"
 }
 ```
+
+### Get Merchant Bookings (Enhanced Response)
+```bash
+GET /api/table-booking/merchant/bookings?status=CONFIRMED&page=1&limit=20
+Authorization: Bearer <merchant_jwt_token>
+```
+
+**Enhanced Response with Descriptive Customer Information:**
+```json
+{
+  "success": true,
+  "bookings": [
+    {
+      "id": 123,
+      "bookingDate": "2024-01-15T18:00:00.000Z",
+      "partySize": 4,
+      "status": "CONFIRMED",
+      "confirmationCode": "ABC123",
+      "table": {
+        "id": 5,
+        "name": "Table 1",
+        "capacity": 6,
+        "features": ["window", "outdoor"],
+        "status": "AVAILABLE"
+      },
+      "timeSlot": {
+        "id": 8,
+        "startTime": "18:00",
+        "endTime": "19:00",
+        "duration": 60
+      },
+      "user": {
+        "id": 42,
+        "name": "John Doe",
+        "email": "john@example.com",
+        "createdAt": "2023-06-15T10:30:00.000Z"
+      },
+      "merchant": {
+        "id": 1,
+        "businessName": "The Restaurant",
+        "phoneNumber": "+1987654321"
+      }
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 1,
+    "pages": 1
+  }
+}
+```
+
+**Key Features:**
+- **User Registration Info**: See when customer first registered (`user.createdAt`)
+- **Detailed Table Info**: Capacity, features, and status
+- **Time Slot Details**: Start/end time and duration
+- **Complete Booking Timeline**: Creation and confirmation timestamps
 
 This documentation provides a comprehensive overview of the table booking system, including its architecture, API endpoints, validation logic, and usage examples.
