@@ -429,6 +429,14 @@ model DealMenuItem {
   // Flag to hide specific menu items in a given deal context (e.g., limited Happy Hour set)
   isHidden    Boolean  @default(false)
   assignedAt  DateTime @default(now())
+  
+  // Discount options for this specific menu item in this deal
+  customPrice       Float?   // Override the menu item's base price for this deal
+  customDiscount    Float?   // Percentage discount (0-100) applied to this item
+  discountAmount    Float?   // Fixed amount discount applied to this item
+  
+  // If true, this item uses the deal's global discount instead of item-specific discount
+  useGlobalDiscount Boolean  @default(true)
 
   deal        Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
   menuItem    MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)

@@ -198,6 +198,35 @@ router.get('/merchants/status', protect, async (req: AuthRequest, res) => {
 
 // --- Enhanced Endpoint: POST /api/deals ---
 // Allows an APPROVED merchant to create a comprehensive deal with all dynamic fields.
+// 
+// DISCOUNT SYSTEM:
+// ================
+// This endpoint supports TWO discount strategies that can work together:
+//
+// 1. GLOBAL DISCOUNTS (Applied to ALL menu items in the deal):
+//    - discountPercentage: A percentage discount (0-100) applied to all items
+//    - discountAmount: A fixed amount discount applied to the entire deal
+//    - All items with useGlobalDiscount=true will use these values
+//
+// 2. ITEM-SPECIFIC DISCOUNTS (Override global discount for specific items):
+//    - customPrice: Override the menu item's base price for this deal
+//    - customDiscount: Percentage discount (0-100) applied ONLY to this item
+//    - discountAmount: Fixed amount discount applied ONLY to this item
+//    - useGlobalDiscount: Auto-set to false when item has custom pricing
+//
+// EXAMPLE REQUEST BODY:
+// {
+//   "title": "Happy Hour Special",
+//   "discountPercentage": 20,  // 20% off ALL items (global)
+//   "menuItems": [
+//     { "id": 1 },                                    // Uses 20% global discount
+//     { "id": 2, "customDiscount": 50 },              // 50% off THIS item only
+//     { "id": 3, "customPrice": 5.99 },               // Fixed price for THIS item
+//     { "id": 4, "discountAmount": 2.00 },            // $2 off THIS item
+//     { "id": 5, "customDiscount": 30, "isHidden": true }  // 30% off but hidden in deal UI
+//   ]
+// }
+//
 router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
   try {
     const {
@@ -535,18 +564,40 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
         data: dealData
       });
 
-      // Handle menu items with enhanced data
+      // Handle menu items with enhanced discount support
       if (menuItems && Array.isArray(menuItems) && menuItems.length > 0) {
         const dealMenuItemsData = menuItems
           .filter(mi => mi && typeof mi.id !== 'undefined')
-          .map(mi => ({
-            dealId: createdDeal.id,
-            menuItemId: Number(mi.id),
-            isHidden: !!mi.isHidden,
-            // Enhanced menu item data
-            customPrice: mi.customPrice ? parseFloat(mi.customPrice) : null,
-            customDiscount: mi.customDiscount ? parseFloat(mi.customDiscount) : null
-          }));
+          .map(mi => {
+            // Validate item-specific discounts if provided
+            const itemData: any = {
+              dealId: createdDeal.id,
+              menuItemId: Number(mi.id),
+              isHidden: !!mi.isHidden,
+              customPrice: mi.customPrice ? parseFloat(mi.customPrice) : null,
+              customDiscount: mi.customDiscount ? parseFloat(mi.customDiscount) : null,
+              discountAmount: mi.discountAmount ? parseFloat(mi.discountAmount) : null,
+              // If item has specific discounts, don't use global discount
+              useGlobalDiscount: !(mi.customDiscount || mi.discountAmount || mi.customPrice)
+            };
+
+            // Validate custom discount percentage
+            if (itemData.customDiscount !== null && (itemData.customDiscount < 0 || itemData.customDiscount > 100)) {
+              throw new Error(`customDiscount for menu item ${mi.id} must be between 0 and 100`);
+            }
+
+            // Validate discount amount
+            if (itemData.discountAmount !== null && itemData.discountAmount < 0) {
+              throw new Error(`discountAmount for menu item ${mi.id} must be non-negative`);
+            }
+
+            // Validate custom price
+            if (itemData.customPrice !== null && itemData.customPrice < 0) {
+              throw new Error(`customPrice for menu item ${mi.id} must be non-negative`);
+            }
+
+            return itemData;
+          });
         
         if (dealMenuItemsData.length) {
           // @ts-ignore - DealMenuItem model available after generate
@@ -575,12 +626,16 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
 
         if (collection) {
           // Add all active items from collection to deal
+          // Items from collection use global discount by default unless they have custom pricing
           const collectionDealItems = collection.items.map(item => ({
             dealId: createdDeal.id,
             menuItemId: item.menuItemId,
             isHidden: false, // Default to visible
-            customPrice: item.customPrice,
-            customDiscount: item.customDiscount
+            customPrice: item.customPrice || null,
+            customDiscount: item.customDiscount || null,
+            discountAmount: null,
+            // If collection item has custom pricing, don't use global discount
+            useGlobalDiscount: !item.customPrice && !item.customDiscount
           }));
 
           if (collectionDealItems.length > 0) {
