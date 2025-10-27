@@ -412,13 +412,36 @@ router.get('/merchant/bookings', protect, isMerchant, async (req: AuthRequest, r
       prisma.booking.findMany({
         where: whereClause,
         include: {
-          table: true,
-          timeSlot: true,
+          table: {
+            select: {
+              id: true,
+              name: true,
+              capacity: true,
+              features: true,
+              status: true
+            }
+          },
+          timeSlot: {
+            select: {
+              id: true,
+              startTime: true,
+              endTime: true,
+              duration: true
+            }
+          },
           user: {
             select: {
               id: true,
               name: true,
-              email: true
+              email: true,
+              createdAt: true
+            }
+          },
+          merchant: {
+            select: {
+              id: true,
+              businessName: true,
+              phoneNumber: true
             }
           }
         },
@@ -483,13 +506,36 @@ router.put('/merchant/bookings/:bookingId/status', protect, isMerchant, async (r
       where: { id: bookingId },
       data: updateData,
       include: {
-        table: true,
-        timeSlot: true,
+        table: {
+          select: {
+            id: true,
+            name: true,
+            capacity: true,
+            features: true,
+            status: true
+          }
+        },
+        timeSlot: {
+          select: {
+            id: true,
+            startTime: true,
+            endTime: true,
+            duration: true
+          }
+        },
         user: {
           select: {
             id: true,
             name: true,
-            email: true
+            email: true,
+            createdAt: true
+          }
+        },
+        merchant: {
+          select: {
+            id: true,
+            businessName: true,
+            phoneNumber: true
           }
         }
       }
@@ -633,6 +679,82 @@ router.get('/merchants/:merchantId/availability', async (req: AuthRequest, res: 
         availableSpots: slot.maxBookings - slot.bookings.length
       }));
 
+    // Find next available time slot (for suggested booking)
+    const now = new Date();
+    const currentTime = now.getHours() * 60 + now.getMinutes(); // Current time in minutes since midnight
+    
+    let nextAvailableSlot = null;
+    for (const slot of availableTimeSlots) {
+      const [slotHour, slotMinute] = slot.startTime.split(':').map(Number);
+      const slotTime = slotHour * 60 + slotMinute;
+      
+      // If this is a future slot today, or any slot for future dates
+      const isToday = bookingDate.toDateString() === now.toDateString();
+      if (!isToday || slotTime > currentTime) {
+        nextAvailableSlot = {
+          ...slot,
+          isNextAvailable: true
+        };
+        break;
+      }
+    }
+
+    // If no slot today, find next day with available slots
+    let nextAvailableDate = null;
+    let nextAvailableTimeSlot = nextAvailableSlot;
+    
+    if (!nextAvailableSlot) {
+      // Check next 30 days for availability
+      for (let i = 1; i <= 30; i++) {
+        const nextDate = new Date(bookingDate);
+        nextDate.setDate(nextDate.getDate() + i);
+        
+        const nextDayOfWeek = nextDate.getDay();
+        
+        // Get time slots for this future day
+        const futureTimeSlots = await prisma.timeSlot.findMany({
+          where: {
+            merchantId,
+            dayOfWeek: nextDayOfWeek,
+            isActive: true
+          },
+          include: {
+            bookings: {
+              where: {
+                bookingDate: nextDate,
+                status: { in: ['PENDING', 'CONFIRMED'] }
+              }
+            }
+          },
+          orderBy: { startTime: 'asc' }
+        });
+
+        // Check if any slot is available
+        for (const slot of futureTimeSlots) {
+          const hasAvailableTable = availableTables.some(table => 
+            slot.bookings.filter(booking => booking.tableId === table.id).length < slot.maxBookings
+          );
+          
+          if (hasAvailableTable) {
+            nextAvailableDate = nextDate.toISOString().split('T')[0];
+            nextAvailableTimeSlot = {
+              id: slot.id,
+              startTime: slot.startTime,
+              endTime: slot.endTime,
+              duration: slot.duration,
+              maxBookings: slot.maxBookings,
+              currentBookings: slot.bookings.length,
+              availableSpots: slot.maxBookings - slot.bookings.length,
+              isNextAvailable: true
+            };
+            break;
+          }
+        }
+        
+        if (nextAvailableTimeSlot) break;
+      }
+    }
+
     res.status(200).json({
       success: true,
       date,
@@ -643,7 +765,9 @@ router.get('/merchants/:merchantId/availability', async (req: AuthRequest, res: 
         name: table.name,
         capacity: table.capacity,
         features: table.features
-      }))
+      })),
+      nextAvailableSlot: nextAvailableTimeSlot,
+      nextAvailableDate
     });
   } catch (error) {
     console.error('Get availability error:', error);
