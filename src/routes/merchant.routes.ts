@@ -2975,15 +2975,50 @@ export default router;
 
 // --- Endpoint: GET /api/merchants/me/menu ---
 // Returns menu items for the authenticated merchant (any status).
+// Query parameters:
+// - dealType: Filter by deal type (HAPPY_HOUR_BOUNTY, HAPPY_HOUR_SURPRISE, etc.)
+// - category: Filter by menu category
+// - isHappyHour: Filter by Happy Hour items (true/false)
 // Response: { menuItems: [ { id, name, price, category, imageUrl, isHappyHour, happyHourPrice, dealType, validStartTime, validEndTime, validDays, isSurprise, surpriseRevealTime } ] }
 router.get('/merchants/me/menu', protect, isMerchant, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
 
+    const { dealType, category, isHappyHour } = req.query;
+
+    // Build where clause for filtering
+    const whereClause: any = { merchantId };
+
+    // Filter by deal type
+    if (dealType) {
+      const validDealTypes = [
+        'HAPPY_HOUR_BOUNTY', 'HAPPY_HOUR_SURPRISE', 'HAPPY_HOUR_LATE_NIGHT', 
+        'HAPPY_HOUR_MID_DAY', 'HAPPY_HOUR_MORNINGS', 'REDEEM_NOW_BOUNTY', 
+        'REDEEM_NOW_SURPRISE', 'STANDARD', 'RECURRING'
+      ];
+      
+      if (validDealTypes.includes(dealType as string)) {
+        whereClause.dealType = dealType;
+      }
+    }
+
+    // Filter by category
+    if (category) {
+      whereClause.category = {
+        contains: category as string,
+        mode: 'insensitive'
+      };
+    }
+
+    // Filter by Happy Hour status
+    if (isHappyHour !== undefined) {
+      whereClause.isHappyHour = isHappyHour === 'true';
+    }
+
     // @ts-ignore - MenuItem available post generate
     const menuItems = await prisma.menuItem.findMany({
-      where: { merchantId },
+      where: whereClause,
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
@@ -3005,6 +3040,241 @@ router.get('/merchants/me/menu', protect, isMerchant, async (req: AuthRequest, r
   } catch (e) {
     console.error('Fetch menu items failed', e);
     res.status(500).json({ error: 'Failed to fetch menu items' });
+  }
+});
+
+// --- Endpoint: GET /api/merchants/me/menu/by-deal-type ---
+// Get menu items filtered by deal type for easy collection creation
+// Query parameters:
+// - dealType: Filter by deal type (HAPPY_HOUR_BOUNTY, HAPPY_HOUR_SURPRISE, etc.)
+// - category: Optional category filter
+// Response: { menuItems: [...], dealType: "HAPPY_HOUR_BOUNTY", total: 5 }
+router.get('/merchants/me/menu/by-deal-type', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { dealType, category } = req.query;
+
+    if (!dealType) {
+      return res.status(400).json({ error: 'dealType parameter is required' });
+    }
+
+    const validDealTypes = [
+      'HAPPY_HOUR_BOUNTY', 'HAPPY_HOUR_SURPRISE', 'HAPPY_HOUR_LATE_NIGHT', 
+      'HAPPY_HOUR_MID_DAY', 'HAPPY_HOUR_MORNINGS', 'REDEEM_NOW_BOUNTY', 
+      'REDEEM_NOW_SURPRISE', 'STANDARD', 'RECURRING'
+    ];
+
+    if (!validDealTypes.includes(dealType as string)) {
+      return res.status(400).json({ 
+        error: 'Invalid deal type', 
+        validDealTypes 
+      });
+    }
+
+    // Build where clause
+    const whereClause: any = { 
+      merchantId,
+      dealType: dealType as string
+    };
+
+    // Optional category filter
+    if (category) {
+      whereClause.category = {
+        contains: category as string,
+        mode: 'insensitive'
+      };
+    }
+
+    // @ts-ignore - MenuItem available post generate
+    const [menuItems, totalCount] = await Promise.all([
+      prisma.menuItem.findMany({
+        where: whereClause,
+        orderBy: [
+          { category: 'asc' },
+          { name: 'asc' }
+        ],
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          category: true,
+          imageUrl: true,
+          description: true,
+          isHappyHour: true,
+          happyHourPrice: true,
+          dealType: true,
+          validStartTime: true,
+          validEndTime: true,
+          validDays: true,
+          isSurprise: true,
+          surpriseRevealTime: true,
+        }
+      }),
+      prisma.menuItem.count({ where: whereClause })
+    ]);
+
+    res.status(200).json({ 
+      menuItems,
+      dealType: dealType as string,
+      total: totalCount,
+      category: category || null
+    });
+  } catch (error) {
+    console.error('Get menu items by deal type error:', error);
+    res.status(500).json({ error: 'Failed to fetch menu items by deal type' });
+  }
+});
+
+// --- Endpoint: POST /api/merchants/me/menu-collections/from-deal-type ---
+// Create a menu collection from all items of a specific deal type
+router.post('/merchants/me/menu-collections/from-deal-type', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const { dealType, collectionName, description, category } = req.body;
+
+    if (!dealType) {
+      return res.status(400).json({ error: 'dealType is required' });
+    }
+
+    if (!collectionName) {
+      return res.status(400).json({ error: 'collectionName is required' });
+    }
+
+    const validDealTypes = [
+      'HAPPY_HOUR_BOUNTY', 'HAPPY_HOUR_SURPRISE', 'HAPPY_HOUR_LATE_NIGHT', 
+      'HAPPY_HOUR_MID_DAY', 'HAPPY_HOUR_MORNINGS', 'REDEEM_NOW_BOUNTY', 
+      'REDEEM_NOW_SURPRISE', 'STANDARD', 'RECURRING'
+    ];
+
+    if (!validDealTypes.includes(dealType)) {
+      return res.status(400).json({ 
+        error: 'Invalid deal type', 
+        validDealTypes 
+      });
+    }
+
+    // Check if collection name already exists
+    const existingCollection = await prisma.menuCollection.findFirst({
+      where: { 
+        merchantId, 
+        name: collectionName.trim(),
+        isActive: true 
+      }
+    });
+
+    if (existingCollection) {
+      return res.status(409).json({ error: 'A collection with this name already exists' });
+    }
+
+    // Build where clause for menu items
+    const whereClause: any = { 
+      merchantId,
+      dealType: dealType
+    };
+
+    if (category) {
+      whereClause.category = {
+        contains: category,
+        mode: 'insensitive'
+      };
+    }
+
+    // Get all menu items of the specified deal type
+    // @ts-ignore - MenuItem available post generate
+    const menuItems = await prisma.menuItem.findMany({
+      where: whereClause,
+      orderBy: [
+        { category: 'asc' },
+        { name: 'asc' }
+      ],
+      select: {
+        id: true,
+        name: true,
+        price: true,
+        category: true,
+        dealType: true,
+        isHappyHour: true,
+        happyHourPrice: true
+      }
+    });
+
+    if (menuItems.length === 0) {
+      return res.status(404).json({ 
+        error: `No menu items found for deal type: ${dealType}`,
+        dealType,
+        category: category || null
+      });
+    }
+
+    // Create collection with all items
+    const collection = await prisma.$transaction(async (tx) => {
+      // Create the collection
+      const newCollection = await tx.menuCollection.create({
+        data: {
+          merchantId,
+          name: collectionName.trim(),
+          description: description ? description.trim() : null
+        }
+      });
+
+      // Add all menu items to collection
+      const collectionItems = menuItems.map((item, index) => ({
+        collectionId: newCollection.id,
+        menuItemId: item.id,
+        sortOrder: index,
+        customPrice: item.happyHourPrice || null, // Use happy hour price if available
+        customDiscount: null,
+        notes: `Auto-added from ${dealType} items`
+      }));
+
+      await tx.menuCollectionItem.createMany({
+        data: collectionItems
+      });
+
+      return newCollection;
+    });
+
+    // Fetch the created collection with items
+    const createdCollection = await prisma.menuCollection.findUnique({
+      where: { id: collection.id },
+      include: {
+        items: {
+          include: {
+            menuItem: {
+              select: {
+                id: true,
+                name: true,
+                price: true,
+                category: true,
+                imageUrl: true,
+                description: true,
+                dealType: true,
+                isHappyHour: true,
+                happyHourPrice: true
+              }
+            }
+          },
+          orderBy: { sortOrder: 'asc' }
+        },
+        _count: {
+          select: { items: true }
+        }
+      }
+    });
+
+    res.status(201).json({ 
+      collection: createdCollection,
+      message: `Created collection "${collectionName}" with ${menuItems.length} items from ${dealType}`,
+      dealType,
+      itemsAdded: menuItems.length
+    });
+  } catch (error) {
+    console.error('Create collection from deal type error:', error);
+    res.status(500).json({ error: 'Failed to create collection from deal type' });
   }
 });
 
