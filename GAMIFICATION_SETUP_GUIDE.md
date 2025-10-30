@@ -31,10 +31,10 @@ This creates:
 - Proper coin multipliers and rewards
 
 ### 3. Environment Variables
-Your `.env` already contains the PayPal sandbox credentials:
+Your `.env` should contain the PayPal credentials:
 ```env
-PAYPAL_CLIENT_ID=ATh1izwcWlkZAhwvoonywXBhc5vbhcOFu6XPMtOqjhr441R_chEwXalycezpSqyprTa55RmiLHK1ZOa1
-PAYPAL_SECRET_KEY=EGME5QRDBGumNpaRBX6DJxcLdrmujqNwCJYpzYv57p1AfBD6IJ6DRRHnFH9v59o-vzX7SvYTxY2R1UOv
+PAYPAL_CLIENT_ID=your_paypal_client_id_here
+PAYPAL_SECRET_KEY=your_paypal_secret_key_here
 ```
 
 ### 4. Start Backend Server
