@@ -17,6 +17,7 @@ import masterDataRoutes from './routes/master-data.routes';
 import mediaRoutes from './routes/media.routes';
 import tableBookingRoutes from './routes/table-booking.routes';
 import profileRoutes from './routes/profile.routes';
+import gamificationRoutes from './routes/gamification.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -57,6 +58,7 @@ app.use('/api', cityRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/table-booking', tableBookingRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/gamification', gamificationRoutes);
 
 export default app;
 

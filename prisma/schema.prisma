@@ -1,5 +1,3 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,7 +7,493 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// --- ENUMS for controlled values ---
+model DealCategoryMaster {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(100)
+  description String?
+  icon        String?  @db.VarChar(100)
+  color       String?  @db.VarChar(7)
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deals       Deal[]
+
+  @@index([active, sortOrder])
+}
+
+model DealTypeMaster {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(50)
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deals       Deal[]
+
+  @@index([active])
+}
+
+model PointEventTypeMaster {
+  id          Int              @id @default(autoincrement())
+  name        String           @unique @db.VarChar(50)
+  description String?
+  points      Int
+  active      Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  pointEvents UserPointEvent[]
+
+  @@index([active])
+}
+
+model User {
+  id                 Int                  @id @default(autoincrement())
+  email              String               @unique
+  name               String?
+  password           String
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  role               UserRole             @default(USER)
+  points             Int                  @default(0)
+  monthlyPoints      Int                  @default(0)
+  referralCode       String?              @unique
+  referredByUserId   Int?
+  birthday           DateTime?
+  avatarUrl          String?
+  coins              Int                  @default(0)
+  experiencePoints   Int                  @default(0)
+  loyaltyTier        LoyaltyTier          @default(BRONZE)
+  totalSpent         Float                @default(0)
+  bookings           Booking[]
+  checkIns           CheckIn[]
+  CoinTransaction    CoinTransaction[]
+  kickbackEvents     KickbackEvent[]
+  merchant           Merchant?
+  PaymentTransaction PaymentTransaction[]
+  referredBy         User?                @relation("UserReferrals", fields: [referredByUserId], references: [id])
+  referrals          User[]               @relation("UserReferrals")
+  UserAchievement    UserAchievement[]
+  savedDeals         UserDeal[]
+  pointEvents        UserPointEvent[]
+
+  @@index([referredByUserId])
+  @@index([loyaltyTier])
+  @@index([totalSpent])
+}
+
+model Merchant {
+  id              Int              @id @default(autoincrement())
+  businessName    String
+  address         String
+  description     String?
+  logoUrl         String?
+  status          MerchantStatus   @default(PENDING)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  ownerId         Int              @unique
+  latitude        Float?
+  longitude       Float?
+  city            String?
+  phoneNumber     String?
+  businessType    BusinessType     @default(LOCAL)
+  bookings        Booking[]
+  bookingSettings BookingSettings?
+  deals           Deal[]
+  kickbackEvents  KickbackEvent[]
+  menuCollections MenuCollection[]
+  menuItems       MenuItem[]
+  owner           User             @relation(fields: [ownerId], references: [id])
+  stores          Store[]
+  tables          Table[]
+  timeSlots       TimeSlot[]
+}
+
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model Deal {
+  id                     Int                @id @default(autoincrement())
+  title                  String
+  description            String
+  discountPercentage     Int?
+  discountAmount         Float?
+  startTime              DateTime
+  endTime                DateTime
+  redemptionInstructions String
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  merchantId             Int
+  recurringDays          String?
+  imageUrls              String[]
+  kickbackEnabled        Boolean            @default(false)
+  offerTerms             String?
+  categoryId             Int
+  dealTypeId             Int
+  checkIns               CheckIn[]
+  category               DealCategoryMaster @relation(fields: [categoryId], references: [id])
+  dealType               DealTypeMaster     @relation(fields: [dealTypeId], references: [id])
+  merchant               Merchant           @relation(fields: [merchantId], references: [id])
+  menuItems              DealMenuItem[]
+  kickbackEvents         KickbackEvent[]
+  savedByUsers           UserDeal[]
+  pointEvents            UserPointEvent[]
+}
+
+model UserDeal {
+  id      Int      @id @default(autoincrement())
+  userId  Int
+  dealId  Int
+  savedAt DateTime @default(now())
+  deal    Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dealId])
+}
+
+model UserPointEvent {
+  id               Int                  @id @default(autoincrement())
+  userId           Int
+  dealId           Int?
+  points           Int
+  createdAt        DateTime             @default(now())
+  pointEventTypeId Int
+  deal             Deal?                @relation(fields: [dealId], references: [id])
+  pointEventType   PointEventTypeMaster @relation(fields: [pointEventTypeId], references: [id])
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, pointEventTypeId])
+  @@index([userId, dealId])
+  @@index([createdAt])
+  @@index([createdAt, userId])
+}
+
+model CheckIn {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  dealId         Int
+  merchantId     Int
+  latitude       Float
+  longitude      Float
+  distanceMeters Float
+  createdAt      DateTime @default(now())
+  deal           Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, dealId])
+  @@index([merchantId])
+}
+
+model City {
+  id        Int      @id @default(autoincrement())
+  name      String
+  state     String
+  active    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  stores    Store[]
+
+  @@unique([name, state])
+  @@index([active, name])
+}
+
+model Store {
+  id         Int      @id @default(autoincrement())
+  merchantId Int
+  cityId     Int
+  address    String
+  latitude   Float?
+  longitude  Float?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  city       City     @relation(fields: [cityId], references: [id])
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@index([cityId])
+  @@index([active, cityId])
+}
+
+model MenuItem {
+  id                 Int                  @id @default(autoincrement())
+  merchantId         Int
+  name               String
+  description        String?
+  price              Float
+  category           String
+  imageUrl           String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  happyHourPrice     Float?
+  isHappyHour        Boolean              @default(false)
+  dealType           MenuDealType         @default(STANDARD)
+  isSurprise         Boolean              @default(false)
+  surpriseRevealTime String?
+  validDays          String?
+  validEndTime       String?
+  validStartTime     String?
+  dealLinks          DealMenuItem[]
+  collectionItems    MenuCollectionItem[]
+  merchant           Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@index([merchantId, dealType])
+  @@index([merchantId, isHappyHour])
+  @@index([dealType])
+}
+
+model DealMenuItem {
+  dealId            Int
+  menuItemId        Int
+  isHidden          Boolean  @default(false)
+  assignedAt        DateTime @default(now())
+  customDiscount    Float?
+  customPrice       Float?
+  discountAmount    Float?
+  useGlobalDiscount Boolean  @default(true)
+  deal              Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  menuItem          MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@id([dealId, menuItemId])
+  @@index([menuItemId])
+  @@index([dealId])
+}
+
+model MenuCollection {
+  id          Int                  @id @default(autoincrement())
+  merchantId  Int
+  name        String
+  description String?
+  isActive    Boolean              @default(true)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  items       MenuCollectionItem[]
+
+  @@index([merchantId])
+  @@index([merchantId, isActive])
+  @@index([name])
+}
+
+model MenuCollectionItem {
+  collectionId   Int
+  menuItemId     Int
+  sortOrder      Int            @default(0)
+  isActive       Boolean        @default(true)
+  customPrice    Float?
+  customDiscount Float?
+  notes          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  collection     MenuCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  menuItem       MenuItem       @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, menuItemId])
+  @@index([collectionId])
+  @@index([menuItemId])
+  @@index([collectionId, sortOrder])
+}
+
+model KickbackEvent {
+  id                Int      @id @default(autoincrement())
+  merchantId        Int
+  dealId            Int
+  userId            Int
+  amountEarned      Float
+  sourceAmountSpent Float
+  inviteeCount      Int      @default(1)
+  createdAt         DateTime @default(now())
+  deal              Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  merchant          Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, createdAt])
+  @@index([userId])
+  @@index([dealId])
+  @@index([userId, createdAt])
+}
+
+model Table {
+  id         Int         @id @default(autoincrement())
+  merchantId Int
+  name       String
+  capacity   Int
+  features   String[]
+  status     TableStatus @default(AVAILABLE)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  bookings   Booking[]
+  merchant   Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@index([merchantId, status])
+  @@index([status])
+}
+
+model TimeSlot {
+  id          Int       @id @default(autoincrement())
+  merchantId  Int
+  dayOfWeek   Int
+  startTime   String
+  endTime     String
+  duration    Int
+  maxBookings Int
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  bookings    Booking[]
+  merchant    Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, dayOfWeek])
+  @@index([merchantId, dayOfWeek, startTime])
+  @@index([isActive])
+}
+
+model Booking {
+  id               Int           @id @default(autoincrement())
+  merchantId       Int
+  tableId          Int
+  timeSlotId       Int
+  userId           Int
+  bookingDate      DateTime
+  partySize        Int
+  status           BookingStatus @default(PENDING)
+  specialRequests  String?
+  contactPhone     String?
+  contactEmail     String?
+  confirmationCode String        @unique
+  notes            String?
+  confirmedAt      DateTime?
+  cancelledAt      DateTime?
+  cancelledBy      Int?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  merchant         Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  table            Table         @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  timeSlot         TimeSlot      @relation(fields: [timeSlotId], references: [id], onDelete: Cascade)
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, bookingDate])
+  @@index([merchantId, status])
+  @@index([userId])
+  @@index([tableId, bookingDate])
+  @@index([timeSlotId, bookingDate])
+  @@index([bookingDate, status])
+  @@index([confirmationCode])
+}
+
+model BookingSettings {
+  id                   Int      @id @default(autoincrement())
+  merchantId           Int      @unique
+  advanceBookingDays   Int      @default(30)
+  minPartySize         Int      @default(1)
+  maxPartySize         Int      @default(12)
+  bookingDuration      Int      @default(120)
+  requiresConfirmation Boolean  @default(true)
+  allowsModifications  Boolean  @default(true)
+  allowsCancellations  Boolean  @default(true)
+  cancellationHours    Int      @default(24)
+  autoConfirm          Boolean  @default(false)
+  sendReminders        Boolean  @default(true)
+  reminderHours        Int      @default(2)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  merchant             Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+}
+
+model Achievement {
+  id              Int               @id @default(autoincrement())
+  name            String            @unique
+  description     String
+  type            AchievementType
+  icon            String?
+  coinReward      Int               @default(0)
+  xpReward        Int               @default(0)
+  criteria        Json
+  isActive        Boolean           @default(true)
+  sortOrder       Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  UserAchievement UserAchievement[]
+
+  @@index([isActive, sortOrder])
+  @@index([type, isActive])
+}
+
+model CoinTransaction {
+  id                 Int                 @id @default(autoincrement())
+  userId             Int
+  type               CoinTransactionType
+  amount             Int
+  balanceBefore      Int
+  balanceAfter       Int
+  description        String
+  metadata           Json?
+  relatedPaymentId   Int?
+  createdAt          DateTime            @default(now())
+  PaymentTransaction PaymentTransaction? @relation(fields: [relatedPaymentId], references: [id])
+  User               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([type])
+  @@index([userId, createdAt])
+}
+
+model LoyaltyTierConfig {
+  id                 Int         @id @default(autoincrement())
+  tier               LoyaltyTier @unique
+  minSpent           Float
+  coinMultiplier     Float       @default(1.0)
+  discountPercentage Float       @default(0)
+  specialPerks       Json?
+  tierColor          String?
+  tierIcon           String?
+  isActive           Boolean     @default(true)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@index([isActive])
+  @@index([minSpent])
+}
+
+model PaymentTransaction {
+  id              Int               @id @default(autoincrement())
+  userId          Int
+  paypalOrderId   String?           @unique
+  paypalPaymentId String?
+  amount          Float
+  coinsPurchased  Int
+  status          PaymentStatus     @default(PENDING)
+  paypalResponse  Json?
+  failureReason   String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  CoinTransaction CoinTransaction[]
+  User            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([paypalOrderId])
+  @@index([paypalPaymentId])
+  @@index([status])
+  @@index([userId, createdAt])
+}
+
+model UserAchievement {
+  id            Int         @id @default(autoincrement())
+  userId        Int
+  achievementId Int
+  progress      Json
+  isCompleted   Boolean     @default(false)
+  completedAt   DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  Achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  User          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@index([achievementId])
+  @@index([userId, isCompleted])
+}
 
 enum UserRole {
   USER
@@ -49,29 +533,26 @@ enum DealType {
   RECURRING
 }
 
-// Comprehensive deal type system for menu items and deals
 enum MenuDealType {
-  // Happy Hour variants
-  HAPPY_HOUR_BOUNTY        // Happy Hour bounty - redeem now
-  HAPPY_HOUR_SURPRISE      // Happy Hour surprise deal
-  HAPPY_HOUR_LATE_NIGHT    // Happy Hour late night
-  HAPPY_HOUR_MID_DAY       // Happy Hour mid day  
-  HAPPY_HOUR_MORNINGS      // Happy Hour mornings
-  
-  // Redeem now variants
-  REDEEM_NOW_BOUNTY        // Redeem now bounty
-  REDEEM_NOW_SURPRISE      // Redeem now surprise deal
-  
-  // Standard types
-  STANDARD                 // Regular menu item
-  RECURRING                // Recurring deal
+  HAPPY_HOUR_BOUNTY
+  HAPPY_HOUR_SURPRISE
+  HAPPY_HOUR_LATE_NIGHT
+  HAPPY_HOUR_MID_DAY
+  HAPPY_HOUR_MORNINGS
+  REDEEM_NOW_BOUNTY
+  REDEEM_NOW_SURPRISE
+  STANDARD
+  RECURRING
 }
 
-// --- GAMIFICATION ---
 enum PointEventType {
   SIGNUP
   FIRST_CHECKIN_DEAL
   CHECKIN
+  COIN_PURCHASE
+  ACHIEVEMENT_UNLOCK
+  LOYALTY_BONUS
+  REFERRAL_BONUS
 }
 
 enum BookingStatus {
@@ -89,519 +570,36 @@ enum TableStatus {
   OUT_OF_ORDER
 }
 
-// --- MASTER DATA TABLES ---
-model DealCategoryMaster {
-  id          Int      @id @default(autoincrement())
-  name        String   @unique @db.VarChar(100)
-  description String?
-  icon        String?  @db.VarChar(100)
-  color       String?  @db.VarChar(7) // hex color like #FF5733
-  sortOrder   Int      @default(0)
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  deals       Deal[]
-
-  @@index([active, sortOrder])
+enum AchievementType {
+  FIRST_PURCHASE
+  SPENDING_MILESTONE
+  CHECK_IN_STREAK
+  REFERRAL_COUNT
+  DEAL_SAVER
+  LOYALTY_TIER
+  SPECIAL_EVENT
 }
 
-model DealTypeMaster {
-  id          Int      @id @default(autoincrement())
-  name        String   @unique @db.VarChar(50)
-  description String?
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  deals       Deal[]
-
-  @@index([active])
+enum CoinTransactionType {
+  PURCHASE
+  EARNED
+  SPENT
+  BONUS
+  REFUND
 }
 
-model PointEventTypeMaster {
-  id          Int      @id @default(autoincrement())
-  name        String   @unique @db.VarChar(50)
-  description String?
-  points      Int
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  pointEvents UserPointEvent[]
-
-  @@index([active])
+enum LoyaltyTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+  DIAMOND
 }
 
-
-// --- CORE MODELS ---
-
-model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  name      String?
-  // Optional avatar/profile image URL for social proof
-  avatarUrl String?
-  password  String
-  role      UserRole @default(USER) // All new users start as a regular USER
-  // Gamification / reward points accumulated by the user
-  points    Int      @default(0)
-  // Points accumulated in the current calendar month (UTC) and reset via scheduled job
-  monthlyPoints Int  @default(0)
-  // Unique, shareable referral code for inviting other users
-  referralCode String? @unique
-  // The user who referred this user (if any)
-  referredByUserId Int?
-  referredBy User? @relation("UserReferrals", fields: [referredByUserId], references: [id])
-  // Users that this user has referred
-  referrals  User[]   @relation("UserReferrals")
-
-  // Birthday (UTC date). Used for sending a simple greeting email. Optional.
-  birthday   DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // A User can own one Merchant profile
-  merchant  Merchant?
-
-  // A User can save many Deals
-  savedDeals UserDeal[]
-
-  // Point events log
-  pointEvents UserPointEvent[]
-
-  // Check-ins
-  checkIns   CheckIn[]
-
-  // Kickback events earned by this user
-  kickbackEvents KickbackEvent[]
-
-  // Table bookings made by this user
-  bookings        Booking[]
-
-  @@index([referredByUserId])
-}
-
-model Merchant {
-  id            Int      @id @default(autoincrement())
-  businessName  String
-  address       String
-  description   String?
-  logoUrl       String?
-  phoneNumber   String?  // Phone number for contact/call functionality
-  status        MerchantStatus @default(PENDING) // New merchants are PENDING by default
-  businessType  BusinessType @default(LOCAL) // National chain or local business
-  
-  // Geolocation fields
-  latitude      Float?
-  longitude     Float?
-  // Deprecated: use Store.city -> City relation instead
-  city          String?
-
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  // A Merchant must be owned by one User
-  ownerId       Int      @unique
-  owner         User     @relation(fields: [ownerId], references: [id])
-
-  // A Merchant can have many Deals
-  deals         Deal[]
-
-  // A Merchant can have multiple physical stores/locations
-  stores        Store[]
-
-  // A Merchant can have many menu items (for Happy Hour / detailed deals)
-  menuItems     MenuItem[]
-
-  // A Merchant can have many menu collections (grouped menu items)
-  menuCollections MenuCollection[]
-
-  // Kickback events associated with this merchant
-  kickbackEvents KickbackEvent[]
-
-  // Table booking system relations
-  tables           Table[]
-  timeSlots        TimeSlot[]
-  bookings         Booking[]
-  bookingSettings  BookingSettings?
-}
-
-model Deal {
-  id            Int      @id @default(autoincrement())
-  title         String
-  description   String
-  imageUrls     String[] // Array of Cloudinary URLs for multiple images
-
-
-  // Basic deal parameters (can be expanded later)
-  discountPercentage Int?
-  discountAmount     Float?
-  
-  // Category for filtering and organization
-  categoryId    Int
-  category      DealCategoryMaster @relation(fields: [categoryId], references: [id])
-  
-  // Deal type for different deal behaviors
-  dealTypeId    Int
-  dealType      DealTypeMaster @relation(fields: [dealTypeId], references: [id])
-  
-  // Recurring days for recurring deals (e.g., "Taco Tuesday")
-  // Stored as comma-separated values: "MONDAY,TUESDAY,WEDNESDAY"
-  recurringDays String?
-  
-  // Validity period
-  startTime     DateTime
-  endTime       DateTime
-  
-  redemptionInstructions String
-
-  // Fine print / terms of the offer
-  offerTerms    String?
-  // Whether kickback program is enabled for this deal
-  kickbackEnabled Boolean @default(false)
-
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  // Each Deal belongs to one Merchant
-  merchantId    Int
-  merchant      Merchant @relation(fields: [merchantId], references: [id])
-
-  // A Deal can be saved by many Users
-  savedByUsers  UserDeal[]
-
-  // Point events
-  pointEvents UserPointEvent[]
-
-  // Check-ins
-  checkIns  CheckIn[]
-
-  // Many-to-many relationship with MenuItem through join table
-  menuItems     DealMenuItem[]
-
-  // Kickback events associated with this deal
-  kickbackEvents KickbackEvent[]
-}
-
-// Junction table for User-Deal relationship (saved deals)
-model UserDeal {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  dealId    Int
-  savedAt   DateTime @default(now())
-
-  // Relations
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deal      Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
-
-  // Ensure a user can only save a deal once
-  @@unique([userId, dealId])
-}
-
-// Log of points awarded to users for various actions
-model UserPointEvent {
-  id                Int            @id @default(autoincrement())
-  userId            Int
-  dealId            Int?
-  pointEventTypeId  Int
-  points            Int
-  createdAt         DateTime       @default(now())
-
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deal            Deal?           @relation(fields: [dealId], references: [id])
-  pointEventType  PointEventTypeMaster @relation(fields: [pointEventTypeId], references: [id])
-
-  @@index([userId, pointEventTypeId])
-  @@index([userId, dealId])
-  // Added for efficient time-bounded leaderboard queries
-  @@index([createdAt])
-  @@index([createdAt, userId])
-}
-
-// Individual physical proximity confirmations
-model CheckIn {
-  id            Int      @id @default(autoincrement())
-  userId        Int
-  dealId        Int
-  merchantId    Int
-  latitude      Float
-  longitude     Float
-  distanceMeters Float
-  createdAt     DateTime @default(now())
-
-  user    User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deal    Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
-
-  @@index([userId, dealId])
-  @@index([merchantId])
-}
-
-// --- LOCATIONS ---
-
-// Normalized list of cities in the US with state and active flag
-model City {
-  id        Int       @id @default(autoincrement())
-  name      String
-  state     String
-  active    Boolean   @default(false)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  // Relations
-  stores    Store[]
-
-  @@unique([name, state])
-  @@index([active, name])
-}
-
-// Individual merchant store locations tied to a City
-model Store {
-  id         Int       @id @default(autoincrement())
-  merchantId Int
-  cityId     Int
-  address    String
-  latitude   Float?
-  longitude  Float?
-  active     Boolean   @default(true)
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-
-  merchant   Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  city       City      @relation(fields: [cityId], references: [id])
-
-  @@index([merchantId])
-  @@index([cityId])
-  @@index([active, cityId])
-}
-
-// --- MENU ITEMS ---
-// Individual menu entries a merchant can attach to Happy Hour or other deal types.
-// NOTE: Using Float for price per initial spec; consider switching to Decimal for currency accuracy later.
-model MenuItem {
-  id          Int       @id @default(autoincrement())
-  merchantId  Int
-  name        String
-  description String?
-  price       Float     // Consider Decimal for money values
-  category    String
-  imageUrl    String?
-  
-  // Comprehensive deal type system
-  dealType    MenuDealType @default(STANDARD) // Type of deal/promotion
-  isHappyHour Boolean   @default(false) // Legacy field - use dealType instead
-  happyHourPrice Float? // Special price for Happy Hour deals (optional)
-  
-  // Time-based deal settings
-  validStartTime String? // HH:MM format for when deal becomes valid (e.g., "17:00")
-  validEndTime   String? // HH:MM format for when deal expires (e.g., "19:00")
-  validDays      String? // Comma-separated days (e.g., "MONDAY,TUESDAY,WEDNESDAY")
-  
-  // Surprise deal settings
-  isSurprise     Boolean @default(false) // Whether this is a surprise deal
-  surpriseRevealTime String? // When to reveal surprise (HH:MM format)
-  
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  merchant    Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-
-  // Back relation to deals via join table
-  dealLinks   DealMenuItem[]
-
-  // Back relation to menu collections
-  collectionItems MenuCollectionItem[]
-
-  @@index([merchantId])
-  @@index([merchantId, dealType])
-  @@index([merchantId, isHappyHour])
-  @@index([dealType])
-}
-
-// Join table for many-to-many relationship between Deal and MenuItem with ability to hide items for specific deals
-model DealMenuItem {
-  dealId      Int
-  menuItemId  Int
-  // Flag to hide specific menu items in a given deal context (e.g., limited Happy Hour set)
-  isHidden    Boolean  @default(false)
-  assignedAt  DateTime @default(now())
-  
-  // Discount options for this specific menu item in this deal
-  customPrice       Float?   // Override the menu item's base price for this deal
-  customDiscount    Float?   // Percentage discount (0-100) applied to this item
-  discountAmount    Float?   // Fixed amount discount applied to this item
-  
-  // If true, this item uses the deal's global discount instead of item-specific discount
-  useGlobalDiscount Boolean  @default(true)
-
-  deal        Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  menuItem    MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
-
-  @@id([dealId, menuItemId])
-  @@index([menuItemId])
-  @@index([dealId])
-}
-
-// Menu Collections - Allow merchants to group menu items into reusable collections
-model MenuCollection {
-  id          Int       @id @default(autoincrement())
-  merchantId  Int
-  name        String    // "Happy Hour Menu", "Weekend Specials", "Brunch Menu"
-  description String?   // Optional description of the collection
-  isActive    Boolean   @default(true) // Whether the collection is active
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  merchant    Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  items       MenuCollectionItem[]
-
-  @@index([merchantId])
-  @@index([merchantId, isActive])
-  @@index([name])
-}
-
-// Join table for MenuCollection and MenuItem with additional metadata
-model MenuCollectionItem {
-  collectionId Int
-  menuItemId   Int
-  sortOrder    Int       @default(0) // For ordering items within collection
-  isActive     Boolean   @default(true) // Whether this item is active in this collection
-  customPrice  Float?    // Override price for this collection (optional)
-  customDiscount Float?  // Custom discount for this collection (optional)
-  notes        String?   // Optional notes for this item in this collection
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  collection   MenuCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  menuItem     MenuItem       @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
-
-  @@id([collectionId, menuItemId])
-  @@index([collectionId])
-  @@index([menuItemId])
-  @@index([collectionId, sortOrder])
-}
-
-// Tracks kickback events where a user earns rewards based on invitees' spending
-model KickbackEvent {
-  id                Int      @id @default(autoincrement())
-  merchantId        Int
-  dealId            Int
-  userId            Int // The user who earned the kickback
-  amountEarned      Float  // The amount earned by the user
-  sourceAmountSpent Float  // The total amount spent by invitees
-  inviteeCount      Int    @default(1) // How many invitees contributed
-  createdAt         DateTime @default(now())
-
-  merchant          Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deal              Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
-
-  @@index([merchantId, createdAt])
-  @@index([userId])
-  @@index([dealId])
-  @@index([userId, createdAt])
-}
-
-// --- TABLE BOOKING SYSTEM ---
-
-// Restaurant/merchant tables with capacity and features
-model Table {
-  id          Int       @id @default(autoincrement())
-  merchantId  Int
-  name        String    // Table name/number (e.g., "Table 1", "Booth A")
-  capacity    Int       // Maximum number of people
-  features    String[]  // Special features (e.g., ["outdoor", "window", "private"])
-  status      TableStatus @default(AVAILABLE)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  merchant    Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  bookings    Booking[]
-
-  @@index([merchantId])
-  @@index([merchantId, status])
-  @@index([status])
-}
-
-// Time slots configuration for each merchant
-model TimeSlot {
-  id          Int       @id @default(autoincrement())
-  merchantId  Int
-  dayOfWeek   Int       // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  startTime   String    // Format: "HH:MM" (e.g., "09:00", "18:30")
-  endTime     String    // Format: "HH:MM" (e.g., "10:00", "19:30")
-  duration    Int       // Duration in minutes (e.g., 30, 60, 90)
-  maxBookings Int       // Maximum bookings per slot (default: 1)
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  merchant    Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  bookings    Booking[]
-
-  @@index([merchantId, dayOfWeek])
-  @@index([merchantId, dayOfWeek, startTime])
-  @@index([isActive])
-}
-
-// Individual table bookings
-model Booking {
-  id              Int           @id @default(autoincrement())
-  merchantId      Int
-  tableId         Int
-  timeSlotId      Int
-  userId          Int
-  bookingDate     DateTime      // Date of the booking (YYYY-MM-DD)
-  partySize       Int           // Number of people
-  status          BookingStatus @default(PENDING)
-  specialRequests String?       // Special dietary requirements, celebrations, etc.
-  contactPhone    String?       // Contact phone number
-  contactEmail    String?       // Contact email
-  confirmationCode String       @unique // Unique confirmation code
-  notes           String?       // Internal merchant notes
-  confirmedAt     DateTime?     // When booking was confirmed
-  cancelledAt     DateTime?     // When booking was cancelled
-  cancelledBy     Int?          // User ID who cancelled (null if merchant cancelled)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
-  merchant        Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  table           Table         @relation(fields: [tableId], references: [id], onDelete: Cascade)
-  timeSlot        TimeSlot      @relation(fields: [timeSlotId], references: [id], onDelete: Cascade)
-  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([merchantId, bookingDate])
-  @@index([merchantId, status])
-  @@index([userId])
-  @@index([tableId, bookingDate])
-  @@index([timeSlotId, bookingDate])
-  @@index([bookingDate, status])
-  @@index([confirmationCode])
-}
-
-// Merchant booking settings and policies
-model BookingSettings {
-  id                    Int     @id @default(autoincrement())
-  merchantId            Int     @unique
-  advanceBookingDays    Int     @default(30)  // How many days in advance can book
-  minPartySize          Int     @default(1)   // Minimum party size
-  maxPartySize          Int     @default(12)  // Maximum party size
-  bookingDuration       Int     @default(120) // Default booking duration in minutes
-  requiresConfirmation  Boolean @default(true) // Require merchant confirmation
-  allowsModifications   Boolean @default(true) // Allow users to modify bookings
-  allowsCancellations   Boolean @default(true) // Allow users to cancel bookings
-  cancellationHours    Int     @default(24)  // Hours before booking when cancellation allowed
-  autoConfirm           Boolean @default(false) // Auto-confirm bookings
-  sendReminders         Boolean @default(true)  // Send booking reminders
-  reminderHours         Int     @default(2)     // Hours before booking to send reminder
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-
-  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-
-  @@index([merchantId])
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
 }

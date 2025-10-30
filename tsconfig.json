@@ -8,7 +8,8 @@
     "forceConsistentCasingInFileNames": true,
     "strict": true, // Enforces all strict type-checking options
     "skipLibCheck": true, // Speeds up compilation by skipping type checks on declaration files
-    "types": ["node", "jest"]
+    "types": ["node", "jest"],
+    "typeRoots": ["./node_modules/@types", "./src/types"]
   },
   "include": ["src/**/*", "jest.config.ts"],
   "exclude": ["dist", "node_modules", "tests/**/*"]
