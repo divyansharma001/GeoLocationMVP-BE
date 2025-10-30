@@ -48,7 +48,7 @@ npm run dev
 Your frontend `.env` is configured:
 ```env
 VITE_API_URL=http://localhost:3000/api
-VITE_PAYPAL_CLIENT_ID=ATh1izwcWlkZAhwvoonywXBhc5vbhcOFu6XPMtOqjhr441R_chEwXalycezpSqyprTa55RmiLHK1ZOa1
+VITE_PAYPAL_CLIENT_ID=your_paypal_client_id_here
 ```
 
 ### 2. Start Frontend Server
