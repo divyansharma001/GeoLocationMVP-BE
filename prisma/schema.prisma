@@ -76,6 +76,7 @@ model User {
   UserAchievement    UserAchievement[]
   savedDeals         UserDeal[]
   pointEvents        UserPointEvent[]
+  streak             UserStreak?
 
   @@index([referredByUserId])
   @@index([loyaltyTier])
@@ -180,6 +181,26 @@ model CheckIn {
 
   @@index([userId, dealId])
   @@index([merchantId])
+  @@index([userId, createdAt])
+}
+
+model UserStreak {
+  id                    Int       @id @default(autoincrement())
+  userId                Int       @unique
+  currentStreak         Int       @default(0)
+  longestStreak         Int       @default(0)
+  lastCheckInDate       DateTime?
+  currentWeekCheckIns   Int       @default(0)
+  totalCheckIns         Int       @default(0)
+  streakStartDate       DateTime?
+  currentDiscountPercent Float    @default(0)
+  maxDiscountReached    Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([currentStreak])
 }
 
 model City {

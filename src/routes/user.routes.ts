@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { protect, AuthRequest } from '../middleware/auth.middleware';
 import { getPointConfig } from '../lib/points';
 import { invalidateLeaderboardCache } from '../lib/leaderboard/cache';
+import { updateStreakAfterCheckIn } from '../lib/streak';
 
 const router = Router();
 
@@ -261,6 +262,9 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
       return { checkIn, totalAward, events, prior: !!priorCheckIn };
     });
 
+  // Update streak after successful check-in
+  const streakUpdate = await updateStreakAfterCheckIn(userId, now);
+
   // Invalidate relevant caches (current month/day/week)
   invalidateLeaderboardCache('day');
   invalidateLeaderboardCache('month');
@@ -276,7 +280,15 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
       dealActive,
       pointsAwarded: result.totalAward,
       firstCheckIn: !result.prior,
-      pointEvents: result.events.map(e => ({ id: e.id, type: e.type, points: e.points }))
+      pointEvents: result.events.map(e => ({ id: e.id, type: e.type, points: e.points })),
+      streak: {
+        currentStreak: streakUpdate.streak.currentStreak,
+        currentDiscountPercent: streakUpdate.discountPercent,
+        message: streakUpdate.message,
+        newWeek: streakUpdate.newWeek,
+        streakBroken: streakUpdate.streakBroken,
+        maxDiscountReached: streakUpdate.streak.maxDiscountReached,
+      }
     });
   } catch (error) {
     console.error('Check-in error:', error);
