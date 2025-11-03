@@ -48,35 +48,40 @@ model PointEventTypeMaster {
 }
 
 model User {
-  id                 Int                  @id @default(autoincrement())
-  email              String               @unique
-  name               String?
-  password           String
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  role               UserRole             @default(USER)
-  points             Int                  @default(0)
-  monthlyPoints      Int                  @default(0)
-  referralCode       String?              @unique
-  referredByUserId   Int?
-  birthday           DateTime?
-  avatarUrl          String?
-  coins              Int                  @default(0)
-  experiencePoints   Int                  @default(0)
-  loyaltyTier        LoyaltyTier          @default(BRONZE)
-  totalSpent         Float                @default(0)
-  bookings           Booking[]
-  checkIns           CheckIn[]
-  CoinTransaction    CoinTransaction[]
-  kickbackEvents     KickbackEvent[]
-  merchant           Merchant?
-  PaymentTransaction PaymentTransaction[]
-  referredBy         User?                @relation("UserReferrals", fields: [referredByUserId], references: [id])
-  referrals          User[]               @relation("UserReferrals")
-  UserAchievement    UserAchievement[]
-  savedDeals         UserDeal[]
-  pointEvents        UserPointEvent[]
-  streak             UserStreak?
+  id                  Int                       @id @default(autoincrement())
+  email               String                    @unique
+  name                String?
+  password            String
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  role                UserRole                  @default(USER)
+  points              Int                       @default(0)
+  monthlyPoints       Int                       @default(0)
+  referralCode        String?                   @unique
+  referredByUserId    Int?
+  birthday            DateTime?
+  avatarUrl           String?
+  coins               Int                       @default(0)
+  experiencePoints    Int                       @default(0)
+  loyaltyTier         LoyaltyTier               @default(BRONZE)
+  totalSpent          Float                     @default(0)
+  bookings            Booking[]
+  checkIns            CheckIn[]
+  CoinTransaction     CoinTransaction[]
+  kickbackEvents      KickbackEvent[]
+  merchant            Merchant?
+  PaymentTransaction  PaymentTransaction[]
+  referredBy          User?                     @relation("UserReferrals", fields: [referredByUserId], references: [id])
+  referrals           User[]                    @relation("UserReferrals")
+  UserAchievement     UserAchievement[]
+  savedDeals          UserDeal[]
+  pointEvents         UserPointEvent[]
+  streak              UserStreak?
+  // Loyalty Points Relations
+  loyaltyBalances     UserMerchantLoyalty[]
+  loyaltyTransactions LoyaltyPointTransaction[]
+  loyaltyRedemptions  LoyaltyRedemption[]
+  orders              Order[]
 
   @@index([referredByUserId])
   @@index([loyaltyTier])
@@ -84,30 +89,36 @@ model User {
 }
 
 model Merchant {
-  id              Int              @id @default(autoincrement())
-  businessName    String
-  address         String
-  description     String?
-  logoUrl         String?
-  status          MerchantStatus   @default(PENDING)
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  ownerId         Int              @unique
-  latitude        Float?
-  longitude       Float?
-  city            String?
-  phoneNumber     String?
-  businessType    BusinessType     @default(LOCAL)
-  bookings        Booking[]
-  bookingSettings BookingSettings?
-  deals           Deal[]
-  kickbackEvents  KickbackEvent[]
-  menuCollections MenuCollection[]
-  menuItems       MenuItem[]
-  owner           User             @relation(fields: [ownerId], references: [id])
-  stores          Store[]
-  tables          Table[]
-  timeSlots       TimeSlot[]
+  id                  Int                       @id @default(autoincrement())
+  businessName        String
+  address             String
+  description         String?
+  logoUrl             String?
+  status              MerchantStatus            @default(PENDING)
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  ownerId             Int                       @unique
+  latitude            Float?
+  longitude           Float?
+  city                String?
+  phoneNumber         String?
+  businessType        BusinessType              @default(LOCAL)
+  bookings            Booking[]
+  bookingSettings     BookingSettings?
+  deals               Deal[]
+  kickbackEvents      KickbackEvent[]
+  menuCollections     MenuCollection[]
+  menuItems           MenuItem[]
+  owner               User                      @relation(fields: [ownerId], references: [id])
+  stores              Store[]
+  tables              Table[]
+  timeSlots           TimeSlot[]
+  // Loyalty Points Relations
+  loyaltyProgram      MerchantLoyaltyProgram?
+  userLoyaltyBalances UserMerchantLoyalty[]
+  loyaltyTransactions LoyaltyPointTransaction[]
+  loyaltyRedemptions  LoyaltyRedemption[]
+  orders              Order[]
 }
 
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
@@ -185,19 +196,19 @@ model CheckIn {
 }
 
 model UserStreak {
-  id                    Int       @id @default(autoincrement())
-  userId                Int       @unique
-  currentStreak         Int       @default(0)
-  longestStreak         Int       @default(0)
-  lastCheckInDate       DateTime?
-  currentWeekCheckIns   Int       @default(0)
-  totalCheckIns         Int       @default(0)
-  streakStartDate       DateTime?
-  currentDiscountPercent Float    @default(0)
-  maxDiscountReached    Boolean   @default(false)
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                     Int       @id @default(autoincrement())
+  userId                 Int       @unique
+  currentStreak          Int       @default(0)
+  longestStreak          Int       @default(0)
+  lastCheckInDate        DateTime?
+  currentWeekCheckIns    Int       @default(0)
+  totalCheckIns          Int       @default(0)
+  streakStartDate        DateTime?
+  currentDiscountPercent Float     @default(0)
+  maxDiscountReached     Boolean   @default(false)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([currentStreak])
@@ -516,6 +527,153 @@ model UserAchievement {
   @@index([userId, isCompleted])
 }
 
+// ===== LOYALTY POINTS SYSTEM =====
+
+model MerchantLoyaltyProgram {
+  id                    Int                       @id @default(autoincrement())
+  merchantId            Int                       @unique
+  isActive              Boolean                   @default(true)
+  pointsPerDollar       Float                     @default(0.4) // 2 points per $5 = 0.4 points per dollar
+  minimumPurchase       Float                     @default(0.01) // Minimum purchase to earn points
+  minimumRedemption     Int                       @default(25) // Minimum points to redeem
+  redemptionValue       Float                     @default(5.0) // Dollar value for minimum redemption (25 pts = $5)
+  pointExpirationDays   Int? // Points expire after X days (null = never expire)
+  allowCombineWithDeals Boolean                   @default(true) // Can loyalty be combined with deals?
+  earnOnDiscounted      Boolean                   @default(false) // Earn points on discounted amount or original?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+  merchant              Merchant                  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  userBalances          UserMerchantLoyalty[]
+  transactions          LoyaltyPointTransaction[]
+  redemptions           LoyaltyRedemption[]
+  orders                Order[]
+
+  @@index([merchantId, isActive])
+  @@index([isActive])
+}
+
+model UserMerchantLoyalty {
+  id               Int                       @id @default(autoincrement())
+  userId           Int
+  merchantId       Int
+  loyaltyProgramId Int
+  currentBalance   Int                       @default(0) // Current available points
+  lifetimeEarned   Int                       @default(0) // Total points ever earned
+  lifetimeRedeemed Int                       @default(0) // Total points ever redeemed
+  lastEarnedAt     DateTime?
+  lastRedeemedAt   DateTime?
+  tier             String? // Optional tier (Bronze, Silver, Gold, etc.)
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  user             User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant         Merchant                  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  loyaltyProgram   MerchantLoyaltyProgram    @relation(fields: [loyaltyProgramId], references: [id], onDelete: Cascade)
+  transactions     LoyaltyPointTransaction[]
+  redemptions      LoyaltyRedemption[]
+
+  @@unique([userId, merchantId])
+  @@index([userId])
+  @@index([merchantId])
+  @@index([currentBalance])
+  @@index([userId, merchantId, currentBalance])
+}
+
+model LoyaltyPointTransaction {
+  id                  Int                    @id @default(autoincrement())
+  userId              Int
+  merchantId          Int
+  loyaltyProgramId    Int
+  userLoyaltyId       Int
+  type                LoyaltyTransactionType
+  points              Int
+  balanceBefore       Int
+  balanceAfter        Int
+  description         String
+  metadata            Json? // Store order details, etc.
+  relatedOrderId      Int?
+  relatedRedemptionId Int?
+  createdAt           DateTime               @default(now())
+  user                User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant            Merchant               @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  loyaltyProgram      MerchantLoyaltyProgram @relation(fields: [loyaltyProgramId], references: [id], onDelete: Cascade)
+  userLoyalty         UserMerchantLoyalty    @relation(fields: [userLoyaltyId], references: [id], onDelete: Cascade)
+  order               Order?                 @relation(fields: [relatedOrderId], references: [id])
+  redemption          LoyaltyRedemption?     @relation(fields: [relatedRedemptionId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([merchantId, createdAt])
+  @@index([type])
+  @@index([createdAt])
+  @@index([userId, merchantId, createdAt])
+}
+
+model LoyaltyRedemption {
+  id                 Int                       @id @default(autoincrement())
+  userId             Int
+  merchantId         Int
+  loyaltyProgramId   Int
+  userLoyaltyId      Int
+  pointsUsed         Int
+  discountValue      Float
+  orderId            Int?
+  status             LoyaltyRedemptionStatus   @default(PENDING)
+  redeemedAt         DateTime                  @default(now())
+  appliedAt          DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  metadata           Json?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  user               User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant           Merchant                  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  loyaltyProgram     MerchantLoyaltyProgram    @relation(fields: [loyaltyProgramId], references: [id], onDelete: Cascade)
+  userLoyalty        UserMerchantLoyalty       @relation(fields: [userLoyaltyId], references: [id], onDelete: Cascade)
+  order              Order?                    @relation(fields: [orderId], references: [id])
+  transactions       LoyaltyPointTransaction[]
+
+  @@index([userId, status])
+  @@index([merchantId, status])
+  @@index([status])
+  @@index([redeemedAt])
+  @@index([userId, merchantId, redeemedAt])
+}
+
+model Order {
+  id                    Int                       @id @default(autoincrement())
+  userId                Int
+  merchantId            Int
+  loyaltyProgramId      Int?
+  orderNumber           String                    @unique
+  subtotal              Float // Original amount before discounts
+  discountAmount        Float                     @default(0) // Total discounts applied
+  loyaltyDiscount       Float                     @default(0) // Discount from loyalty redemption
+  finalAmount           Float // Amount after all discounts
+  loyaltyPointsEarned   Int                       @default(0) // Points earned from this order
+  loyaltyPointsRedeemed Int                       @default(0) // Points used for this order
+  status                OrderStatus               @default(PENDING)
+  orderItems            Json // Store items as JSON array
+  paymentMethod         String?
+  paymentTransactionId  String?
+  notes                 String?
+  metadata              Json?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+  completedAt           DateTime?
+  cancelledAt           DateTime?
+  user                  User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant              Merchant                  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  loyaltyProgram        MerchantLoyaltyProgram?   @relation(fields: [loyaltyProgramId], references: [id])
+  loyaltyRedemptions    LoyaltyRedemption[]
+  loyaltyTransactions   LoyaltyPointTransaction[]
+
+  @@index([userId])
+  @@index([merchantId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([userId, merchantId, createdAt])
+  @@index([orderNumber])
+}
+
 enum UserRole {
   USER
   MERCHANT
@@ -621,6 +779,32 @@ enum PaymentStatus {
   PENDING
   COMPLETED
   FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum LoyaltyTransactionType {
+  EARNED
+  REDEEMED
+  EXPIRED
+  ADJUSTED
+  BONUS
+  REFUNDED
+}
+
+enum LoyaltyRedemptionStatus {
+  PENDING
+  APPLIED
+  CANCELLED
+  EXPIRED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  COMPLETED
   CANCELLED
   REFUNDED
 }

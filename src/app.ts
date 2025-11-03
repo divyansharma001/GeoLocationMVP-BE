@@ -19,6 +19,8 @@ import tableBookingRoutes from './routes/table-booking.routes';
 import profileRoutes from './routes/profile.routes';
 import gamificationRoutes from './routes/gamification.routes';
 import streakRoutes from './routes/streak.routes';
+import loyaltyRoutes from './routes/loyalty.routes';
+import loyaltyMerchantRoutes from './routes/loyalty.merchant.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -61,6 +63,8 @@ app.use('/api/table-booking', tableBookingRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/streak', streakRoutes);
+app.use('/api/loyalty', loyaltyRoutes);
+app.use('/api/merchants', loyaltyMerchantRoutes);
 
 export default app;
 
