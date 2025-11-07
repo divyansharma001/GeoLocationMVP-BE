@@ -524,6 +524,12 @@ model PaymentTransaction {
   failureReason   String?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
+  // New generic payment fields
+  purpose         PaymentPurpose    @default(COIN_PURCHASE)
+  gateway         PaymentGateway    @default(PAYPAL)
+  currency        String            @default("USD")
+  relatedOrderId  Int?
+  order           Order?            @relation(fields: [relatedOrderId], references: [id])
   CoinTransaction CoinTransaction[]
   User            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -531,6 +537,7 @@ model PaymentTransaction {
   @@index([paypalPaymentId])
   @@index([status])
   @@index([userId, createdAt])
+  @@index([relatedOrderId])
 }
 
 model UserAchievement {
@@ -688,6 +695,7 @@ model Order {
   loyaltyProgram        MerchantLoyaltyProgram?   @relation(fields: [loyaltyProgramId], references: [id])
   loyaltyRedemptions    LoyaltyRedemption[]
   loyaltyTransactions   LoyaltyPointTransaction[]
+  payments              PaymentTransaction[]
 
   @@index([userId])
   @@index([merchantId])
@@ -873,6 +881,18 @@ enum PaymentStatus {
   FAILED
   CANCELLED
   REFUNDED
+}
+
+enum PaymentGateway {
+  PAYPAL
+  STRIPE
+}
+
+enum PaymentPurpose {
+  COIN_PURCHASE
+  DEAL_PURCHASE
+  BOOKING_PREPAY
+  MENU_ORDER
 }
 
 enum LoyaltyTransactionType {

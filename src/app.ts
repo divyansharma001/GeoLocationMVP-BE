@@ -22,6 +22,7 @@ import streakRoutes from './routes/streak.routes';
 import loyaltyRoutes from './routes/loyalty.routes';
 import loyaltyMerchantRoutes from './routes/loyalty.merchant.routes';
 import heistRoutes from './routes/heist.routes';
+import paymentsRoutes from './routes/payments.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -67,6 +68,7 @@ app.use('/api/streak', streakRoutes);
 app.use('/api/loyalty', loyaltyRoutes);
 app.use('/api/merchants', loyaltyMerchantRoutes);
 app.use('/api/heist', heistRoutes);
+app.use('/api/payments', paymentsRoutes);
 
 export default app;
 

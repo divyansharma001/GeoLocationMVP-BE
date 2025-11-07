@@ -84,6 +84,56 @@ export async function createPayPalOrder(coinPackage: typeof COIN_PACKAGES[0]) {
   }
 }
 
+// Create PayPal order for arbitrary amount (e.g., deal/menu/booking)
+export async function createPayPalOrderForAmount(options: {
+  amount: number;
+  currency?: string;
+  description?: string;
+  referenceId?: string;
+  returnUrl?: string;
+  cancelUrl?: string;
+}) {
+  const CURRENCY = options.currency || process.env.PAYPAL_CURRENCY || 'USD';
+  const request = new paypal.orders.OrdersCreateRequest();
+  request.prefer('return=representation');
+  request.requestBody({
+    intent: 'CAPTURE',
+    application_context: {
+      brand_name: 'GeoLocation MVP',
+      landing_page: 'BILLING',
+      user_action: 'PAY_NOW',
+      return_url: options.returnUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment/success`,
+      cancel_url: options.cancelUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment/cancel`,
+    },
+    purchase_units: [
+      {
+        reference_id: options.referenceId || 'generic_purchase',
+        description: options.description || 'Purchase',
+        amount: {
+          currency_code: CURRENCY,
+          value: options.amount.toFixed(2),
+        },
+      },
+    ],
+  });
+
+  try {
+    const order = await client().execute(request);
+    return {
+      success: true,
+      orderId: order.result.id,
+      approvalUrl: order.result.links?.find((link: any) => link.rel === 'approve')?.href,
+      order: order.result,
+    };
+  } catch (error) {
+    console.error('PayPal order creation (generic) failed:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
 // Capture PayPal payment
 export async function capturePayPalPayment(orderId: string) {
   const request = new paypal.orders.OrdersCaptureRequest(orderId);
