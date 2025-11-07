@@ -84,10 +84,10 @@ function logQueryPerformance(operation: string, startTime: number, resultCount: 
 
 // --- Endpoint: GET /api/deals ---
 // Fetches all active deals from approved merchants.
-// Optional query parameters: latitude, longitude, radius (in kilometers), category, search
+// Optional query parameters: latitude, longitude, radius (in kilometers), category, search, accessCode
 router.get('/deals', async (req, res) => {
   try {
-    const { latitude, longitude, radius, category, search, cityId } = req.query as any;
+    const { latitude, longitude, radius, category, search, cityId, accessCode } = req.query as any;
     const now = new Date();
   // Determine today's weekday name for recurring deal filtering (server local time)
   const dayNames = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
@@ -103,6 +103,15 @@ router.get('/deals', async (req, res) => {
         status: 'APPROVED',
       },
     };
+
+    // Filter out hidden deals UNLESS accessCode is provided
+    if (!accessCode) {
+      // Exclude deals that have accessCode (hidden deals)
+      whereClause.accessCode = null;
+    } else {
+      // If access code provided, only show that specific hidden deal
+      whereClause.accessCode = accessCode;
+    }
 
     // Add category filter if provided
     if (category) {
@@ -1704,6 +1713,221 @@ router.get('/menu-collections/:merchantId', async (req, res) => {
     res.status(200).json({ collections });
   } catch (error) {
     console.error('Get menu collections error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: GET /api/deals/hidden/:code ---
+// Access hidden deals via access code, direct link, or QR code
+router.get('/deals/hidden/:code', async (req, res) => {
+  try {
+    const { code } = req.params;
+    const now = new Date();
+
+    if (!code || code.trim().length === 0) {
+      return res.status(400).json({ error: 'Access code is required' });
+    }
+
+    // Find the hidden deal by access code
+    const deal = await prisma.deal.findFirst({
+      where: {
+        accessCode: code.toUpperCase(),
+        startTime: { lte: now },
+        endTime: { gte: now },
+        merchant: {
+          status: 'APPROVED'
+        }
+      },
+      include: {
+        merchant: {
+          include: {
+            stores: {
+              include: {
+                city: true
+              }
+            }
+          }
+        },
+        category: true,
+        dealType: true,
+        menuItems: {
+          include: {
+            menuItem: true
+          }
+        },
+        _count: {
+          select: { savedByUsers: true }
+        }
+      }
+    });
+
+    if (!deal) {
+      return res.status(404).json({ 
+        error: 'Hidden deal not found or expired',
+        hint: 'Check the access code and try again'
+      });
+    }
+
+    // Return deal with bounty info if applicable
+    const response: any = {
+      success: true,
+      deal: {
+        ...deal,
+        isHidden: true
+      }
+    };
+
+    if (deal.bountyRewardAmount && deal.minReferralsRequired) {
+      response.bounty = {
+        enabled: true,
+        rewardAmount: deal.bountyRewardAmount,
+        minReferrals: deal.minReferralsRequired,
+        description: `Bring ${deal.minReferralsRequired} friend${deal.minReferralsRequired > 1 ? 's' : ''} and earn $${deal.bountyRewardAmount} per person!`
+      };
+    }
+
+    res.status(200).json(response);
+  } catch (error) {
+    console.error('Get hidden deal error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: POST /api/deals/:id/redeem ---
+// Redeem a deal with optional bounty verification via QR code
+router.post('/deals/:id/redeem', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { qrCodeData, referralCount } = req.body;
+    const userId = (req as any).user?.id; // Assuming protect middleware adds user
+
+    const dealId = parseInt(id);
+    if (isNaN(dealId)) {
+      return res.status(400).json({ error: 'Invalid deal ID' });
+    }
+
+    // Fetch the deal
+    const deal = await prisma.deal.findUnique({
+      where: { id: dealId },
+      include: {
+        dealType: true,
+        merchant: true
+      }
+    });
+
+    if (!deal) {
+      return res.status(404).json({ error: 'Deal not found' });
+    }
+
+    // Check if deal is active
+    const now = new Date();
+    if (now < deal.startTime || now > deal.endTime) {
+      return res.status(400).json({ error: 'Deal is not currently active' });
+    }
+
+    // Check flash sale redemption limit
+    if (deal.isFlashSale && deal.maxRedemptions) {
+      if (deal.currentRedemptions >= deal.maxRedemptions) {
+        return res.status(400).json({
+          error: 'This deal has reached maximum redemptions',
+          maxRedemptions: deal.maxRedemptions
+        });
+      }
+    }
+
+    // Handle bounty deals with QR code verification
+    if (deal.kickbackEnabled && deal.bountyRewardAmount) {
+      // Verify QR code if provided
+      if (qrCodeData) {
+        const { verifyBountyQRCode } = require('../lib/dealUtils');
+        const verification = verifyBountyQRCode(qrCodeData);
+
+        if (!verification) {
+          return res.status(400).json({
+            error: 'Invalid QR code',
+            hint: 'Please scan the correct bounty QR code'
+          });
+        }
+
+        if (verification.dealId !== dealId) {
+          return res.status(400).json({
+            error: 'QR code does not match this deal'
+          });
+        }
+      }
+
+      // Validate referral count
+      const actualReferralCount = referralCount || 0;
+      if (actualReferralCount < (deal.minReferralsRequired || 0)) {
+        return res.status(400).json({
+          error: `You must bring at least ${deal.minReferralsRequired} friend${deal.minReferralsRequired! > 1 ? 's' : ''} to redeem this bounty`,
+          required: deal.minReferralsRequired,
+          provided: actualReferralCount
+        });
+      }
+
+      // Create kickback event for bounty reward
+      const bountyEarned = deal.bountyRewardAmount * actualReferralCount;
+      
+      if (userId) {
+        await prisma.kickbackEvent.create({
+          data: {
+            merchantId: deal.merchantId,
+            dealId: deal.id,
+            userId: userId,
+            amountEarned: bountyEarned,
+            sourceAmountSpent: 0, // Can be updated with actual purchase amount
+            inviteeCount: actualReferralCount
+          }
+        });
+      }
+
+      // Increment redemption count for flash sales
+      if (deal.isFlashSale) {
+        await prisma.deal.update({
+          where: { id: dealId },
+          data: {
+            currentRedemptions: {
+              increment: 1
+            }
+          }
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Bounty deal redeemed successfully!',
+        bountyEarned: bountyEarned,
+        referralCount: actualReferralCount,
+        cashBack: `$${bountyEarned.toFixed(2)}`
+      });
+    }
+
+    // Regular deal redemption (non-bounty)
+    if (deal.isFlashSale) {
+      await prisma.deal.update({
+        where: { id: dealId },
+        data: {
+          currentRedemptions: {
+            increment: 1
+          }
+        }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Deal redeemed successfully!',
+        discount: deal.discountPercentage ? `${deal.discountPercentage}%` : deal.discountAmount ? `$${deal.discountAmount}` : 'Special offer'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Deal redeemed successfully!'
+    });
+
+  } catch (error) {
+    console.error('Deal redemption error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

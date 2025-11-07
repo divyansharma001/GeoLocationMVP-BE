@@ -145,6 +145,20 @@ model Deal {
   offerTerms             String?
   categoryId             Int
   dealTypeId             Int
+  
+  // Bounty Deal fields
+  bountyRewardAmount     Float?             // Cash back amount per referral
+  minReferralsRequired   Int?               // Minimum friends to bring
+  bountyQRCode           String?            // QR code data for bounty verification
+  
+  // Hidden Deal fields
+  accessCode             String?            // Secret code to access hidden deals
+  
+  // Redeem Now (Flash Sale) fields
+  isFlashSale            Boolean            @default(false) // Urgency flag
+  maxRedemptions         Int?               // Maximum number of redemptions allowed
+  currentRedemptions     Int                @default(0)     // Current redemption count
+  
   checkIns               CheckIn[]
   category               DealCategoryMaster @relation(fields: [categoryId], references: [id])
   dealType               DealTypeMaster     @relation(fields: [dealTypeId], references: [id])
@@ -153,6 +167,10 @@ model Deal {
   kickbackEvents         KickbackEvent[]
   savedByUsers           UserDeal[]
   pointEvents            UserPointEvent[]
+  
+  @@index([accessCode])
+  @@index([merchantId, dealTypeId])
+  @@index([isFlashSale, endTime])
 }
 
 model UserDeal {

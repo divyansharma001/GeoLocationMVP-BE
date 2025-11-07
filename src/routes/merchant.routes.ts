@@ -538,31 +538,223 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
       }
     }
 
+    // ==================== DEAL TYPE SPECIFIC VALIDATION & LOGIC ====================
+    // Import deal utilities at the top of the file
+    const { 
+      generateAccessCode, 
+      generateBountyQRCode, 
+      validateDealTypeRequirements 
+    } = require('../lib/dealUtils');
+
+    // Get deal type to apply specific business rules
+    const dealTypeRecord = await prisma.dealTypeMaster.findUnique({
+      where: { id: dealTypeId! }
+    });
+
+    if (!dealTypeRecord) {
+      return res.status(500).json({ error: 'Deal type not found' });
+    }
+
+    const dealTypeName = dealTypeRecord.name;
+    let bountyRewardAmountValue: number | undefined;
+    let minReferralsRequiredValue: number | undefined;
+    let accessCodeValue: string | undefined;
+    let bountyQRCodeValue: string | undefined;
+    let isFlashSaleValue = false;
+    let maxRedemptionsValue: number | undefined;
+    let kickbackEnabledValue = !!kickbackEnabled;
+    let discountPercentageValue = discountPercentage;
+
+    // --- HAPPY HOUR DEAL VALIDATION ---
+    if (dealTypeName === 'Happy Hour') {
+      if (menuItems && Array.isArray(menuItems) && menuItems.length > 0) {
+        // Validate all selected items are from happy hour menu
+        const menuItemIds = menuItems.map((mi: any) => Number(mi.id)).filter((id: number) => !isNaN(id));
+        
+        if (menuItemIds.length > 0) {
+          const happyHourItems = await prisma.menuItem.findMany({
+            where: {
+              id: { in: menuItemIds },
+              merchantId: merchantId,
+              isHappyHour: true
+            }
+          });
+
+          if (happyHourItems.length !== menuItemIds.length) {
+            return res.status(400).json({
+              error: 'All items must be from Happy Hour menu. Please select only Happy Hour items.',
+              hint: 'Toggle "Happy Hour" on menu items first, then add them to this deal.'
+            });
+          }
+        }
+      }
+    }
+
+    // --- BOUNTY DEAL VALIDATION ---
+    if (dealTypeName === 'Bounty Deal') {
+      bountyRewardAmountValue = req.body.bountyRewardAmount ? parseFloat(req.body.bountyRewardAmount) : undefined;
+      minReferralsRequiredValue = req.body.minReferralsRequired ? parseInt(req.body.minReferralsRequired) : undefined;
+
+      if (!bountyRewardAmountValue || bountyRewardAmountValue <= 0) {
+        return res.status(400).json({
+          error: 'Bounty reward amount is required and must be positive',
+          hint: 'Specify how much cash back customers earn per friend they bring'
+        });
+      }
+
+      if (!minReferralsRequiredValue || minReferralsRequiredValue < 1) {
+        return res.status(400).json({
+          error: 'Minimum referrals required must be at least 1',
+          hint: 'Specify minimum number of friends customer must bring'
+        });
+      }
+
+      // Auto-enable kickback for bounty deals
+      kickbackEnabledValue = true;
+      
+      // Generate QR code for bounty verification (will be updated after deal creation with dealId)
+      // We'll generate it after the deal is created
+    }
+
+    // --- HIDDEN DEAL VALIDATION ---
+    if (dealTypeName === 'Hidden Deal') {
+      accessCodeValue = req.body.accessCode || generateAccessCode();
+      
+      // Validate access code uniqueness
+      const existingDeal = await prisma.deal.findFirst({
+        where: {
+          AND: [
+            { accessCode: accessCodeValue },
+            { merchantId: { not: merchantId } } // Allow merchant to reuse their own codes
+          ]
+        }
+      });
+
+      if (existingDeal) {
+        return res.status(400).json({
+          error: 'Access code already in use. Please choose a different code.',
+          generatedCode: generateAccessCode() // Suggest a new one
+        });
+      }
+
+      // Force all menu items to be hidden
+      if (menuItems && Array.isArray(menuItems)) {
+        menuItems.forEach((item: any) => {
+          item.isHidden = true;
+        });
+      }
+
+      // Optional: Enable bounty for hidden deals
+      if (req.body.bountyRewardAmount && req.body.minReferralsRequired) {
+        bountyRewardAmountValue = parseFloat(req.body.bountyRewardAmount);
+        minReferralsRequiredValue = parseInt(req.body.minReferralsRequired);
+        
+        if (bountyRewardAmountValue > 0 && minReferralsRequiredValue > 0) {
+          kickbackEnabledValue = true;
+        }
+      }
+    }
+
+    // --- REDEEM NOW DEAL VALIDATION ---
+    if (dealTypeName === 'Redeem Now') {
+      const validPresetDiscounts = [15, 30, 45, 50, 75];
+      const requestedDiscount = req.body.discountPercentage ? parseInt(req.body.discountPercentage) : null;
+
+      if (!requestedDiscount) {
+        return res.status(400).json({
+          error: 'Discount percentage is required for Redeem Now deals',
+          hint: 'Choose from: 15%, 30%, 45%, 50%, 75%, or custom (1-100%)'
+        });
+      }
+
+      // Validate discount is either a preset or custom in valid range
+      if (!validPresetDiscounts.includes(requestedDiscount)) {
+        if (requestedDiscount < 1 || requestedDiscount > 100) {
+          return res.status(400).json({
+            error: 'Discount percentage must be between 1 and 100',
+            presets: validPresetDiscounts
+          });
+        }
+      }
+
+      // Set the discount
+      discountPercentageValue = requestedDiscount;
+      isFlashSaleValue = true;
+
+      // Validate duration (max 24 hours)
+      const durationHours = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
+      if (durationHours > 24) {
+        return res.status(400).json({
+          error: 'Redeem Now deals must be 24 hours or less',
+          currentDuration: `${durationHours.toFixed(1)} hours`
+        });
+      }
+
+      // Optional: Set max redemptions
+      maxRedemptionsValue = req.body.maxRedemptions ? parseInt(req.body.maxRedemptions) : undefined;
+      if (maxRedemptionsValue && maxRedemptionsValue < 1) {
+        return res.status(400).json({
+          error: 'Max redemptions must be at least 1 (or omit for unlimited)'
+        });
+      }
+    }
+
+    // --- RECURRING DEAL VALIDATION ---
+    if (dealTypeName === 'Recurring Deal') {
+      if (!recurringDays || recurringDays.length === 0) {
+        return res.status(400).json({
+          error: 'Please select at least one day for recurring deals',
+          hint: 'Specify which days this deal should appear (e.g., MONDAY,TUESDAY)'
+        });
+      }
+    }
+
+    // ==================== END DEAL TYPE VALIDATION ====================
+
+
     // Enhanced deal creation with all dynamic fields
     let newDeal;
     try {
       newDeal = await prisma.$transaction(async (tx) => {
-      // Prepare enhanced deal data
-      const dealData = {
+      // Prepare enhanced deal data with new fields
+      const dealData: any = {
         title,
         description: description || '',
         startTime,
         endTime,
         redemptionInstructions: redemptionInstructions || '',
         imageUrls: imageUrls || [],
-        discountPercentage: discountPercentage ? parseFloat(discountPercentage) : null,
+        discountPercentage: discountPercentageValue ? parseFloat(String(discountPercentageValue)) : null,
         discountAmount: discountAmount ? parseFloat(discountAmount) : null,
         categoryId: categoryId!,
         dealTypeId: dealTypeId!,
         recurringDays,
         offerTerms: offerTerms || null,
-        kickbackEnabled: !!kickbackEnabled,
-        merchantId: merchantId
+        kickbackEnabled: kickbackEnabledValue,
+        merchantId: merchantId,
+        
+        // New fields for different deal types
+        bountyRewardAmount: bountyRewardAmountValue || null,
+        minReferralsRequired: minReferralsRequiredValue || null,
+        accessCode: accessCodeValue || null,
+        isFlashSale: isFlashSaleValue,
+        maxRedemptions: maxRedemptionsValue || null,
+        currentRedemptions: 0
       };
 
       const createdDeal = await tx.deal.create({
         data: dealData
       });
+      
+      // Generate bounty QR code after deal creation (needs dealId)
+      if (dealTypeName === 'Bounty Deal' || (dealTypeName === 'Hidden Deal' && bountyRewardAmountValue)) {
+        const qrCode = generateBountyQRCode(createdDeal.id, merchantId);
+        await tx.deal.update({
+          where: { id: createdDeal.id },
+          data: { bountyQRCode: qrCode }
+        });
+        bountyQRCodeValue = qrCode;
+      }
 
       // Handle menu items with enhanced discount support
       if (menuItems && Array.isArray(menuItems) && menuItems.length > 0) {
@@ -670,9 +862,9 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
     }
 
     // Enhanced response with all dynamic fields
-    const response = {
+    const response: any = {
       success: true,
-      message: 'Deal created successfully with enhanced features',
+      message: `${dealTypeName} created successfully`,
       deal: {
         id: newDeal.id,
         title: newDeal.title,
@@ -685,13 +877,40 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
         offerTerms: newDeal.offerTerms,
         kickbackEnabled: newDeal.kickbackEnabled,
         createdAt: newDeal.createdAt,
-        updatedAt: newDeal.updatedAt
+        updatedAt: newDeal.updatedAt,
+        dealType: dealTypeName
       },
       normalization: {
         dealTypeId,
         recurringDays: recurringDays ? recurringDays.split(',') : null
       }
     };
+
+    // Add deal type specific fields to response
+    if (bountyRewardAmountValue) {
+      response.bounty = {
+        rewardAmount: bountyRewardAmountValue,
+        minReferrals: minReferralsRequiredValue,
+        qrCode: bountyQRCodeValue
+      };
+    }
+
+    if (accessCodeValue) {
+      const { generateHiddenDealLink } = require('../lib/dealUtils');
+      response.hidden = {
+        accessCode: accessCodeValue,
+        directLink: generateHiddenDealLink(newDeal.id, accessCodeValue),
+        qrCodeLink: `${process.env.FRONTEND_URL || 'https://yohop.com'}/qr/deal/${accessCodeValue}`
+      };
+    }
+
+    if (isFlashSaleValue) {
+      response.flashSale = {
+        discountPercentage: newDeal.discountPercentage,
+        maxRedemptions: maxRedemptionsValue || 'unlimited',
+        currentRedemptions: 0
+      };
+    }
 
     res.status(201).json(response);
   } catch (error) {
