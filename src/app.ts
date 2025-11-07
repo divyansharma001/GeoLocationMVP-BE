@@ -21,6 +21,7 @@ import gamificationRoutes from './routes/gamification.routes';
 import streakRoutes from './routes/streak.routes';
 import loyaltyRoutes from './routes/loyalty.routes';
 import loyaltyMerchantRoutes from './routes/loyalty.merchant.routes';
+import heistRoutes from './routes/heist.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -65,6 +66,7 @@ app.use('/api/gamification', gamificationRoutes);
 app.use('/api/streak', streakRoutes);
 app.use('/api/loyalty', loyaltyRoutes);
 app.use('/api/merchants', loyaltyMerchantRoutes);
+app.use('/api/heist', heistRoutes);
 
 export default app;
 

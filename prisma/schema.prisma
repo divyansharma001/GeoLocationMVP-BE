@@ -82,6 +82,11 @@ model User {
   loyaltyTransactions LoyaltyPointTransaction[]
   loyaltyRedemptions  LoyaltyRedemption[]
   orders              Order[]
+  // Heist Token Relations
+  heistToken          HeistToken?
+  heistsAsAttacker    Heist[]               @relation("HeistsAsAttacker")
+  heistsAsVictim      Heist[]               @relation("HeistsAsVictim")
+  heistNotifications  HeistNotification[]
 
   @@index([referredByUserId])
   @@index([loyaltyTier])
@@ -674,6 +679,73 @@ model Order {
   @@index([orderNumber])
 }
 
+// ===== HEIST TOKEN SYSTEM =====
+
+model HeistToken {
+  id              Int      @id @default(autoincrement())
+  userId          Int      @unique
+  balance         Int      @default(0)
+  totalEarned     Int      @default(0)
+  totalSpent      Int      @default(0)
+  lastEarnedAt    DateTime?
+  lastSpentAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  heistsAsAttacker Heist[] @relation("HeistTokenAttacker")
+
+  @@index([userId])
+  @@index([balance])
+  @@index([lastSpentAt])
+}
+
+model Heist {
+  id                  Int         @id @default(autoincrement())
+  attackerId          Int
+  victimId            Int
+  pointsStolen        Int
+  victimPointsBefore  Int
+  victimPointsAfter   Int
+  attackerPointsBefore Int
+  attackerPointsAfter  Int
+  tokenSpent          Boolean     @default(true)
+  status              HeistStatus @default(SUCCESS)
+  failureReason       String?
+  ipAddress           String?
+  createdAt           DateTime    @default(now())
+  attacker            User        @relation("HeistsAsAttacker", fields: [attackerId], references: [id], onDelete: Cascade, map: "Heist_attacker_fkey")
+  victim              User        @relation("HeistsAsVictim", fields: [victimId], references: [id], onDelete: Cascade)
+  attackerToken       HeistToken  @relation("HeistTokenAttacker", fields: [attackerId], references: [userId], map: "Heist_attackerToken_fkey")
+  notifications       HeistNotification[]
+
+  @@index([attackerId, createdAt])
+  @@index([victimId, createdAt])
+  @@index([createdAt])
+  @@index([status])
+  @@index([attackerId, status])
+  @@index([victimId, status])
+}
+
+model HeistNotification {
+  id          Int                    @id @default(autoincrement())
+  userId      Int
+  heistId     Int?
+  type        HeistNotificationType
+  message     String
+  metadata    Json?
+  read        Boolean                @default(false)
+  emailSent   Boolean                @default(false)
+  emailSentAt DateTime?
+  createdAt   DateTime               @default(now())
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  heist       Heist?                 @relation(fields: [heistId], references: [id], onDelete: SetNull)
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@index([type])
+}
+
 enum UserRole {
   USER
   MERCHANT
@@ -732,6 +804,8 @@ enum PointEventType {
   ACHIEVEMENT_UNLOCK
   LOYALTY_BONUS
   REFERRAL_BONUS
+  HEIST_GAIN
+  HEIST_LOSS
 }
 
 enum BookingStatus {
@@ -807,4 +881,22 @@ enum OrderStatus {
   COMPLETED
   CANCELLED
   REFUNDED
+}
+
+enum HeistStatus {
+  SUCCESS
+  FAILED_COOLDOWN
+  FAILED_TARGET_PROTECTED
+  FAILED_SHIELD
+  FAILED_INSUFFICIENT_POINTS
+  FAILED_INSUFFICIENT_TOKENS
+  FAILED_INVALID_TARGET
+}
+
+enum HeistNotificationType {
+  HEIST_SUCCESS
+  HEIST_VICTIM
+  TOKEN_EARNED
+  SHIELD_ACTIVATED
+  SHIELD_EXPIRED
 }

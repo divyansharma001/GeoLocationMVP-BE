@@ -7,6 +7,7 @@ import { protect, AuthRequest } from '../middleware/auth.middleware';
 import { getPointConfig } from '../lib/points';
 import { sendWelcomeEmail, sendReferralSuccessEmail } from '../lib/email';
 import { invalidateLeaderboardCache } from '../lib/leaderboard/cache';
+import { awardToken, createTokenEarnedNotification } from '../lib/heist';
 
 const router = Router();
 
@@ -114,6 +115,21 @@ router.post('/register', async (req: Request, res: Response) => {
         referredEmail: userWithoutPassword.email,
         referralCode: r.referralCode || 'UNKNOWN'
       }).catch(err => console.error('[email] referral-success send error', err));
+
+      // Award heist token to referrer (non-blocking)
+      awardToken(r.id, 1)
+        .then(() => {
+          // Create notification for the referrer
+          return createTokenEarnedNotification(
+            r.id,
+            1,
+            userWithoutPassword.name || userWithoutPassword.email
+          );
+        })
+        .catch(err => {
+          // Don't fail signup if token award fails
+          console.error('[heist] token award error for referral', err);
+        });
     }
 
     // 5. Send back a success response
