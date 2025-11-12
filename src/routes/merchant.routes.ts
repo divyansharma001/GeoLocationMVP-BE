@@ -377,9 +377,6 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
     if (discountAmount !== undefined && (isNaN(discountAmount) || discountAmount < 0)) {
       return res.status(400).json({ error: 'discountAmount must be a positive number.' });
     }
-    if (!discountPercentage && !discountAmount && !customOfferDisplay) {
-      return res.status(400).json({ error: 'At least one of discountPercentage, discountAmount, or customOfferDisplay is required.' });
-    }
 
     // Validate priority
     if (priority !== undefined && (isNaN(priority) || priority < 1 || priority > 10)) {
@@ -445,6 +442,21 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
     // Ensure dealTypeId is set
     if (!dealTypeId) {
       return res.status(500).json({ error: 'Failed to resolve deal type. Please try again.' });
+    }
+    
+    // Check if deal type requires discount fields (Bounty deals don't need discounts)
+    // Get the deal type record to check if it's a bounty deal
+    const dealTypeRecordForDiscount = await prisma.dealTypeMaster.findUnique({
+      where: { id: dealTypeId }
+    });
+    
+    const isBountyDeal = dealTypeRecordForDiscount && (
+      dealTypeRecordForDiscount.name === 'Bounty Deal' || 
+      dealTypeRecordForDiscount.name.toLowerCase().includes('bounty')
+    );
+    
+    if (!isBountyDeal && !discountPercentage && !discountAmount && !customOfferDisplay) {
+      return res.status(400).json({ error: 'Please specify either a discount percentage, discount amount, or custom offer display.' });
     }
 
     // Validate and resolve category ID if provided
@@ -530,10 +542,16 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
       const dealTypeRecord = await prisma.dealTypeMaster.findUnique({
         where: { id: dealTypeId }
       });
-      if (dealTypeRecord && dealTypeRecord.name === 'Recurring' && !recurringDays) {
+      // Check for both 'Recurring' and 'Recurring Deal' to handle different database states
+      const isRecurringType = dealTypeRecord && (
+        dealTypeRecord.name === 'Recurring' || 
+        dealTypeRecord.name === 'Recurring Deal' ||
+        dealTypeRecord.name.toLowerCase().includes('recurring')
+      );
+      if (isRecurringType && !recurringDays) {
         return res.status(400).json({ error: 'recurringDays required for RECURRING deals.' });
       }
-      if (dealTypeRecord && dealTypeRecord.name !== 'Recurring') {
+      if (dealTypeRecord && !isRecurringType) {
         recurringDays = null;
       }
     }
