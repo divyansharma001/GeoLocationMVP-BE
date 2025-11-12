@@ -68,3 +68,17 @@ export {
   deleteOldNotifications,
   type NotificationMetadata,
 } from './notifications';
+
+// Items
+export {
+  getAvailableItems,
+  getUserInventory,
+  purchaseItem,
+  getAttackerItems,
+  getVictimItems,
+  applyItemEffects,
+  recordItemUsage,
+  checkItemActive,
+  type ActiveItem,
+  type ItemEffectResult,
+} from './items';

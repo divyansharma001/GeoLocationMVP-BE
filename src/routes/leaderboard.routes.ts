@@ -23,7 +23,7 @@ async function optionalAuth(req: AuthRequest, _res: Response, next: NextFunction
 // GET /api/leaderboard
 router.get('/', optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const { period, limit, includeSelf, year, month, from, to, showMore } = req.query;
+    const { period, limit, includeSelf, year, month, from, to, showMore, includeBreakdown } = req.query;
     const selfUserId = req.user?.id;
 
     // Default to 5 entries unless showMore is true or limit is explicitly set
@@ -31,6 +31,7 @@ router.get('/', optionalAuth, async (req: AuthRequest, res: Response) => {
     const defaultLimit = showMoreBool ? 50 : 5;
     const limitNum = limit ? parseInt(String(limit), 10) : defaultLimit;
     const includeSelfBool = includeSelf === undefined ? true : String(includeSelf).toLowerCase() === 'true';
+    const includeBreakdownBool = includeBreakdown === 'true';
 
     const yearNum = year ? parseInt(String(year), 10) : undefined;
     const monthNum = month ? parseInt(String(month), 10) : undefined;
@@ -46,8 +47,76 @@ router.get('/', optionalAuth, async (req: AuthRequest, res: Response) => {
       to: to as string | undefined,
     });
 
+    // Get point breakdowns for all users if requested
+    let pointBreakdowns: Record<number, Array<{ eventType: string; eventTypeName: string; points: number; count: number }>> = {};
+    if (includeBreakdownBool && result.top) {
+      const userIds = result.top.map(u => u.userId);
+      if (result.me && !result.me.inTop) {
+        userIds.push(result.me.userId);
+      }
+
+      // Resolve period dates
+      const { resolvePeriod } = await import('../lib/leaderboard/period');
+      const periodData = resolvePeriod({
+        period: period as string | undefined,
+        year: yearNum,
+        month: monthNum,
+        from: from as string | undefined,
+        to: to as string | undefined,
+      });
+
+      // Get point breakdown grouped by event type for all users
+      // Use Prisma's IN query for better compatibility
+      const breakdownData = await prisma.userPointEvent.groupBy({
+        by: ['userId', 'pointEventTypeId'],
+        where: {
+          userId: { in: userIds },
+          createdAt: {
+            gte: periodData.start,
+            lt: periodData.endExclusive,
+          },
+        },
+        _sum: {
+          points: true,
+        },
+        _count: {
+          id: true,
+        },
+      });
+
+      // Fetch event type names
+      const eventTypeIds = [...new Set(breakdownData.map(d => d.pointEventTypeId))];
+      const eventTypes = await prisma.pointEventTypeMaster.findMany({
+        where: { id: { in: eventTypeIds } },
+        select: { id: true, name: true },
+      });
+      const eventTypeMap = new Map(eventTypes.map(et => [et.id, et.name]));
+
+      // Transform to the expected format
+      const formattedBreakdown = breakdownData.map((row) => ({
+        userId: row.userId,
+        eventTypeName: eventTypeMap.get(row.pointEventTypeId) || 'Unknown',
+        eventTypeId: row.pointEventTypeId,
+        totalPoints: row._sum.points || 0,
+        eventCount: row._count.id,
+      }));
+
+      // Group by userId
+      formattedBreakdown.forEach((row) => {
+        if (!pointBreakdowns[row.userId]) {
+          pointBreakdowns[row.userId] = [];
+        }
+        pointBreakdowns[row.userId].push({
+          eventType: row.eventTypeName,
+          eventTypeName: row.eventTypeName,
+          points: row.totalPoints,
+          count: row.eventCount,
+        });
+      });
+    }
+
     // Add pagination metadata
-    const response = {
+    const response: any = {
       ...result,
       pagination: {
         defaultLimit: 5,
@@ -56,6 +125,10 @@ router.get('/', optionalAuth, async (req: AuthRequest, res: Response) => {
         hasMore: limitNum < 50 && result.top && result.top.length >= limitNum
       }
     };
+
+    if (includeBreakdownBool) {
+      response.pointBreakdowns = pointBreakdowns;
+    }
 
     res.status(200).json(response);
   } catch (e: any) {

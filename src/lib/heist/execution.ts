@@ -9,6 +9,7 @@ import { getHeistConfig, calculatePointsToSteal } from './config';
 import { spendToken } from './tokens';
 import { checkHeistEligibility } from './validation';
 import { createHeistSuccessNotification, createHeistVictimNotification } from './notifications';
+import { applyItemEffects, recordItemUsage } from './items';
 
 const prisma = new PrismaClient();
 
@@ -88,10 +89,10 @@ export async function executeHeist(
           throw new Error('INVALID_TARGET');
         }
 
-        // 3. Calculate points to steal
-        const pointsToSteal = calculatePointsToSteal(victim.monthlyPoints, config);
+        // 3. Calculate base points to steal
+        const basePointsToSteal = calculatePointsToSteal(victim.monthlyPoints, config);
 
-        if (pointsToSteal <= 0) {
+        if (basePointsToSteal <= 0) {
           const failedHeist = await tx.heist.create({
             data: {
               attackerId,
@@ -113,6 +114,93 @@ export async function executeHeist(
             error: 'Target does not have enough points to steal',
             code: 'INSUFFICIENT_VICTIM_POINTS',
           };
+        }
+
+        // 3.5. Apply item effects if items are enabled
+        let pointsToSteal = basePointsToSteal;
+        let itemEffectResult: any = null;
+
+        if (config.itemsEnabled) {
+          try {
+            itemEffectResult = await applyItemEffects(
+              attackerId,
+              victimId,
+              basePointsToSteal,
+              config.stealPercentage,
+              victim.monthlyPoints,
+              { minProtectionPercentage: config.minProtectionPercentage },
+              tx as any
+            );
+
+            pointsToSteal = itemEffectResult.finalStealAmount;
+
+            // If shield blocked completely, create failed heist
+            if (itemEffectResult.shieldBlocked) {
+              const blockedHeist = await tx.heist.create({
+                data: {
+                  attackerId,
+                  victimId,
+                  pointsStolen: 0,
+                  victimPointsBefore: victim.monthlyPoints,
+                  victimPointsAfter: victim.monthlyPoints,
+                  attackerPointsBefore: attacker.monthlyPoints,
+                  attackerPointsAfter: attacker.monthlyPoints,
+                  status: HeistStatus.FAILED_SHIELD,
+                  ipAddress: metadata?.ipAddress,
+                },
+              });
+
+              // Record item usage even for blocked heist
+              if (itemEffectResult.itemsUsed.length > 0) {
+                for (const itemUsage of itemEffectResult.itemsUsed) {
+                  await recordItemUsage(
+                    blockedHeist.id,
+                    itemUsage.userId || (itemUsage.itemName.includes('Shield') ? victimId : attackerId),
+                    itemUsage.itemId,
+                    itemUsage.effectApplied,
+                    tx as any
+                  );
+                }
+              }
+
+              return {
+                success: false,
+                heistId: blockedHeist.id,
+                status: HeistStatus.FAILED_SHIELD,
+                error: 'Heist was blocked by shield',
+                code: 'SHIELD_BLOCKED',
+                details: { itemsUsed: itemEffectResult.itemsUsed },
+              };
+            }
+
+            // Re-check if points are still valid after item effects
+            if (pointsToSteal <= 0) {
+              const failedHeist = await tx.heist.create({
+                data: {
+                  attackerId,
+                  victimId,
+                  pointsStolen: 0,
+                  victimPointsBefore: victim.monthlyPoints,
+                  victimPointsAfter: victim.monthlyPoints,
+                  attackerPointsBefore: attacker.monthlyPoints,
+                  attackerPointsAfter: attacker.monthlyPoints,
+                  status: HeistStatus.FAILED_INSUFFICIENT_POINTS,
+                  ipAddress: metadata?.ipAddress,
+                },
+              });
+
+              return {
+                success: false,
+                heistId: failedHeist.id,
+                status: HeistStatus.FAILED_INSUFFICIENT_POINTS,
+                error: 'Not enough points to steal after item effects',
+                code: 'INSUFFICIENT_VICTIM_POINTS',
+              };
+            }
+          } catch (itemError) {
+            console.error('[heist] Error applying item effects:', itemError);
+            // Continue with base amount if item system fails
+          }
         }
 
         // 4. Spend token (will throw if insufficient)
@@ -173,7 +261,28 @@ export async function executeHeist(
           console.error('[heist] point event creation failed (non-critical)', pointEventError);
         }
 
-        // 8. Create notifications
+        // 8. Record item usage if items were used
+        if (config.itemsEnabled && itemEffectResult && itemEffectResult.itemsUsed.length > 0) {
+          for (const itemUsage of itemEffectResult.itemsUsed) {
+            // Determine user ID based on item type
+            const itemUserId = itemUsage.itemName.includes('Shield') ? victimId : attackerId;
+            
+            try {
+              await recordItemUsage(
+                successfulHeist.id,
+                itemUserId,
+                itemUsage.itemId,
+                itemUsage.effectApplied,
+                tx as any
+              );
+            } catch (itemUsageError) {
+              console.error('[heist] Error recording item usage:', itemUsageError);
+              // Non-critical, continue
+            }
+          }
+        }
+
+        // 9. Create notifications
         await Promise.all([
           createHeistSuccessNotification(
             attackerId,
@@ -193,7 +302,7 @@ export async function executeHeist(
           ),
         ]);
 
-        // 9. Return success result
+        // 10. Return success result
         return {
           success: true,
           heistId: successfulHeist.id,
@@ -203,6 +312,7 @@ export async function executeHeist(
           victimPointsBefore: victim.monthlyPoints,
           victimPointsAfter: updatedVictim.monthlyPoints,
           status: HeistStatus.SUCCESS,
+          details: itemEffectResult ? { itemsUsed: itemEffectResult.itemsUsed } : undefined,
         };
       },
       {
@@ -365,6 +475,8 @@ function mapEligibilityCodeToStatus(code: string): HeistStatus {
     TARGET_PROTECTED: HeistStatus.FAILED_TARGET_PROTECTED,
     INVALID_TARGET: HeistStatus.FAILED_INVALID_TARGET,
     INSUFFICIENT_VICTIM_POINTS: HeistStatus.FAILED_INSUFFICIENT_POINTS,
+    ALREADY_ROBBED: HeistStatus.FAILED_INVALID_TARGET, // Use INVALID_TARGET for already robbed
+    DAILY_LIMIT_EXCEEDED: HeistStatus.FAILED_INVALID_TARGET,
   };
 
   return mapping[code] || HeistStatus.FAILED_INVALID_TARGET;

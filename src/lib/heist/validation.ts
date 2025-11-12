@@ -4,7 +4,7 @@
  * Functions for validating heist eligibility before execution.
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, HeistStatus } from '@prisma/client';
 import { getHeistConfig, calculatePointsToSteal } from './config';
 import { hasTokens } from './tokens';
 import { checkAttackerCooldown, checkVictimProtection, hasExceededDailyLimit } from './cooldowns';
@@ -165,6 +165,55 @@ export async function checkDailyLimit(attackerId: number): Promise<EligibilityRe
 }
 
 /**
+ * Check if attacker has not already robbed this specific victim
+ */
+export async function checkNotAlreadyRobbed(attackerId: number, victimId: number): Promise<EligibilityResult> {
+  const previousHeist = await prisma.heist.findFirst({
+    where: {
+      attackerId: attackerId,
+      victimId: victimId,
+      status: HeistStatus.SUCCESS,
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+    select: {
+      createdAt: true,
+      pointsStolen: true,
+    },
+  });
+
+  if (previousHeist) {
+    const timeSinceHeist = Date.now() - previousHeist.createdAt.getTime();
+    const daysSince = Math.floor(timeSinceHeist / (1000 * 60 * 60 * 24));
+    const hoursSince = Math.floor((timeSinceHeist % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    
+    let timeAgo = '';
+    if (daysSince > 0) {
+      timeAgo = `${daysSince} day${daysSince !== 1 ? 's' : ''} ago`;
+    } else if (hoursSince > 0) {
+      timeAgo = `${hoursSince} hour${hoursSince !== 1 ? 's' : ''} ago`;
+    } else {
+      timeAgo = 'recently';
+    }
+
+    return {
+      eligible: false,
+      reason: `You already robbed this user ${timeAgo} and stole ${previousHeist.pointsStolen} points. You cannot rob the same person twice.`,
+      code: 'ALREADY_ROBBED',
+      details: {
+        previousHeistDate: previousHeist.createdAt,
+        pointsStolen: previousHeist.pointsStolen,
+        daysSince,
+        hoursSince,
+      },
+    };
+  }
+
+  return { eligible: true };
+}
+
+/**
  * Run all eligibility checks
  * Returns the first failing check, or { eligible: true } if all pass
  */
@@ -199,6 +248,10 @@ export async function checkHeistEligibility(
   // 7. Daily limit not exceeded
   const dailyLimitCheck = await checkDailyLimit(attackerId);
   if (!dailyLimitCheck.eligible) return dailyLimitCheck;
+
+  // 8. Attacker has not already robbed this victim
+  const alreadyRobbedCheck = await checkNotAlreadyRobbed(attackerId, victimId);
+  if (!alreadyRobbedCheck.eligible) return alreadyRobbedCheck;
 
   // All checks passed
   return { eligible: true };
@@ -236,6 +289,7 @@ export async function getEligibilityBreakdown(
     cooldownCheck,
     protectionCheck,
     dailyLimitCheck,
+    alreadyRobbedCheck,
   ] = await Promise.all([
     Promise.resolve(checkFeatureEnabled()),
     Promise.resolve(checkNotSelfTargeting(attackerId, victimId)),
@@ -244,6 +298,7 @@ export async function getEligibilityBreakdown(
     checkAttackerNotOnCooldown(attackerId),
     checkVictimNotProtected(victimId),
     checkDailyLimit(attackerId),
+    checkNotAlreadyRobbed(attackerId, victimId),
   ]);
 
   const checks = {
@@ -254,6 +309,7 @@ export async function getEligibilityBreakdown(
     notOnCooldown: cooldownCheck.eligible,
     victimNotProtected: protectionCheck.eligible,
     withinDailyLimit: dailyLimitCheck.eligible,
+    notAlreadyRobbed: alreadyRobbedCheck.eligible,
   };
 
   const allPassed = Object.values(checks).every((check) => check);
@@ -267,6 +323,7 @@ export async function getEligibilityBreakdown(
     !cooldownCheck.eligible ? cooldownCheck :
     !protectionCheck.eligible ? protectionCheck :
     !dailyLimitCheck.eligible ? dailyLimitCheck :
+    !alreadyRobbedCheck.eligible ? alreadyRobbedCheck :
     undefined;
 
   // Calculate points if eligible

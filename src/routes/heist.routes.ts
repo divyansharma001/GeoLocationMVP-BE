@@ -17,6 +17,9 @@ import {
   getUnreadCount,
   markAsRead,
   markAllAsRead,
+  getAvailableItems,
+  getUserInventory,
+  purchaseItem,
 } from '../lib/heist';
 import { HeistStatus, HeistNotificationType } from '@prisma/client';
 
@@ -330,6 +333,90 @@ router.post('/notifications/read', protect, async (req: AuthRequest, res) => {
 });
 
 /**
+ * GET /heist/items
+ * Get available items for purchase
+ */
+router.get('/items', protect, async (req: AuthRequest, res) => {
+  try {
+    const items = await getAvailableItems();
+
+    res.json({
+      success: true,
+      data: items,
+    });
+  } catch (error) {
+    console.error('Error fetching available items:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch available items',
+    });
+  }
+});
+
+/**
+ * GET /heist/items/inventory
+ * Get user's inventory
+ */
+router.get('/items/inventory', protect, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    const inventory = await getUserInventory(userId);
+
+    res.json({
+      success: true,
+      data: inventory,
+    });
+  } catch (error) {
+    console.error('Error fetching inventory:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch inventory',
+    });
+  }
+});
+
+/**
+ * POST /heist/items/purchase
+ * Purchase an item with coins
+ */
+router.post('/items/purchase', protect, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    const { itemId } = req.body;
+
+    if (!itemId || typeof itemId !== 'number') {
+      return res.status(400).json({
+        success: false,
+        message: 'Item ID is required and must be a number',
+      });
+    }
+
+    const result = await purchaseItem(userId, itemId);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.error || 'Failed to purchase item',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        inventory: result.inventory,
+        message: 'Item purchased successfully',
+      },
+    });
+  } catch (error) {
+    console.error('Error purchasing item:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to purchase item',
+    });
+  }
+});
+
+/**
  * Helper: Map error codes to HTTP status codes
  */
 function getStatusCodeForError(code: string): number {
@@ -342,6 +429,7 @@ function getStatusCodeForError(code: string): number {
     INSUFFICIENT_VICTIM_POINTS: 400, // Bad Request
     DAILY_LIMIT_EXCEEDED: 429, // Too Many Requests
     EXECUTION_ERROR: 500, // Internal Server Error
+    SHIELD_BLOCKED: 409, // Conflict
   };
 
   return mapping[code] || 400; // Default to Bad Request

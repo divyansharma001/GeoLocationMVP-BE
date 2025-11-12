@@ -4243,6 +4243,38 @@ router.post('/merchants/stores', protect, isApprovedMerchant, async (req: AuthRe
   }
 });
 
+// --- Endpoint: DELETE /api/merchants/stores/:storeId ---
+// Delete a store for the authenticated approved merchant
+router.delete('/merchants/stores/:storeId', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const storeId = parseInt(req.params.storeId, 10);
+    if (isNaN(storeId)) return res.status(400).json({ error: 'Invalid store ID' });
+
+    // Verify the store belongs to this merchant
+    // @ts-ignore
+    const store = await prisma.store.findFirst({
+      where: { id: storeId, merchantId },
+    });
+
+    if (!store) {
+      return res.status(404).json({ error: 'Store not found or you do not have permission to delete it' });
+    }
+
+    // Delete the store
+    // @ts-ignore
+    await prisma.store.delete({
+      where: { id: storeId },
+    });
+
+    res.status(200).json({ message: 'Store deleted successfully' });
+  } catch (e) {
+    console.error('Delete store failed', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // --- Endpoint: POST /api/deals/upload-image ---
 // Allows an APPROVED merchant to upload a single image for a deal.

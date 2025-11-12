@@ -27,6 +27,10 @@ export interface HeistConfig {
 
   // Notifications
   emailsEnabled: boolean;
+
+  // Item system
+  itemsEnabled: boolean;
+  minProtectionPercentage: number;
 }
 
 /**
@@ -55,6 +59,10 @@ export function getHeistConfig(): HeistConfig {
 
     // Notifications
     emailsEnabled: process.env.HEIST_EMAILS_ENABLED === 'true', // Default: false
+
+    // Item system
+    itemsEnabled: process.env.HEIST_ITEMS_ENABLED !== 'false', // Default: true
+    minProtectionPercentage: parseFloat(process.env.HEIST_MIN_PROTECTION_PERCENTAGE || '0.10'), // 10%
   };
 }
 

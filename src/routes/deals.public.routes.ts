@@ -1723,17 +1723,76 @@ router.get('/deals/hidden/:code', async (req, res) => {
   try {
     const { code } = req.params;
     const now = new Date();
+    const upperCode = code?.trim().toUpperCase();
 
     if (!code || code.trim().length === 0) {
-      return res.status(400).json({ error: 'Access code is required' });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Access code is required' 
+      });
     }
 
-    // Find the hidden deal by access code
+    console.log(`[Hidden Deal] Looking for deal with accessCode: ${upperCode}`);
+
+    // First, check if ANY deal exists with this access code (without restrictions)
+    const anyDeal = await prisma.deal.findFirst({
+      where: {
+        accessCode: upperCode,
+      },
+      select: { 
+        id: true, 
+        accessCode: true,
+        endTime: true, 
+        startTime: true,
+        merchant: { 
+          select: { 
+            id: true,
+            status: true,
+            businessName: true
+          } 
+        },
+        dealType: {
+          select: {
+            name: true
+          }
+        }
+      }
+    });
+
+    if (!anyDeal) {
+      console.log(`[Hidden Deal] No deal found with accessCode: ${upperCode}`);
+      return res.status(404).json({ 
+        success: false,
+        error: 'Hidden deal not found',
+        hint: 'No deal exists with this access code. Please check the code and try again.'
+      });
+    }
+
+    console.log(`[Hidden Deal] Found deal ID: ${anyDeal.id}, DealType: ${anyDeal.dealType?.name}, Merchant Status: ${anyDeal.merchant.status}, EndTime: ${anyDeal.endTime}`);
+
+    // Check if deal has expired
+    if (anyDeal.endTime < now) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'This hidden deal has expired',
+        hint: `The deal ended on ${anyDeal.endTime.toISOString()}`
+      });
+    }
+
+    // Check if merchant is approved
+    if (anyDeal.merchant.status !== 'APPROVED') {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Hidden deal not available',
+        hint: `The merchant account (${anyDeal.merchant.businessName}) is not approved. Status: ${anyDeal.merchant.status}`
+      });
+    }
+
+    // Now fetch the full deal with all relations
     const deal = await prisma.deal.findFirst({
       where: {
-        accessCode: code.toUpperCase(),
-        startTime: { lte: now },
-        endTime: { gte: now },
+        id: anyDeal.id,
+        accessCode: upperCode,
         merchant: {
           status: 'APPROVED'
         }
@@ -1762,9 +1821,11 @@ router.get('/deals/hidden/:code', async (req, res) => {
     });
 
     if (!deal) {
+      console.log(`[Hidden Deal] Deal ${anyDeal.id} found but failed to load full details`);
       return res.status(404).json({ 
-        error: 'Hidden deal not found or expired',
-        hint: 'Check the access code and try again'
+        success: false,
+        error: 'Hidden deal not found',
+        hint: 'Deal exists but could not be loaded. Please try again.'
       });
     }
 
