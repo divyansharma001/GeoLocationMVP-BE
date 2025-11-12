@@ -32,19 +32,19 @@ export const requestLoggingMiddleware = morgan('combined', {
 });
 
 // Production-specific rate limiting
-export const productionRateLimit = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  limit: 100, // Reduced limit for production
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: 'Too many requests from this IP, please try again later.',
-  },
-  skip: (req: Request) => {
-    // Skip rate limiting for health checks
-    return req.url === '/health' || req.url === '/ready' || req.url === '/live';
-  },
-});
+// export const productionRateLimit = rateLimit({
+//   windowMs: 15 * 60 * 1000, // 15 minutes
+//   limit: 100, // Reduced limit for production
+//   standardHeaders: true,
+//   legacyHeaders: false,
+//   message: {
+//     error: 'Too many requests from this IP, please try again later.',
+//   },
+//   skip: (req: Request) => {
+//     // Skip rate limiting for health checks
+//     return req.url === '/health' || req.url === '/ready' || req.url === '/live';
+//   },
+// });
 
 // Strict rate limiting for auth endpoints
 export const authRateLimit = rateLimit({
