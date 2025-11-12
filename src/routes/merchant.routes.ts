@@ -657,24 +657,23 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
 
     // --- REDEEM NOW DEAL VALIDATION ---
     if (dealTypeName === 'Redeem Now') {
-      const validPresetDiscounts = [15, 30, 45, 50, 75];
       const requestedDiscount = req.body.discountPercentage ? parseInt(req.body.discountPercentage) : null;
 
-      if (!requestedDiscount) {
+      // Validate minimum order amount is required
+      const minOrderAmountValue = req.body.minOrderAmount ? parseFloat(req.body.minOrderAmount) : null;
+      if (!minOrderAmountValue || minOrderAmountValue <= 0) {
         return res.status(400).json({
-          error: 'Discount percentage is required for Redeem Now deals',
-          hint: 'Choose from: 15%, 30%, 45%, 50%, 75%, or custom (1-100%)'
+          error: 'Minimum order amount is required for Redeem Now deals',
+          hint: 'Customers must spend this minimum amount to qualify for the discount'
         });
       }
 
-      // Validate discount is either a preset or custom in valid range
-      if (!validPresetDiscounts.includes(requestedDiscount)) {
-        if (requestedDiscount < 1 || requestedDiscount > 100) {
-          return res.status(400).json({
-            error: 'Discount percentage must be between 1 and 100',
-            presets: validPresetDiscounts
-          });
-        }
+      // Redeem Now deals are fixed at 50% off
+      if (!requestedDiscount || requestedDiscount !== 50) {
+        return res.status(400).json({
+          error: 'Redeem Now deals must have exactly 50% discount',
+          hint: 'Redeem Now deals are fixed at 50% off. Please set discountPercentage to 50'
+        });
       }
 
       // Set the discount
