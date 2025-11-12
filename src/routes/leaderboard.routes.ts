@@ -300,22 +300,26 @@ router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
     let globalStats = null;
     if (includeStatsBool) {
       const statsData = await prisma.$queryRawUnsafe(`
+        WITH user_period_points AS (
+          SELECT 
+            u.id,
+            COALESCE(SUM(e.points), 0) as "periodPoints"
+          FROM "User" u
+          LEFT JOIN "UserPointEvent" e ON u.id = e."userId" 
+            AND e."createdAt" >= $1 AND e."createdAt" <= $2
+          WHERE u.role = 'USER'
+          GROUP BY u.id
+        )
         SELECT 
-          COUNT(DISTINCT u.id) as "totalUsers",
-          COUNT(DISTINCT CASE WHEN COALESCE(SUM(e.points), 0) > 0 THEN u.id END) as "activeUsers",
-          AVG(COALESCE(SUM(e.points), 0)) as "avgPointsPerUser",
-          MAX(COALESCE(SUM(e.points), 0)) as "maxPoints",
-          MIN(COALESCE(SUM(e.points), 0)) as "minPoints",
-          SUM(COALESCE(SUM(e.points), 0)) as "totalPointsEarned",
-          COUNT(DISTINCT c.id) as "totalCheckIns",
-          COUNT(DISTINCT c."dealId") as "uniqueDealsUsed"
-        FROM "User" u
-        LEFT JOIN "UserPointEvent" e ON u.id = e."userId" 
-          AND e."createdAt" >= $1 AND e."createdAt" <= $2
-        LEFT JOIN "CheckIn" c ON u.id = c."userId" 
-          AND c."createdAt" >= $1 AND c."createdAt" <= $2
-        WHERE u.role = 'USER'
-        GROUP BY u.id
+          COUNT(*) as "totalUsers",
+          COUNT(CASE WHEN "periodPoints" > 0 THEN 1 END) as "activeUsers",
+          AVG("periodPoints") as "avgPointsPerUser",
+          MAX("periodPoints") as "maxPoints",
+          MIN("periodPoints") as "minPoints",
+          SUM("periodPoints") as "totalPointsEarned",
+          (SELECT COUNT(DISTINCT c.id) FROM "CheckIn" c WHERE c."createdAt" >= $1 AND c."createdAt" <= $2) as "totalCheckIns",
+          (SELECT COUNT(DISTINCT c."dealId") FROM "CheckIn" c WHERE c."createdAt" >= $1 AND c."createdAt" <= $2) as "uniqueDealsUsed"
+        FROM user_period_points
       `, from, to);
 
       // Get point distribution percentiles
