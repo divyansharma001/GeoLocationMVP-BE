@@ -444,8 +444,8 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
       return res.status(500).json({ error: 'Failed to resolve deal type. Please try again.' });
     }
     
-    // Check if deal type requires discount fields (Bounty deals don't need discounts)
-    // Get the deal type record to check if it's a bounty deal
+    // Check if deal type requires discount fields (Bounty and Hidden deals don't need discounts)
+    // Get the deal type record to check if it's a bounty or hidden deal
     const dealTypeRecordForDiscount = await prisma.dealTypeMaster.findUnique({
       where: { id: dealTypeId }
     });
@@ -455,7 +455,12 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
       dealTypeRecordForDiscount.name.toLowerCase().includes('bounty')
     );
     
-    if (!isBountyDeal && !discountPercentage && !discountAmount && !customOfferDisplay) {
+    const isHiddenDeal = dealTypeRecordForDiscount && (
+      dealTypeRecordForDiscount.name === 'Hidden Deal' || 
+      dealTypeRecordForDiscount.name.toLowerCase().includes('hidden')
+    );
+    
+    if (!isBountyDeal && !isHiddenDeal && !discountPercentage && !discountAmount && !customOfferDisplay) {
       return res.status(400).json({ error: 'Please specify either a discount percentage, discount amount, or custom offer display.' });
     }
 
