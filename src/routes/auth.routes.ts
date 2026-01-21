@@ -191,6 +191,11 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Users created via social login may not have a password hash stored
+    if (!user.password) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
     // 3. Compare the submitted password with the stored hash
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {

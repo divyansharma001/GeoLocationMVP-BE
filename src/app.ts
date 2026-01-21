@@ -23,6 +23,7 @@ import loyaltyRoutes from './routes/loyalty.routes';
 import loyaltyMerchantRoutes from './routes/loyalty.merchant.routes';
 import heistRoutes from './routes/heist.routes';
 import paymentsRoutes from './routes/payments.routes';
+import socialAuthRoutes from './routes/social.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -53,6 +54,7 @@ app.get('/', (req: Request, res: Response) => {
 
 // Mount routes
 app.use('/api/auth', authRoutes);
+app.use('/api/auth', socialAuthRoutes);
 app.use('/api', merchantRoutes);
 app.use('/api', publicDealRoutes);
 app.use('/api/users', userRoutes);

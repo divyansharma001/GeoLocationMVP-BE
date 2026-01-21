@@ -4,3 +4,9 @@ node_modules
 
 /generated/prisma
 dist
+
+logs/
+*.log
+*.log.*
+.9c2efc*
+.28318e*

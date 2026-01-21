@@ -51,9 +51,11 @@ model User {
   id                  Int                       @id @default(autoincrement())
   email               String                    @unique
   name                String?
-  password            String
+  password            String?
   createdAt           DateTime                  @default(now())
   updatedAt           DateTime                  @updatedAt
+  emailVerifiedAt     DateTime?
+  lastLoginAt         DateTime?
   role                UserRole                  @default(USER)
   points              Int                       @default(0)
   monthlyPoints       Int                       @default(0)
@@ -90,10 +92,28 @@ model User {
   // Heist Item Relations
   heistItems          UserHeistItem[]
   heistItemUsages     HeistItemUsage[]
+  socialAccounts      SocialAccount[]
 
   @@index([referredByUserId])
   @@index([loyaltyTier])
   @@index([totalSpent])
+}
+
+model SocialAccount {
+  id              Int             @id @default(autoincrement())
+  provider        SocialProvider
+  providerUserId  String
+  accessToken     String?
+  refreshToken    String?
+  expiresAt       DateTime?
+  profile         Json?
+  userId          Int
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId, provider])
 }
 
 model Merchant {
@@ -877,6 +897,12 @@ enum LoyaltyTier {
   GOLD
   PLATINUM
   DIAMOND
+}
+
+enum SocialProvider {
+  GOOGLE
+  FACEBOOK
+  INSTAGRAM
 }
 
 enum PaymentStatus {
