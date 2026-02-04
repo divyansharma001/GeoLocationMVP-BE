@@ -309,23 +309,18 @@ router.post('/loyalty/adjust-points', protect, isApprovedMerchant, async (req: A
     // Get the loyalty program
     const program = await getMerchantLoyaltyProgram(merchantId);
 
-    // Get or create user's loyalty balance
-    let userLoyalty = await prisma.userMerchantLoyalty.findUnique({
+    // SECURITY: Verify user has an existing loyalty relationship with this merchant
+    // Merchants can only adjust points for users who have previously earned loyalty points
+    const userLoyalty = await prisma.userMerchantLoyalty.findUnique({
       where: {
         userId_merchantId: { userId, merchantId }
       }
     });
 
     if (!userLoyalty) {
-      userLoyalty = await prisma.userMerchantLoyalty.create({
-        data: {
-          userId,
-          merchantId,
-          loyaltyProgramId: program.id,
-          currentBalance: 0,
-          lifetimeEarned: 0,
-          lifetimeRedeemed: 0
-        }
+      return res.status(403).json({
+        success: false,
+        error: 'User is not a customer of this merchant. Points can only be adjusted for users who have previously earned loyalty points at your business.'
       });
     }
 

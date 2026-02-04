@@ -302,30 +302,24 @@ router.get('/deals', async (req, res) => {
       });
 
       // Filter by distance and add distance information
+      // FIX: Calculate distance only once per deal (was previously calculated twice)
       const dealsWithDistance = (deals as any[])
-        .filter(deal => {
+        .map(deal => {
           if (!deal.merchant?.latitude || !deal.merchant?.longitude) {
-            return false;
+            return null;
           }
-
           const distance = calculateDistance(
-            userLat, 
-            userLon, 
-            deal.merchant.latitude, 
+            userLat,
+            userLon,
+            deal.merchant.latitude,
             deal.merchant.longitude
           );
-
-          return distance <= radiusKm;
-        })
-        .map(deal => {
-          const distance = calculateDistance(
-            userLat, 
-            userLon, 
-            deal.merchant.latitude!, 
-            deal.merchant.longitude!
-          );
+          if (distance > radiusKm) {
+            return null;
+          }
           return formatDealForFrontend(deal, distance);
         })
+        .filter((deal): deal is NonNullable<typeof deal> => deal !== null)
         .sort((a, b) => (a.distance || 0) - (b.distance || 0));
 
       deals = dealsWithDistance;
@@ -358,13 +352,16 @@ router.get('/deals', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching deals:', error);
-    console.error('Error details:', {
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      query: req.query
-    });
-    res.status(500).json({ 
+    // Log error details securely (don't expose query params in production logs)
+    const isDev = process.env.NODE_ENV === 'development';
+    console.error('Error fetching deals:', error instanceof Error ? error.message : 'Unknown error');
+    if (isDev) {
+      console.error('Error details:', {
+        stack: error instanceof Error ? error.stack : undefined,
+        query: req.query
+      });
+    }
+    res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to fetch deals. Please try again later.'
     });

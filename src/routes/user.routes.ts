@@ -1,10 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { protect, AuthRequest } from '../middleware/auth.middleware';
 import { getPointConfig } from '../lib/points';
 import { invalidateLeaderboardCache } from '../lib/leaderboard/cache';
 import { updateStreakAfterCheckIn } from '../lib/streak';
+import { POINT_EVENT_TYPES } from '../constants/points';
 
 const router = Router();
 
@@ -208,6 +210,8 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
       });
     }
 
+    // Use Serializable isolation to prevent race conditions where
+    // concurrent requests could award double points for the same check-in
     const result = await prisma.$transaction(async (tx) => {
       // Check if user has an existing check-in for this deal
       const priorCheckIn = await tx.checkIn.findFirst({
@@ -237,7 +241,7 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
           data: {
             userId,
             dealId: deal.id,
-            pointEventTypeId: 2, // FIRST_CHECKIN_DEAL point event type
+            pointEventTypeId: POINT_EVENT_TYPES.FIRST_CHECKIN_DEAL,
             points: firstCheckInBonus
           }
         }));
@@ -248,7 +252,7 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
         data: {
           userId,
           dealId: deal.id,
-          pointEventTypeId: 3, // CHECKIN point event type
+          pointEventTypeId: POINT_EVENT_TYPES.CHECKIN,
           points: checkInPoints
         }
       }));
@@ -260,6 +264,8 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
       });
 
       return { checkIn, totalAward, events, prior: !!priorCheckIn };
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable
     });
 
   // Update streak after successful check-in
@@ -344,62 +350,84 @@ router.delete('/save-deal/:dealId', protect, async (req: AuthRequest, res: Respo
 });
 
 // --- Endpoint: GET /api/users/saved-deals ---
-// Get all saved deals for the authenticated user
+// Get all saved deals for the authenticated user (with pagination)
 router.get('/saved-deals', protect, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 20));
+    const skip = (page - 1) * limit;
+    const now = new Date();
 
-    const savedDeals = await prisma.userDeal.findMany({
-      where: { userId },
-      include: {
-        deal: {
-          include: {
-            merchant: {
-              select: {
-                businessName: true,
-                address: true,
-                latitude: true,
-                longitude: true,
-                phoneNumber: true
-              }
-            },
-            category: true,
-            dealType: true
+    // Fetch paginated saved deals (only active ones)
+    const [savedDeals, total] = await Promise.all([
+      prisma.userDeal.findMany({
+        where: {
+          userId,
+          deal: {
+            endTime: { gte: now }
+          }
+        },
+        include: {
+          deal: {
+            include: {
+              merchant: {
+                select: {
+                  businessName: true,
+                  address: true,
+                  latitude: true,
+                  longitude: true,
+                  phoneNumber: true
+                }
+              },
+              category: true,
+              dealType: true
+            }
+          }
+        },
+        orderBy: { savedAt: 'desc' },
+        skip,
+        take: limit
+      }),
+      prisma.userDeal.count({
+        where: {
+          userId,
+          deal: {
+            endTime: { gte: now }
           }
         }
-      },
-      orderBy: {
-        savedAt: 'desc'
-      }
-    });
+      })
+    ]);
 
-    // Filter out expired deals and format response
-    const now = new Date();
-    const activeSavedDeals = savedDeals
-      .filter((savedDeal: any) => savedDeal.deal.endTime >= now)
-      .map((savedDeal: any) => ({
-        id: savedDeal.id,
-        savedAt: savedDeal.savedAt,
-        deal: {
-          id: savedDeal.deal.id,
-          title: savedDeal.deal.title,
-          description: savedDeal.deal.description,
-          imageUrls: savedDeal.deal.imageUrls,
-          imageUrl: savedDeal.deal.imageUrls?.[0] || null,
-          discountPercentage: savedDeal.deal.discountPercentage,
-          discountAmount: savedDeal.deal.discountAmount,
-          category: savedDeal.deal.category,
-          startTime: savedDeal.deal.startTime,
-          endTime: savedDeal.deal.endTime,
-          redemptionInstructions: savedDeal.deal.redemptionInstructions,
-          merchant: savedDeal.deal.merchant
-        }
-      }));
+    const formattedDeals = savedDeals.map((savedDeal: any) => ({
+      id: savedDeal.id,
+      savedAt: savedDeal.savedAt,
+      deal: {
+        id: savedDeal.deal.id,
+        title: savedDeal.deal.title,
+        description: savedDeal.deal.description,
+        imageUrls: savedDeal.deal.imageUrls,
+        imageUrl: savedDeal.deal.imageUrls?.[0] || null,
+        discountPercentage: savedDeal.deal.discountPercentage,
+        discountAmount: savedDeal.deal.discountAmount,
+        category: savedDeal.deal.category,
+        startTime: savedDeal.deal.startTime,
+        endTime: savedDeal.deal.endTime,
+        redemptionInstructions: savedDeal.deal.redemptionInstructions,
+        merchant: savedDeal.deal.merchant
+      }
+    }));
 
     res.status(200).json({
       message: 'Saved deals retrieved successfully',
-      savedDeals: activeSavedDeals,
-      totalCount: activeSavedDeals.length
+      savedDeals: formattedDeals,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasMore: page * limit < total
+      }
     });
 
   } catch (error) {
@@ -440,25 +468,62 @@ router.get('/saved-deals/:dealId', protect, async (req: AuthRequest, res: Respon
 });
 
 // --- Endpoint: GET /api/users/referrals ---
-// Returns how many users have signed up using the authenticated user's referral code
+// Returns referral stats and optionally paginated list of referred users
 router.get('/referrals', protect, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    // Fetch the user's referral code and count referred users
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      // @ts-ignore new field referralCode already in schema
-      select: { referralCode: true }
-    });
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 20));
+    const skip = (page - 1) * limit;
+    const includeUsers = req.query.includeUsers === 'true';
+
+    // Fetch user's referral code and count in parallel
+    const [user, referralCount] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        // @ts-ignore new field referralCode already in schema
+        select: { referralCode: true }
+      }),
+      // @ts-ignore new field referredByUserId added in migration
+      prisma.user.count({ where: { referredByUserId: userId } })
+    ]);
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    // @ts-ignore new field referredByUserId added in migration pending generate
-    const referralCount = await prisma.user.count({ where: { referredByUserId: userId } });
-    return res.status(200).json({
+
+    const response: any = {
       referralCode: (user as any).referralCode,
       referralCount
-    });
+    };
+
+    // Optionally include paginated list of referred users
+    if (includeUsers) {
+      // @ts-ignore new field referredByUserId added in migration
+      const referredUsers = await prisma.user.findMany({
+        where: { referredByUserId: userId },
+        select: {
+          id: true,
+          name: true,
+          avatarUrl: true,
+          createdAt: true
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit
+      });
+
+      response.referredUsers = referredUsers;
+      response.pagination = {
+        page,
+        limit,
+        total: referralCount,
+        totalPages: Math.ceil(referralCount / limit),
+        hasMore: page * limit < referralCount
+      };
+    }
+
+    return res.status(200).json(response);
   } catch (err) {
     console.error('Get referrals error:', err);
     return res.status(500).json({ error: 'Internal server error' });

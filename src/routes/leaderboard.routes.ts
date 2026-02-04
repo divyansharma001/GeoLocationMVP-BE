@@ -224,10 +224,9 @@ router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
 
     // Get global leaderboard data
     const leaderboardData = await prisma.$queryRawUnsafe(`
-      SELECT 
+      SELECT
         u.id as "userId",
         u.name,
-        u.email,
         u.points as "totalPoints",
         u."monthlyPoints",
         u."avatarUrl",
@@ -237,12 +236,12 @@ router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
         COUNT(DISTINCT c.id) as "checkInCount",
         COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn"
       FROM "User" u
-      LEFT JOIN "UserPointEvent" e ON u.id = e."userId" 
+      LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
         AND e."createdAt" >= $1 AND e."createdAt" <= $2
-      LEFT JOIN "CheckIn" c ON u.id = c."userId" 
+      LEFT JOIN "CheckIn" c ON u.id = c."userId"
         AND c."createdAt" >= $1 AND c."createdAt" <= $2
       WHERE u.role = 'USER'
-      GROUP BY u.id, u.name, u.email, u.points, u."monthlyPoints", u."avatarUrl", u."createdAt"
+      GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl", u."createdAt"
       ORDER BY "periodPoints" DESC, u.id ASC
       LIMIT $3
     `, from, to, limitNum);
@@ -251,10 +250,9 @@ router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
     let personalPosition = null;
     if (selfUserId && includeSelfBool) {
       const personalData = await prisma.$queryRawUnsafe(`
-        SELECT 
+        SELECT
           u.id as "userId",
           u.name,
-          u.email,
           u.points as "totalPoints",
           u."monthlyPoints",
           u."avatarUrl",
@@ -263,12 +261,12 @@ router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
           COUNT(DISTINCT c.id) as "checkInCount",
           COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn"
         FROM "User" u
-        LEFT JOIN "UserPointEvent" e ON u.id = e."userId" 
+        LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
           AND e."createdAt" >= $1 AND e."createdAt" <= $2
-        LEFT JOIN "CheckIn" c ON u.id = c."userId" 
+        LEFT JOIN "CheckIn" c ON u.id = c."userId"
           AND c."createdAt" >= $1 AND c."createdAt" <= $2
         WHERE u.id = $3
-        GROUP BY u.id, u.name, u.email, u.points, u."monthlyPoints", u."avatarUrl"
+        GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl"
       `, from, to, selfUserId);
 
       if (personalData && (personalData as any[]).length > 0) {
@@ -353,7 +351,6 @@ router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
       rank: index + 1,
       userId: user.userId,
       name: user.name || 'Anonymous',
-      email: user.email,
       avatarUrl: user.avatarUrl,
       totalPoints: Number(user.totalPoints),
       periodPoints: Number(user.periodPoints),
@@ -548,10 +545,9 @@ router.get('/cities/:cityId', optionalAuth, async (req: AuthRequest, res: Respon
 
     // Get city leaderboard data
     const leaderboardData = await prisma.$queryRawUnsafe(`
-      SELECT 
+      SELECT
         u.id as "userId",
         u.name,
-        u.email,
         u.points as "totalPoints",
         u."monthlyPoints",
         u."avatarUrl",
@@ -562,13 +558,13 @@ router.get('/cities/:cityId', optionalAuth, async (req: AuthRequest, res: Respon
         COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn",
         COUNT(DISTINCT c."merchantId") as "uniqueMerchantsVisited"
       FROM "User" u
-      LEFT JOIN "UserPointEvent" e ON u.id = e."userId" 
+      LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
         AND e."createdAt" >= $1 AND e."createdAt" <= $2
-      LEFT JOIN "CheckIn" c ON u.id = c."userId" 
+      LEFT JOIN "CheckIn" c ON u.id = c."userId"
         AND c."merchantId" = ANY($3)
         AND c."createdAt" >= $1 AND c."createdAt" <= $2
       WHERE u.role = 'USER'
-      GROUP BY u.id, u.name, u.email, u.points, u."monthlyPoints", u."avatarUrl", u."createdAt"
+      GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl", u."createdAt"
       ORDER BY "periodPoints" DESC, u.id ASC
       LIMIT $4
     `, from, to, merchantIds, limitNum);
@@ -577,10 +573,9 @@ router.get('/cities/:cityId', optionalAuth, async (req: AuthRequest, res: Respon
     let personalPosition = null;
     if (selfUserId && includeSelfBool) {
       const personalData = await prisma.$queryRawUnsafe(`
-        SELECT 
+        SELECT
           u.id as "userId",
           u.name,
-          u.email,
           u.points as "totalPoints",
           u."monthlyPoints",
           u."avatarUrl",
@@ -590,13 +585,13 @@ router.get('/cities/:cityId', optionalAuth, async (req: AuthRequest, res: Respon
           COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn",
           COUNT(DISTINCT c."merchantId") as "uniqueMerchantsVisited"
         FROM "User" u
-        LEFT JOIN "UserPointEvent" e ON u.id = e."userId" 
+        LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
           AND e."createdAt" >= $1 AND e."createdAt" <= $2
-        LEFT JOIN "CheckIn" c ON u.id = c."userId" 
+        LEFT JOIN "CheckIn" c ON u.id = c."userId"
           AND c."merchantId" = ANY($3)
           AND c."createdAt" >= $1 AND c."createdAt" <= $2
         WHERE u.id = $4
-        GROUP BY u.id, u.name, u.email, u.points, u."monthlyPoints", u."avatarUrl"
+        GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl"
       `, from, to, merchantIds, selfUserId);
 
       if (personalData && (personalData as any[]).length > 0) {
@@ -655,7 +650,6 @@ router.get('/cities/:cityId', optionalAuth, async (req: AuthRequest, res: Respon
       rank: index + 1,
       userId: user.userId,
       name: user.name || 'Anonymous',
-      email: user.email,
       avatarUrl: user.avatarUrl,
       totalPoints: Number(user.totalPoints),
       periodPoints: Number(user.periodPoints),
@@ -939,10 +933,9 @@ router.get('/categories', optionalAuth, async (req: AuthRequest, res: Response) 
     // Get category leaderboard data
     const categoryData = await prisma.$queryRawUnsafe(`
       WITH category_stats AS (
-        SELECT 
+        SELECT
           u.id as "userId",
           u.name,
-          u.email,
           u."avatarUrl",
           u.points as "totalPoints",
           u."monthlyPoints",
@@ -954,29 +947,28 @@ router.get('/categories', optionalAuth, async (req: AuthRequest, res: Response) 
           COUNT(DISTINCT c.id) as "checkInCount",
           COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn"
         FROM "User" u
-        LEFT JOIN "CheckIn" c ON u.id = c."userId" 
+        LEFT JOIN "CheckIn" c ON u.id = c."userId"
           AND c."createdAt" >= $1 AND c."createdAt" <= $2
         LEFT JOIN "Deal" d ON c."dealId" = d.id
         LEFT JOIN "DealCategoryMaster" dc ON d."categoryId" = dc.id
-        LEFT JOIN "UserPointEvent" e ON u.id = e."userId" 
+        LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
           AND e."createdAt" >= $1 AND e."createdAt" <= $2
           AND e."dealId" = d.id
         ${whereClause}
-        GROUP BY u.id, u.name, u.email, u."avatarUrl", u.points, u."monthlyPoints", d."categoryId", dc.name, dc.color
+        GROUP BY u.id, u.name, u."avatarUrl", u.points, u."monthlyPoints", d."categoryId", dc.name, dc.color
       ),
       category_rankings AS (
-        SELECT 
+        SELECT
           *,
           ROW_NUMBER() OVER (PARTITION BY "categoryId" ORDER BY "periodPoints" DESC, "userId" ASC) as "categoryRank"
         FROM category_stats
       )
-      SELECT 
+      SELECT
         "categoryId",
         "categoryName",
         "categoryColor",
         "userId",
         "name",
-        "email",
         "avatarUrl",
         "totalPoints",
         "monthlyPoints",
@@ -1007,7 +999,6 @@ router.get('/categories', optionalAuth, async (req: AuthRequest, res: Response) 
         rank: item.categoryRank,
         userId: item.userId,
         name: item.name || 'Anonymous',
-        email: item.email,
         avatarUrl: item.avatarUrl,
         totalPoints: Number(item.totalPoints),
         periodPoints: Number(item.periodPoints),

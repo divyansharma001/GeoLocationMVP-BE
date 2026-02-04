@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import { authRateLimit } from './middleware/production.middleware';
 
 // Routes
 import authRoutes from './routes/auth.routes';
@@ -53,6 +54,11 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 // Mount routes
+// Apply strict rate limiting to auth endpoints (5 req/15min) to prevent brute force attacks
+if (process.env.NODE_ENV !== 'test') {
+  app.use('/api/auth/login', authRateLimit);
+  app.use('/api/auth/register', authRateLimit);
+}
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', socialAuthRoutes);
 app.use('/api', merchantRoutes);

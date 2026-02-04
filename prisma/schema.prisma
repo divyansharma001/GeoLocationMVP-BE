@@ -222,6 +222,7 @@ model UserPointEvent {
   @@index([userId, dealId])
   @@index([createdAt])
   @@index([createdAt, userId])
+  @@index([pointEventTypeId, createdAt]) // For event type filtering in period queries
 }
 
 model CheckIn {
@@ -457,6 +458,7 @@ model Booking {
   @@index([timeSlotId, bookingDate])
   @@index([bookingDate, status])
   @@index([confirmationCode])
+  @@index([tableId, bookingDate, status]) // For availability queries
 }
 
 model BookingSettings {
@@ -774,6 +776,7 @@ model Heist {
   @@index([status])
   @@index([attackerId, status])
   @@index([victimId, status])
+  @@index([attackerId, victimId]) // For cooldown checks between specific users
 }
 
 model HeistNotification {
