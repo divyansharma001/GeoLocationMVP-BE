@@ -1,25 +1,16 @@
 // src/jobs/dailyBirthday.ts
 // Sends a simple birthday greeting email to users whose birthday (month/day) is today (UTC).
 // Assumes User.birthday is stored as a Date (timestamp). Year component is ignored for matching.
-// Scheduling: run once shortly after startup (next midnight UTC) then every 24h.
 
 import prisma from '../lib/prisma';
 import { sendBirthdayEmail } from '../lib/email';
+import { getQueue, JobSchedule } from '../lib/queue';
 
-function msUntilNextUtcMidnight(now = new Date()) {
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-  const d = now.getUTCDate();
-  const next = new Date(Date.UTC(y, m, d + 1, 0, 0, 0, 50)); // +50ms buffer
-  const ms = next.getTime() - now.getTime();
-  
-  // Cap at maximum safe timeout value (24 days)
-  const MAX_SAFE_TIMEOUT = 24 * 24 * 60 * 60 * 1000; // 24 days in ms
-  return Math.min(ms, MAX_SAFE_TIMEOUT);
-}
+const JOB_NAME = 'daily-birthday';
 
-let timer: NodeJS.Timeout | null = null;
-
+/**
+ * Execute the birthday job for a specific date
+ */
 export async function runBirthdayJob(forDate = new Date()) {
   const month = forDate.getUTCMonth() + 1; // 1-12
   const day = forDate.getUTCDate(); // 1-31
@@ -38,26 +29,44 @@ export async function runBirthdayJob(forDate = new Date()) {
       console.error('[email] birthday send error userId=' + u.id, err)
     );
   }
+
   if (users.length) {
     console.log(`[birthday-job]: queued ${users.length} birthday emails for ${month}-${day}`);
   }
 }
 
+/**
+ * Register and schedule the daily birthday job using the queue abstraction.
+ * This allows easy migration to Bull/BullMQ in the future.
+ */
 export function scheduleDailyBirthdays() {
-  if (timer) return; // idempotent
-  const schedule = async () => {
-    try {
+  const queue = getQueue();
+
+  // Register the job
+  queue.register(
+    {
+      name: JOB_NAME,
+      schedule: JobSchedule.DAILY_MIDNIGHT(),
+      retry: {
+        maxRetries: 3,
+        baseDelayMs: 5 * 60 * 1000, // 5 minutes
+        exponentialBackoff: true,
+      },
+      timeout: 5 * 60 * 1000, // 5 minute timeout
+    },
+    async () => {
       await runBirthdayJob();
-    } catch (e) {
-      console.error('[birthday-job]: failed run', e);
-    } finally {
-      // Use a safer interval - 24 hours with a small buffer
-      const nextRun = Math.min(24 * 60 * 60 * 1000, 2147483647); // Cap at max 32-bit int
-      timer = setTimeout(schedule, nextRun);
     }
-  };
-  
-  const initialDelay = msUntilNextUtcMidnight();
-  console.log(`[birthday-job]: Scheduling next run in ${Math.round(initialDelay / 1000 / 60)} minutes`);
-  timer = setTimeout(schedule, initialDelay);
+  );
+
+  // Schedule the job
+  queue.schedule(JOB_NAME);
+}
+
+/**
+ * Get the status of the birthday job
+ */
+export function getBirthdayJobStatus() {
+  const queue = getQueue();
+  return queue.getStatus(JOB_NAME);
 }

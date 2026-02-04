@@ -3,45 +3,51 @@
 // Also archives the previous month into an optional historical table in future (placeholder).
 
 import prisma from '../lib/prisma';
+import { getQueue, JobSchedule } from '../lib/queue';
 
+const JOB_NAME = 'monthly-reset';
+
+/**
+ * Reset monthly points for all users
+ */
 export async function resetMonthlyPoints() {
   // Single SQL update; could be large but simple. Consider batching if user count huge.
-  await prisma.$executeRawUnsafe('UPDATE "User" SET "monthlyPoints" = 0');
+  const result = await prisma.$executeRawUnsafe('UPDATE "User" SET "monthlyPoints" = 0');
+  console.log(`[monthly-reset]: Reset monthlyPoints for users. Rows affected: ${result}`);
 }
 
-// Compute ms until next month UTC
-function msUntilNextMonthUTC(now = new Date()) {
-  const year = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-  const firstNext = new Date(Date.UTC(year, month + 1, 1, 0, 0, 0, 0));
-  const ms = firstNext.getTime() - now.getTime();
-  
-  // Cap at maximum safe timeout value (24 days)
-  const MAX_SAFE_TIMEOUT = 24 * 24 * 60 * 60 * 1000; // 24 days in ms
-  return Math.min(ms, MAX_SAFE_TIMEOUT);
-}
-
-let timer: NodeJS.Timeout | null = null;
-
+/**
+ * Register and schedule the monthly reset job using the queue abstraction.
+ * This allows easy migration to Bull/BullMQ in the future.
+ */
 export function scheduleMonthlyReset() {
-  if (timer) return; // idempotent
-  const schedule = async () => {
-    try {
+  const queue = getQueue();
+
+  // Register the job
+  queue.register(
+    {
+      name: JOB_NAME,
+      schedule: JobSchedule.MONTHLY_FIRST(),
+      retry: {
+        maxRetries: 5,
+        baseDelayMs: 60 * 60 * 1000, // 1 hour between retries
+        exponentialBackoff: false, // Use fixed delay for this critical job
+      },
+      timeout: 10 * 60 * 1000, // 10 minute timeout
+    },
+    async () => {
       await resetMonthlyPoints();
-      console.log('[monthly-reset]: Points reset completed successfully');
-      // After running, schedule next month
-      const nextRun = msUntilNextMonthUTC();
-      console.log(`[monthly-reset]: Next reset scheduled in ${Math.round(nextRun / 1000 / 60 / 60)} hours`);
-      timer = setTimeout(schedule, nextRun);
-    } catch (e) {
-      console.error('Monthly points reset failed:', e);
-      // Retry in 1 hour if failure
-      timer = setTimeout(schedule, 60 * 60 * 1000);
     }
-  };
-  
-  // Initial delay until next month boundary
-  const initialDelay = msUntilNextMonthUTC();
-  console.log(`[monthly-reset]: Initial scheduling - next reset in ${Math.round(initialDelay / 1000 / 60 / 60)} hours`);
-  timer = setTimeout(schedule, initialDelay);
+  );
+
+  // Schedule the job
+  queue.schedule(JOB_NAME);
+}
+
+/**
+ * Get the status of the monthly reset job
+ */
+export function getMonthlyResetJobStatus() {
+  const queue = getQueue();
+  return queue.getStatus(JOB_NAME);
 }

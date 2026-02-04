@@ -34,7 +34,60 @@ const app: Express = express();
 // Trust proxy for accurate client IP detection (required for rate limiting behind load balancers)
 app.set('trust proxy', 1);
 
-app.use(cors());
+// CORS configuration with whitelist support
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, Postman, curl, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // In development/test, allow all origins
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+      return callback(null, true);
+    }
+
+    // In production, check against whitelist
+    const allowedOrigins = process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+      : [];
+
+    // If no whitelist configured, allow all (with warning)
+    if (allowedOrigins.length === 0) {
+      console.warn('[CORS] No ALLOWED_ORIGINS configured. Allowing all origins.');
+      return callback(null, true);
+    }
+
+    // Check if origin is in whitelist
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Check for wildcard subdomain matching (e.g., "*.example.com")
+    const isAllowed = allowedOrigins.some(allowed => {
+      if (allowed.startsWith('*.')) {
+        const domain = allowed.slice(2);
+        return origin.endsWith(domain) || origin.endsWith('.' + domain);
+      }
+      return false;
+    });
+
+    if (isAllowed) {
+      return callback(null, true);
+    }
+
+    // Origin not allowed
+    console.warn(`[CORS] Blocked request from origin: ${origin}`);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-ID'],
+  exposedHeaders: ['X-Request-ID'],
+  maxAge: 86400, // Cache preflight for 24 hours
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(helmet());
 

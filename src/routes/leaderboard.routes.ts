@@ -203,16 +203,16 @@ async function getMerchantIdsForCity(cityId: number): Promise<number[]> {
 router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
     const startTime = Date.now();
-    const { 
-      period = 'last_30_days', 
-      limit, 
+    const {
+      period = 'last_30_days',
+      limit,
       includeSelf = 'true',
       includeStats = 'true',
       showMore
     } = req.query as any;
-    
+
     const selfUserId = req.user?.id;
-    
+
     // Default to 5 entries unless showMore is true or limit is explicitly set
     const showMoreBool = showMore === 'true';
     const defaultLimit = showMoreBool ? 50 : 5;
@@ -222,74 +222,94 @@ router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
 
     const { from, to } = calculateDateRange(period);
 
-    // Get global leaderboard data
-    const leaderboardData = await prisma.$queryRawUnsafe(`
-      SELECT
-        u.id as "userId",
-        u.name,
-        u.points as "totalPoints",
-        u."monthlyPoints",
-        u."avatarUrl",
-        u."createdAt" as "memberSince",
-        COALESCE(SUM(e.points), 0) as "periodPoints",
-        COUNT(e.id) as "eventCount",
-        COUNT(DISTINCT c.id) as "checkInCount",
-        COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn"
-      FROM "User" u
-      LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
-        AND e."createdAt" >= $1 AND e."createdAt" <= $2
-      LEFT JOIN "CheckIn" c ON u.id = c."userId"
-        AND c."createdAt" >= $1 AND c."createdAt" <= $2
-      WHERE u.role = 'USER'
-      GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl", u."createdAt"
-      ORDER BY "periodPoints" DESC, u.id ASC
-      LIMIT $3
-    `, from, to, limitNum);
+    // OPTIMIZED: Single query with window functions replaces 3 separate queries
+    // Uses DENSE_RANK to calculate ranks and includes user's position in same query
+    const leaderboardWithRanks = selfUserId && includeSelfBool
+      ? await prisma.$queryRawUnsafe(`
+          WITH user_stats AS (
+            SELECT
+              u.id as "userId",
+              u.name,
+              u.points as "totalPoints",
+              u."monthlyPoints",
+              u."avatarUrl",
+              u."createdAt" as "memberSince",
+              COALESCE(SUM(e.points), 0) as "periodPoints",
+              COUNT(e.id) as "eventCount",
+              COUNT(DISTINCT c.id) as "checkInCount",
+              COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn"
+            FROM "User" u
+            LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
+              AND e."createdAt" >= $1 AND e."createdAt" <= $2
+            LEFT JOIN "CheckIn" c ON u.id = c."userId"
+              AND c."createdAt" >= $1 AND c."createdAt" <= $2
+            WHERE u.role = 'USER'
+            GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl", u."createdAt"
+          ),
+          ranked_users AS (
+            SELECT
+              *,
+              DENSE_RANK() OVER (ORDER BY "periodPoints" DESC, "userId" ASC) as rank
+            FROM user_stats
+          )
+          SELECT * FROM ranked_users
+          WHERE rank <= $3 OR "userId" = $4
+          ORDER BY rank ASC, "userId" ASC
+        `, from, to, limitNum, selfUserId)
+      : await prisma.$queryRawUnsafe(`
+          WITH user_stats AS (
+            SELECT
+              u.id as "userId",
+              u.name,
+              u.points as "totalPoints",
+              u."monthlyPoints",
+              u."avatarUrl",
+              u."createdAt" as "memberSince",
+              COALESCE(SUM(e.points), 0) as "periodPoints",
+              COUNT(e.id) as "eventCount",
+              COUNT(DISTINCT c.id) as "checkInCount",
+              COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn"
+            FROM "User" u
+            LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
+              AND e."createdAt" >= $1 AND e."createdAt" <= $2
+            LEFT JOIN "CheckIn" c ON u.id = c."userId"
+              AND c."createdAt" >= $1 AND c."createdAt" <= $2
+            WHERE u.role = 'USER'
+            GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl", u."createdAt"
+          ),
+          ranked_users AS (
+            SELECT
+              *,
+              DENSE_RANK() OVER (ORDER BY "periodPoints" DESC, "userId" ASC) as rank
+            FROM user_stats
+          )
+          SELECT * FROM ranked_users
+          WHERE rank <= $3
+          ORDER BY rank ASC, "userId" ASC
+        `, from, to, limitNum);
 
-    // Get user's personal position if authenticated
+    // Separate top leaderboard and personal position from the combined result
+    const allRows = leaderboardWithRanks as any[];
+    const leaderboardData = allRows.filter(row => Number(row.rank) <= limitNum);
+
+    // Get user's personal position from the same query result
     let personalPosition = null;
     if (selfUserId && includeSelfBool) {
-      const personalData = await prisma.$queryRawUnsafe(`
-        SELECT
-          u.id as "userId",
-          u.name,
-          u.points as "totalPoints",
-          u."monthlyPoints",
-          u."avatarUrl",
-          COALESCE(SUM(e.points), 0) as "periodPoints",
-          COUNT(e.id) as "eventCount",
-          COUNT(DISTINCT c.id) as "checkInCount",
-          COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn"
-        FROM "User" u
-        LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
-          AND e."createdAt" >= $1 AND e."createdAt" <= $2
-        LEFT JOIN "CheckIn" c ON u.id = c."userId"
-          AND c."createdAt" >= $1 AND c."createdAt" <= $2
-        WHERE u.id = $3
-        GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl"
-      `, from, to, selfUserId);
-
-      if (personalData && (personalData as any[]).length > 0) {
-        const personal = (personalData as any[])[0] as any;
-        
-        // Calculate rank
-        const rankQuery = await prisma.$queryRawUnsafe(`
-          SELECT COUNT(*) + 1 as rank
-          FROM (
-            SELECT u.id, COALESCE(SUM(e.points), 0) as "periodPoints"
-            FROM "User" u
-            LEFT JOIN "UserPointEvent" e ON u.id = e."userId" 
-              AND e."createdAt" >= $1 AND e."createdAt" <= $2
-            WHERE u.role = 'USER'
-            GROUP BY u.id
-            HAVING COALESCE(SUM(e.points), 0) > $3
-          ) t
-        `, from, to, personal.periodPoints);
-
+      const personalRow = allRows.find(row => row.userId === selfUserId);
+      if (personalRow) {
+        const inTop = Number(personalRow.rank) <= limitNum;
         personalPosition = {
-          ...personal,
-          rank: Number((rankQuery as any[])[0]?.rank || 1),
-          inTop: false
+          userId: personalRow.userId,
+          name: personalRow.name,
+          totalPoints: Number(personalRow.totalPoints),
+          monthlyPoints: Number(personalRow.monthlyPoints),
+          avatarUrl: personalRow.avatarUrl,
+          periodPoints: Number(personalRow.periodPoints),
+          eventCount: Number(personalRow.eventCount),
+          checkInCount: Number(personalRow.checkInCount),
+          uniqueDealsCheckedIn: Number(personalRow.uniqueDealsCheckedIn),
+          rank: Number(personalRow.rank),
+          inTop
         };
       }
     }
@@ -346,9 +366,9 @@ router.get('/global', optionalAuth, async (req: AuthRequest, res: Response) => {
       };
     }
 
-    // Format leaderboard with rankings
-    const formattedLeaderboard = (leaderboardData as any[]).map((user, index) => ({
-      rank: index + 1,
+    // Format leaderboard with rankings (rank now comes from window function)
+    const formattedLeaderboard = leaderboardData.map((user: any) => ({
+      rank: Number(user.rank),
       userId: user.userId,
       name: user.name || 'Anonymous',
       avatarUrl: user.avatarUrl,
@@ -543,78 +563,98 @@ router.get('/cities/:cityId', optionalAuth, async (req: AuthRequest, res: Respon
       });
     }
 
-    // Get city leaderboard data
-    const leaderboardData = await prisma.$queryRawUnsafe(`
-      SELECT
-        u.id as "userId",
-        u.name,
-        u.points as "totalPoints",
-        u."monthlyPoints",
-        u."avatarUrl",
-        u."createdAt" as "memberSince",
-        COALESCE(SUM(e.points), 0) as "periodPoints",
-        COUNT(e.id) as "eventCount",
-        COUNT(DISTINCT c.id) as "checkInCount",
-        COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn",
-        COUNT(DISTINCT c."merchantId") as "uniqueMerchantsVisited"
-      FROM "User" u
-      LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
-        AND e."createdAt" >= $1 AND e."createdAt" <= $2
-      LEFT JOIN "CheckIn" c ON u.id = c."userId"
-        AND c."merchantId" = ANY($3)
-        AND c."createdAt" >= $1 AND c."createdAt" <= $2
-      WHERE u.role = 'USER'
-      GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl", u."createdAt"
-      ORDER BY "periodPoints" DESC, u.id ASC
-      LIMIT $4
-    `, from, to, merchantIds, limitNum);
+    // OPTIMIZED: Single query with window functions replaces 3 separate queries
+    const leaderboardWithRanks = selfUserId && includeSelfBool
+      ? await prisma.$queryRawUnsafe(`
+          WITH user_stats AS (
+            SELECT
+              u.id as "userId",
+              u.name,
+              u.points as "totalPoints",
+              u."monthlyPoints",
+              u."avatarUrl",
+              u."createdAt" as "memberSince",
+              COALESCE(SUM(e.points), 0) as "periodPoints",
+              COUNT(e.id) as "eventCount",
+              COUNT(DISTINCT c.id) as "checkInCount",
+              COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn",
+              COUNT(DISTINCT c."merchantId") as "uniqueMerchantsVisited"
+            FROM "User" u
+            LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
+              AND e."createdAt" >= $1 AND e."createdAt" <= $2
+            LEFT JOIN "CheckIn" c ON u.id = c."userId"
+              AND c."merchantId" = ANY($3)
+              AND c."createdAt" >= $1 AND c."createdAt" <= $2
+            WHERE u.role = 'USER'
+            GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl", u."createdAt"
+          ),
+          ranked_users AS (
+            SELECT
+              *,
+              DENSE_RANK() OVER (ORDER BY "periodPoints" DESC, "userId" ASC) as rank
+            FROM user_stats
+          )
+          SELECT * FROM ranked_users
+          WHERE rank <= $4 OR "userId" = $5
+          ORDER BY rank ASC, "userId" ASC
+        `, from, to, merchantIds, limitNum, selfUserId)
+      : await prisma.$queryRawUnsafe(`
+          WITH user_stats AS (
+            SELECT
+              u.id as "userId",
+              u.name,
+              u.points as "totalPoints",
+              u."monthlyPoints",
+              u."avatarUrl",
+              u."createdAt" as "memberSince",
+              COALESCE(SUM(e.points), 0) as "periodPoints",
+              COUNT(e.id) as "eventCount",
+              COUNT(DISTINCT c.id) as "checkInCount",
+              COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn",
+              COUNT(DISTINCT c."merchantId") as "uniqueMerchantsVisited"
+            FROM "User" u
+            LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
+              AND e."createdAt" >= $1 AND e."createdAt" <= $2
+            LEFT JOIN "CheckIn" c ON u.id = c."userId"
+              AND c."merchantId" = ANY($3)
+              AND c."createdAt" >= $1 AND c."createdAt" <= $2
+            WHERE u.role = 'USER'
+            GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl", u."createdAt"
+          ),
+          ranked_users AS (
+            SELECT
+              *,
+              DENSE_RANK() OVER (ORDER BY "periodPoints" DESC, "userId" ASC) as rank
+            FROM user_stats
+          )
+          SELECT * FROM ranked_users
+          WHERE rank <= $4
+          ORDER BY rank ASC, "userId" ASC
+        `, from, to, merchantIds, limitNum);
 
-    // Get personal position if authenticated
+    // Separate top leaderboard and personal position from the combined result
+    const allRows = leaderboardWithRanks as any[];
+    const leaderboardData = allRows.filter(row => Number(row.rank) <= limitNum);
+
+    // Get user's personal position from the same query result
     let personalPosition = null;
     if (selfUserId && includeSelfBool) {
-      const personalData = await prisma.$queryRawUnsafe(`
-        SELECT
-          u.id as "userId",
-          u.name,
-          u.points as "totalPoints",
-          u."monthlyPoints",
-          u."avatarUrl",
-          COALESCE(SUM(e.points), 0) as "periodPoints",
-          COUNT(e.id) as "eventCount",
-          COUNT(DISTINCT c.id) as "checkInCount",
-          COUNT(DISTINCT c."dealId") as "uniqueDealsCheckedIn",
-          COUNT(DISTINCT c."merchantId") as "uniqueMerchantsVisited"
-        FROM "User" u
-        LEFT JOIN "UserPointEvent" e ON u.id = e."userId"
-          AND e."createdAt" >= $1 AND e."createdAt" <= $2
-        LEFT JOIN "CheckIn" c ON u.id = c."userId"
-          AND c."merchantId" = ANY($3)
-          AND c."createdAt" >= $1 AND c."createdAt" <= $2
-        WHERE u.id = $4
-        GROUP BY u.id, u.name, u.points, u."monthlyPoints", u."avatarUrl"
-      `, from, to, merchantIds, selfUserId);
-
-      if (personalData && (personalData as any[]).length > 0) {
-        const personal = (personalData as any[])[0] as any;
-        
-        // Calculate rank within city
-        const rankQuery = await prisma.$queryRawUnsafe(`
-          SELECT COUNT(*) + 1 as rank
-          FROM (
-            SELECT u.id, COALESCE(SUM(e.points), 0) as "periodPoints"
-            FROM "User" u
-            LEFT JOIN "UserPointEvent" e ON u.id = e."userId" 
-              AND e."createdAt" >= $1 AND e."createdAt" <= $2
-            WHERE u.role = 'USER'
-            GROUP BY u.id
-            HAVING COALESCE(SUM(e.points), 0) > $3
-          ) t
-        `, from, to, personal.periodPoints);
-
+      const personalRow = allRows.find(row => row.userId === selfUserId);
+      if (personalRow) {
+        const inTop = Number(personalRow.rank) <= limitNum;
         personalPosition = {
-          ...personal,
-          rank: Number((rankQuery as any[])[0]?.rank || 1),
-          inTop: false
+          userId: personalRow.userId,
+          name: personalRow.name,
+          totalPoints: Number(personalRow.totalPoints),
+          monthlyPoints: Number(personalRow.monthlyPoints),
+          avatarUrl: personalRow.avatarUrl,
+          periodPoints: Number(personalRow.periodPoints),
+          eventCount: Number(personalRow.eventCount),
+          checkInCount: Number(personalRow.checkInCount),
+          uniqueDealsCheckedIn: Number(personalRow.uniqueDealsCheckedIn),
+          uniqueMerchantsVisited: Number(personalRow.uniqueMerchantsVisited),
+          rank: Number(personalRow.rank),
+          inTop
         };
       }
     }
@@ -645,9 +685,9 @@ router.get('/cities/:cityId', optionalAuth, async (req: AuthRequest, res: Respon
       cityStats = (statsData as any[])[0];
     }
 
-    // Format leaderboard
-    const formattedLeaderboard = (leaderboardData as any[]).map((user, index) => ({
-      rank: index + 1,
+    // Format leaderboard (rank now comes from window function)
+    const formattedLeaderboard = leaderboardData.map((user: any) => ({
+      rank: Number(user.rank),
       userId: user.userId,
       name: user.name || 'Anonymous',
       avatarUrl: user.avatarUrl,
