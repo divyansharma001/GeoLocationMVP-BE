@@ -93,6 +93,12 @@ model User {
   heistItems          UserHeistItem[]
   heistItemUsages     HeistItemUsage[]
   socialAccounts      SocialAccount[]
+  organizedEvents     Event[]               @relation("EventOrganizer")
+  eventTickets        EventTicket[]         @relation("EventTickets")
+  originalEventTickets EventTicket[]        @relation("OriginalTicketOwner")
+  eventAttendees      EventAttendee[]       @relation("EventAttendees")
+  eventCheckIns       EventCheckIn[]        @relation("EventCheckIns")
+  eventAddOnPurchases EventAddOnPurchase[]
 
   @@index([referredByUserId])
   @@index([loyaltyTier])
@@ -147,6 +153,7 @@ model Merchant {
   loyaltyTransactions LoyaltyPointTransaction[]
   loyaltyRedemptions  LoyaltyRedemption[]
   orders              Order[]
+  events              Event[]
 }
 
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
@@ -269,6 +276,7 @@ model City {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   stores    Store[]
+  events    Event[]
 
   @@unique([name, state])
   @@index([active, name])
@@ -557,6 +565,8 @@ model PaymentTransaction {
   order           Order?            @relation(fields: [relatedOrderId], references: [id])
   CoinTransaction CoinTransaction[]
   User            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventTickets    EventTicket[]
+  eventAddOnPurchases EventAddOnPurchase[]
 
   @@index([paypalOrderId])
   @@index([paypalPaymentId])
@@ -799,10 +809,243 @@ model HeistNotification {
   @@index([type])
 }
 
+// ===== EVENT MANAGEMENT SYSTEM (MVP) =====
+
+model Event {
+  id                  Int                 @id @default(autoincrement())
+  title               String
+  description         String              @db.Text
+  shortDescription    String?             @db.VarChar(500)
+  eventType           EventType
+  status              EventStatus         @default(DRAFT)
+  organizerId         Int
+  merchantId          Int?
+  venueName           String?
+  venueAddress        String?
+  latitude            Float?
+  longitude           Float?
+  cityId              Int?
+  isVirtualEvent      Boolean             @default(false)
+  virtualEventUrl     String?
+  startDate           DateTime
+  endDate             DateTime
+  timezone            String              @default("America/New_York")
+  isMultiDay          Boolean             @default(false)
+  maxAttendees        Int?
+  currentAttendees    Int                 @default(0)
+  enableWaitlist      Boolean             @default(false)
+  waitlistCapacity    Int?
+  isFreeEvent         Boolean             @default(false)
+  enablePresale       Boolean             @default(false)
+  presaleStartDate    DateTime?
+  presaleEndDate      DateTime?
+  coverImageUrl       String?
+  imageGallery        String[]
+  videoUrl            String?
+  isPrivate           Boolean             @default(false)
+  accessCode          String?             @unique
+  requiresApproval    Boolean             @default(false)
+  minAge              Int?
+  ageVerificationReq  Boolean             @default(false)
+  tags                String[]
+  categoryId          Int?
+  socialProofCount    Int                 @default(0)
+  trendingScore       Float               @default(0)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  publishedAt         DateTime?
+  cancelledAt         DateTime?
+
+  organizer           User                @relation("EventOrganizer", fields: [organizerId], references: [id])
+  merchant            Merchant?           @relation(fields: [merchantId], references: [id])
+  city                City?               @relation(fields: [cityId], references: [id])
+  ticketTiers         EventTicketTier[]
+  tickets             EventTicket[]
+  attendees           EventAttendee[]
+  addOns              EventAddOn[]
+  checkIns            EventCheckIn[]
+
+  @@index([organizerId, status])
+  @@index([eventType, status])
+  @@index([startDate, status])
+  @@index([cityId, startDate])
+  @@index([status, publishedAt])
+  @@index([trendingScore])
+  @@index([accessCode])
+}
+
+model EventTicketTier {
+  id                  Int                 @id @default(autoincrement())
+  eventId             Int
+  name                String
+  description         String?
+  tier                TicketTier
+  price               Float
+  serviceFee          Float               @default(0)
+  taxRate             Float               @default(0)
+  totalQuantity       Int
+  soldQuantity        Int                 @default(0)
+  reservedQuantity    Int                 @default(0)
+  minPerOrder         Int                 @default(1)
+  maxPerOrder         Int                 @default(10)
+  maxPerUser          Int?
+  isPresaleOnly       Boolean             @default(false)
+  presaleCode         String?
+  validDates          DateTime[]
+  isActive            Boolean             @default(true)
+  salesStartDate      DateTime?
+  salesEndDate        DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  event               Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  tickets             EventTicket[]
+
+  @@index([eventId, isActive])
+  @@index([eventId, tier])
+}
+
+model EventTicket {
+  id                   Int                 @id @default(autoincrement())
+  ticketTierId         Int
+  eventId              Int
+  userId               Int
+  ticketNumber         String              @unique
+  qrCode               String              @unique
+  status               TicketStatus        @default(RESERVED)
+  purchasePrice        Float
+  paymentTransactionId Int?
+  purchasedAt          DateTime?
+  checkedInAt          DateTime?
+  checkedInBy          Int?
+  originalOwnerId      Int
+  transferredAt        DateTime?
+  transferredTo        Int?
+  refundedAt           DateTime?
+  refundAmount         Float?
+  refundReason         String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  ticketTier           EventTicketTier     @relation(fields: [ticketTierId], references: [id])
+  event                Event               @relation(fields: [eventId], references: [id])
+  user                 User                @relation("EventTickets", fields: [userId], references: [id])
+  originalOwner        User                @relation("OriginalTicketOwner", fields: [originalOwnerId], references: [id])
+  paymentTransaction   PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id])
+  checkIns             EventCheckIn[]
+  addOnPurchases       EventAddOnPurchase[]
+
+  @@index([userId, status])
+  @@index([eventId, status])
+  @@index([ticketNumber])
+  @@index([qrCode])
+  @@index([paymentTransactionId])
+}
+
+model EventAttendee {
+  id                  Int                 @id @default(autoincrement())
+  eventId             Int
+  userId              Int
+  attendeeType        AttendeeType        @default(TICKET_HOLDER)
+  rsvpStatus          String?
+  rsvpedAt            DateTime?
+  waitlistPosition    Int?
+  waitlistJoinedAt    DateTime?
+  waitlistApprovedAt  DateTime?
+  guestCount          Int                 @default(1)
+  guestNames          Json?
+  dietaryRestrictions String?
+  accessibilityNeeds  String?
+  specialRequests     String?
+  smsNotifications    Boolean             @default(false)
+  phoneNumber         String?
+  emailNotifications  Boolean             @default(true)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  event               Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user                User                @relation("EventAttendees", fields: [userId], references: [id])
+
+  @@unique([eventId, userId])
+  @@index([eventId, attendeeType])
+  @@index([userId])
+  @@index([waitlistPosition])
+}
+
+model EventCheckIn {
+  id                  Int                 @id @default(autoincrement())
+  eventId             Int
+  userId              Int
+  ticketId            Int?
+  checkedInAt         DateTime            @default(now())
+  checkedInBy         Int?
+  checkInMethod       String              @default("QR_SCAN")
+  locationName        String?
+  latitude            Float?
+  longitude           Float?
+
+  event               Event               @relation(fields: [eventId], references: [id])
+  user                User                @relation("EventCheckIns", fields: [userId], references: [id])
+  ticket              EventTicket?        @relation(fields: [ticketId], references: [id])
+
+  @@index([eventId, checkedInAt])
+  @@index([userId])
+  @@index([ticketId])
+}
+
+model EventAddOn {
+  id                  Int                 @id @default(autoincrement())
+  eventId             Int
+  name                String
+  description         String?
+  category            String
+  price               Float
+  isOptional          Boolean             @default(true)
+  totalQuantity       Int?
+  soldQuantity        Int                 @default(0)
+  maxPerUser          Int                 @default(1)
+  availableFrom       DateTime?
+  availableUntil      DateTime?
+  isActive            Boolean             @default(true)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  event               Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  purchases           EventAddOnPurchase[]
+
+  @@index([eventId, isActive])
+  @@index([category])
+}
+
+model EventAddOnPurchase {
+  id                   Int                 @id @default(autoincrement())
+  addOnId              Int
+  userId               Int
+  ticketId             Int?
+  paymentTransactionId Int?
+  quantity             Int                 @default(1)
+  unitPrice            Float
+  totalPrice           Float
+  purchasedAt          DateTime            @default(now())
+
+  addOn                EventAddOn          @relation(fields: [addOnId], references: [id])
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticket               EventTicket?        @relation(fields: [ticketId], references: [id])
+  paymentTransaction   PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id])
+
+  @@index([addOnId])
+  @@index([userId])
+  @@index([paymentTransactionId])
+}
+
 enum UserRole {
   USER
   MERCHANT
   ADMIN
+  EVENT_ORGANIZER
+  VENDOR
+  EVENT_OWNER
+  SUPER_ADMIN
 }
 
 enum MerchantStatus {
@@ -926,6 +1169,52 @@ enum PaymentPurpose {
   DEAL_PURCHASE
   BOOKING_PREPAY
   MENU_ORDER
+  EVENT_TICKET
+  EVENT_ADDON
+  EVENT_VENDOR_FEE
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+  SOLD_OUT
+}
+
+enum EventType {
+  PARTY
+  BAR_CRAWL
+  SPORTS_TOURNAMENT
+  FESTIVAL
+  RSVP_EVENT
+  WAGBT
+}
+
+enum TicketTier {
+  GENERAL_ADMISSION
+  VIP
+  PREMIUM
+  EARLY_BIRD
+  ALL_ACCESS
+  DAY_PASS
+}
+
+enum TicketStatus {
+  RESERVED
+  CONFIRMED
+  CHECKED_IN
+  CANCELLED
+  TRANSFERRED
+}
+
+enum AttendeeType {
+  TICKET_HOLDER
+  RSVP
+  WAITLIST
+  ORGANIZER
+  VENDOR
+  VIP_GUEST
 }
 
 enum LoyaltyTransactionType {
