@@ -26,6 +26,8 @@ import heistRoutes from './routes/heist.routes';
 import paymentsRoutes from './routes/payments.routes';
 import socialAuthRoutes from './routes/social.routes';
 import eventsRoutes from './routes/events.routes';
+import nudgesRoutes from './routes/nudges.routes';
+import adminNudgesRoutes from './routes/admin-nudges.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -121,6 +123,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/master-data', masterDataRoutes);
+app.use('/api/admin/nudges', adminNudgesRoutes);
 app.use('/api', cityRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/table-booking', tableBookingRoutes);
@@ -132,6 +135,7 @@ app.use('/api/merchants', loyaltyMerchantRoutes);
 app.use('/api/heist', heistRoutes);
 app.use('/api/payments', paymentsRoutes);
 app.use('/api/events', eventsRoutes);
+app.use('/api/nudges', nudgesRoutes);
 
 export default app;
 

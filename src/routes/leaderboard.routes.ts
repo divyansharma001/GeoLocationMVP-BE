@@ -515,7 +515,7 @@ router.get('/cities', optionalAuth, async (req: AuthRequest, res: Response) => {
 router.get('/cities/:cityId', optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
     const startTime = Date.now();
-    const cityId = parseInt(req.params.cityId);
+    const cityId = parseInt(req.params.cityId as string);
     const { 
       period = 'last_30_days', 
       limit, 

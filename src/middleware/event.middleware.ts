@@ -52,7 +52,7 @@ export const verifyEventOwnership = async (
 ) => {
   try {
     const userId = req.user?.id;
-    const eventId = parseInt(req.params.eventId || req.params.id);
+    const eventId = parseInt((req.params.eventId || req.params.id) as string);
 
     if (!userId) {
       return res.status(401).json({ error: 'Authentication required' });
@@ -154,7 +154,7 @@ export const verifyTicketOwnership = async (
 ) => {
   try {
     const userId = req.user?.id;
-    const ticketId = parseInt(req.params.ticketId || req.params.id);
+    const ticketId = parseInt((req.params.ticketId || req.params.id) as string);
 
     if (!userId) {
       return res.status(401).json({ error: 'Authentication required' });

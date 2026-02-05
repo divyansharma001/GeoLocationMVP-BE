@@ -4250,7 +4250,7 @@ router.delete('/merchants/stores/:storeId', protect, isApprovedMerchant, async (
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
 
-    const storeId = parseInt(req.params.storeId, 10);
+    const storeId = parseInt(req.params.storeId as string, 10);
     if (isNaN(storeId)) return res.status(400).json({ error: 'Invalid store ID' });
 
     // Verify the store belongs to this merchant

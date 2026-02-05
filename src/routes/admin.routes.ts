@@ -232,7 +232,7 @@ router.get('/cities', protect, requireAdmin, async (req: AuthRequest, res: Respo
 // Update a single city's active state
 router.put('/cities/:cityId/active', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const cityId = parseInt(req.params.cityId);
+    const cityId = parseInt(req.params.cityId as string);
     const { active } = updateCityActiveSchema.parse(req.body);
 
     if (isNaN(cityId)) {
@@ -614,7 +614,7 @@ router.get('/merchants', protect, requireAdmin, async (req: AuthRequest, res: Re
 // Approve a merchant application
 router.post('/merchants/:merchantId/approve', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const merchantId = parseInt(req.params.merchantId);
+    const merchantId = parseInt(req.params.merchantId as string);
 
     if (isNaN(merchantId)) {
       return res.status(400).json({ error: 'Invalid merchant ID' });
@@ -715,7 +715,7 @@ router.post('/merchants/:merchantId/approve', protect, requireAdmin, async (req:
 // Reject a merchant application
 router.post('/merchants/:merchantId/reject', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const merchantId = parseInt(req.params.merchantId);
+    const merchantId = parseInt(req.params.merchantId as string);
     const { reason } = rejectMerchantSchema.parse(req.body);
 
     if (isNaN(merchantId)) {
@@ -2048,7 +2048,7 @@ router.get('/customers/:customerId', protect, requireAdmin, async (req: AuthRequ
   const startTime = Date.now();
   
   try {
-    const customerId = parseInt(req.params.customerId);
+    const customerId = parseInt(req.params.customerId as string);
     
     if (isNaN(customerId)) {
       return res.status(400).json({ error: 'Invalid customer ID' });
@@ -2232,7 +2232,7 @@ router.get('/customers/analytics', protect, requireAdmin, async (req: AuthReques
   const startTime = Date.now();
   
   try {
-    const customerId = parseInt(req.params.customerId);
+    const customerId = parseInt(req.params.customerId as string);
     
     if (isNaN(customerId)) {
       return res.status(400).json({ error: 'Invalid customer ID' });

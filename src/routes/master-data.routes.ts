@@ -171,7 +171,7 @@ router.post('/categories', protect, requireAdmin, async (req: AuthRequest, res: 
 // GET /api/admin/master-data/categories/:id
 router.get('/categories/:id', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const categoryId = parseInt(req.params.id);
+    const categoryId = parseInt(req.params.id as string);
 
     if (isNaN(categoryId)) {
       return res.status(400).json({ error: 'Invalid category ID' });
@@ -209,7 +209,7 @@ router.get('/categories/:id', protect, requireAdmin, async (req: AuthRequest, re
 // PUT /api/admin/master-data/categories/:id
 router.put('/categories/:id', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const categoryId = parseInt(req.params.id);
+    const categoryId = parseInt(req.params.id as string);
     const data = updateCategorySchema.parse(req.body);
 
     if (isNaN(categoryId)) {
@@ -270,7 +270,7 @@ router.put('/categories/:id', protect, requireAdmin, async (req: AuthRequest, re
 // DELETE /api/admin/master-data/categories/:id
 router.delete('/categories/:id', protect, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const categoryId = parseInt(req.params.id);
+    const categoryId = parseInt(req.params.id as string);
 
     if (isNaN(categoryId)) {
       return res.status(400).json({ error: 'Invalid category ID' });

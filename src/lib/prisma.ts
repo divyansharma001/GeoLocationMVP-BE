@@ -17,7 +17,7 @@ const prisma = new PrismaClient({
 });
 
 // Query performance logging via events (preferred over deprecated $use middleware)
-prisma.$on('query', (e) => {
+prisma.$on('query', (e: any) => {
   // Log slow queries in any environment
   if (e.duration > SLOW_QUERY_THRESHOLD_MS) {
     console.warn(

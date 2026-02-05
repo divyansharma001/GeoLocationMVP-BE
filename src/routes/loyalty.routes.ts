@@ -28,7 +28,7 @@ const router = Router();
 router.get('/balance/:merchantId', protect, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const merchantId = parseInt(req.params.merchantId);
+    const merchantId = parseInt(req.params.merchantId as string);
 
     if (isNaN(merchantId)) {
       return res.status(400).json({
@@ -187,7 +187,7 @@ router.post('/calculate-redemption', protect, async (req: AuthRequest, res: Resp
 router.get('/redemption-options/:merchantId', protect, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const merchantId = parseInt(req.params.merchantId);
+    const merchantId = parseInt(req.params.merchantId as string);
 
     if (isNaN(merchantId)) {
       return res.status(400).json({
@@ -292,7 +292,7 @@ router.post('/validate-redemption', protect, async (req: AuthRequest, res: Respo
 router.get('/transactions/:merchantId', protect, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const merchantId = parseInt(req.params.merchantId);
+    const merchantId = parseInt(req.params.merchantId as string);
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = parseInt(req.query.offset as string) || 0;
 
@@ -333,7 +333,7 @@ router.get('/transactions/:merchantId', protect, async (req: AuthRequest, res: R
  */
 router.get('/program/:merchantId', async (req, res: Response) => {
   try {
-    const merchantId = parseInt(req.params.merchantId);
+    const merchantId = parseInt(req.params.merchantId as string);
 
     if (isNaN(merchantId)) {
       return res.status(400).json({

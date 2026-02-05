@@ -306,7 +306,7 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
 // Remove a saved deal for the authenticated user
 router.delete('/save-deal/:dealId', protect, async (req: AuthRequest, res: Response) => {
   try {
-    const dealId = parseInt(req.params.dealId);
+    const dealId = parseInt(req.params.dealId as string);
     const userId = req.user!.id;
 
     if (isNaN(dealId)) {
@@ -440,7 +440,7 @@ router.get('/saved-deals', protect, async (req: AuthRequest, res: Response) => {
 // Check if a specific deal is saved by the authenticated user
 router.get('/saved-deals/:dealId', protect, async (req: AuthRequest, res: Response) => {
   try {
-    const dealId = parseInt(req.params.dealId);
+    const dealId = parseInt(req.params.dealId as string);
     const userId = req.user!.id;
 
     if (isNaN(dealId)) {

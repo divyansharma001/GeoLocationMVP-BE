@@ -140,7 +140,7 @@ router.post('/execute', protect, async (req: AuthRequest, res) => {
  */
 router.get('/can-rob/:victimId', protect, async (req: AuthRequest, res) => {
   try {
-    const victimId = parseInt(req.params.victimId, 10);
+    const victimId = parseInt(req.params.victimId as string, 10);
     if (isNaN(victimId)) {
       return res.status(400).json({
         success: false,

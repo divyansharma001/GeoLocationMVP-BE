@@ -541,7 +541,7 @@ router.get('/deals/featured', async (req, res) => {
 // Returns comprehensive deal details for detailed view
 router.get('/deals/:id', async (req, res) => {
   try {
-    const dealId = parseInt(req.params.id);
+    const dealId = parseInt(req.params.id as string);
     if (isNaN(dealId)) {
       return res.status(400).json({ error: 'Invalid Deal ID.' });
     }
@@ -871,7 +871,7 @@ router.get('/deals/:id', async (req, res) => {
 // Track deal sharing for analytics and social proof
 router.post('/deals/:id/share', async (req, res) => {
   try {
-    const dealId = parseInt(req.params.id);
+    const dealId = parseInt(req.params.id as string);
     if (isNaN(dealId)) {
       return res.status(400).json({ error: 'Invalid Deal ID.' });
     }

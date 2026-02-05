@@ -173,7 +173,7 @@ router.put('/merchant/tables/:tableId', protect, isMerchant, async (req: AuthReq
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
 
-    const tableId = parseInt(req.params.tableId);
+    const tableId = parseInt(req.params.tableId as string);
     if (isNaN(tableId)) return res.status(400).json({ error: 'Invalid table ID' });
 
     const validatedData = createTableSchema.partial().parse(req.body);
@@ -208,7 +208,7 @@ router.delete('/merchant/tables/:tableId', protect, isMerchant, async (req: Auth
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
 
-    const tableId = parseInt(req.params.tableId);
+    const tableId = parseInt(req.params.tableId as string);
     if (isNaN(tableId)) return res.status(400).json({ error: 'Invalid table ID' });
 
     // Check if table belongs to merchant
@@ -311,7 +311,7 @@ router.put('/merchant/time-slots/:timeSlotId', protect, isMerchant, async (req: 
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
 
-    const timeSlotId = parseInt(req.params.timeSlotId);
+    const timeSlotId = parseInt(req.params.timeSlotId as string);
     if (isNaN(timeSlotId)) return res.status(400).json({ error: 'Invalid time slot ID' });
 
     const validatedData = createTimeSlotSchema.partial().parse(req.body);
@@ -346,7 +346,7 @@ router.delete('/merchant/time-slots/:timeSlotId', protect, isMerchant, async (re
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
 
-    const timeSlotId = parseInt(req.params.timeSlotId);
+    const timeSlotId = parseInt(req.params.timeSlotId as string);
     if (isNaN(timeSlotId)) return res.status(400).json({ error: 'Invalid time slot ID' });
 
     // Check if time slot belongs to merchant
@@ -474,7 +474,7 @@ router.put('/merchant/bookings/:bookingId/status', protect, isMerchant, async (r
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
 
-    const bookingId = parseInt(req.params.bookingId);
+    const bookingId = parseInt(req.params.bookingId as string);
     if (isNaN(bookingId)) return res.status(400).json({ error: 'Invalid booking ID' });
 
     const { status, notes } = req.body;
@@ -604,7 +604,7 @@ router.put('/merchant/settings', protect, isMerchant, async (req: AuthRequest, r
 // GET /api/table-booking/merchants/:merchantId/availability - Get available time slots
 router.get('/merchants/:merchantId/availability', async (req: AuthRequest, res: Response) => {
   try {
-    const merchantId = parseInt(req.params.merchantId);
+    const merchantId = parseInt(req.params.merchantId as string);
     if (isNaN(merchantId)) return res.status(400).json({ error: 'Invalid merchant ID' });
 
     const { date, partySize = '1' } = req.query as any;
@@ -944,7 +944,7 @@ router.get('/bookings', protect, async (req: AuthRequest, res: Response) => {
 // GET /api/table-booking/bookings/:confirmationCode - Get booking by confirmation code
 router.get('/bookings/:confirmationCode', protect, async (req: AuthRequest, res: Response) => {
   try {
-    const { confirmationCode } = req.params;
+    const confirmationCode = req.params.confirmationCode as string;
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
 
@@ -985,7 +985,7 @@ router.put('/bookings/:bookingId', protect, async (req: AuthRequest, res: Respon
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
 
-    const bookingId = parseInt(req.params.bookingId);
+    const bookingId = parseInt(req.params.bookingId as string);
     if (isNaN(bookingId)) return res.status(400).json({ error: 'Invalid booking ID' });
 
     const { partySize, specialRequests, contactPhone, contactEmail } = req.body;
@@ -1074,7 +1074,7 @@ router.delete('/bookings/:bookingId', protect, async (req: AuthRequest, res: Res
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Authentication required' });
 
-    const bookingId = parseInt(req.params.bookingId);
+    const bookingId = parseInt(req.params.bookingId as string);
     if (isNaN(bookingId)) return res.status(400).json({ error: 'Invalid booking ID' });
 
     // Get existing booking

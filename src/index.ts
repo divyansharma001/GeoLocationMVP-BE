@@ -1,15 +1,23 @@
 import app from './app';
 import { scheduleMonthlyReset } from './jobs/monthlyReset';
 import { scheduleDailyBirthdays } from './jobs/dailyBirthday';
+import { startNudgeCronJobs } from './jobs/checkNudges';
+import http from 'http';
+import { setupWebSocket } from './lib/websocket/socket.server';
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
+const server = http.createServer(app);
+setupWebSocket(server);
+
+server.listen(PORT, () => {
   console.log(`[server]: Server is running at http://localhost:${PORT}`);
   if (process.env.DISABLE_SCHEDULER !== 'true') {
-  scheduleMonthlyReset();
-  scheduleDailyBirthdays();
-  console.log('[scheduler]: Monthly reset scheduled.');
-  console.log('[scheduler]: Daily birthdays scheduled.');
+    scheduleMonthlyReset();
+    scheduleDailyBirthdays();
+    startNudgeCronJobs();
+    console.log('[scheduler]: Monthly reset scheduled.');
+    console.log('[scheduler]: Daily birthdays scheduled.');
+    console.log('[scheduler]: Nudge jobs scheduled.');
   }
 });

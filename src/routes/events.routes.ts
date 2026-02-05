@@ -203,7 +203,7 @@ router.get('/events', async (req: AuthRequest, res: Response) => {
  */
 router.get('/events/:id', async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.id);
+    const eventId = parseInt(req.params.id as string);
 
     if (isNaN(eventId)) {
       return res.status(400).json({ error: 'Invalid event ID' });
@@ -451,7 +451,7 @@ router.post('/events', protect, requireEventOrganizer, async (req: AuthRequest, 
  */
 router.put('/events/:id', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.id);
+    const eventId = parseInt(req.params.id as string);
     const updates = req.body;
 
     // Get current event to check status
@@ -525,7 +525,7 @@ router.put('/events/:id', protect, requireEventOrganizer, verifyEventOwnership, 
  */
 router.delete('/events/:id', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.id);
+    const eventId = parseInt(req.params.id as string);
 
     const event = await prisma.event.findUnique({
       where: { id: eventId },
@@ -580,7 +580,7 @@ router.delete('/events/:id', protect, requireEventOrganizer, verifyEventOwnershi
  */
 router.post('/events/:id/publish', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.id);
+    const eventId = parseInt(req.params.id as string);
 
     const event = await prisma.event.findUnique({
       where: { id: eventId },
@@ -636,7 +636,7 @@ router.post('/events/:id/publish', protect, requireEventOrganizer, verifyEventOw
  */
 router.post('/events/:eventId/ticket-tiers', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.eventId);
+    const eventId = parseInt(req.params.eventId as string);
     const {
       name,
       description,
@@ -708,8 +708,8 @@ router.post('/events/:eventId/ticket-tiers', protect, requireEventOrganizer, ver
  */
 router.put('/events/:eventId/ticket-tiers/:tierId', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.eventId);
-    const tierId = parseInt(req.params.tierId);
+    const eventId = parseInt(req.params.eventId as string);
+    const tierId = parseInt(req.params.tierId as string);
     const updates = req.body;
 
     // Check if tier exists and belongs to event
@@ -754,8 +754,8 @@ router.put('/events/:eventId/ticket-tiers/:tierId', protect, requireEventOrganiz
  */
 router.delete('/events/:eventId/ticket-tiers/:tierId', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.eventId);
-    const tierId = parseInt(req.params.tierId);
+    const eventId = parseInt(req.params.eventId as string);
+    const tierId = parseInt(req.params.tierId as string);
 
     const tier = await prisma.eventTicketTier.findFirst({
       where: { id: tierId, eventId },
@@ -802,7 +802,7 @@ router.delete('/events/:eventId/ticket-tiers/:tierId', protect, requireEventOrga
  */
 router.post('/events/:eventId/add-ons', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.eventId);
+    const eventId = parseInt(req.params.eventId as string);
     const {
       name,
       description,
@@ -856,7 +856,7 @@ router.post('/events/:eventId/add-ons', protect, requireEventOrganizer, verifyEv
  */
 router.post('/events/:eventId/tickets/purchase', protect, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.eventId);
+    const eventId = parseInt(req.params.eventId as string);
     const userId = req.user!.id;
     const { ticketTierId, quantity = 1, paymentIntentId } = req.body;
 
@@ -1068,7 +1068,7 @@ router.post('/events/:eventId/tickets/purchase', protect, async (req: AuthReques
  */
 router.post('/events/:eventId/checkin', protect, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.eventId);
+    const eventId = parseInt(req.params.eventId as string);
     const { qrCode, latitude, longitude, locationName } = req.body;
     const staffUserId = req.user!.id;
 
@@ -1200,7 +1200,7 @@ router.post('/events/:eventId/checkin', protect, async (req: AuthRequest, res: R
  */
 router.post('/events/:eventId/waitlist/join', protect, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.eventId);
+    const eventId = parseInt(req.params.eventId as string);
     const userId = req.user!.id;
     const { phoneNumber, smsNotifications = false } = req.body;
 
@@ -1296,7 +1296,7 @@ router.post('/events/:eventId/waitlist/join', protect, async (req: AuthRequest, 
  */
 router.post('/events/tickets/:ticketId/refund', protect, verifyTicketOwnership, async (req: AuthRequest, res: Response) => {
   try {
-    const ticketId = parseInt(req.params.ticketId);
+    const ticketId = parseInt(req.params.ticketId as string);
     const { reason } = req.body;
 
     const ticket = await prisma.eventTicket.findUnique({
@@ -1382,8 +1382,8 @@ router.post('/events/tickets/:ticketId/refund', protect, verifyTicketOwnership, 
  */
 router.put('/events/:eventId/add-ons/:addOnId', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
   try {
-    const eventId = parseInt(req.params.eventId);
-    const addOnId = parseInt(req.params.addOnId);
+    const eventId = parseInt(req.params.eventId as string);
+    const addOnId = parseInt(req.params.addOnId as string);
     const updates = req.body;
 
     const existingAddOn = await prisma.eventAddOn.findFirst({
@@ -1509,7 +1509,7 @@ router.get('/my-tickets', protect, async (req: AuthRequest, res: Response) => {
  */
 router.get('/tickets/:ticketId/qr', protect, verifyTicketOwnership, async (req: AuthRequest, res: Response) => {
   try {
-    const ticketId = parseInt(req.params.ticketId);
+    const ticketId = parseInt(req.params.ticketId as string);
 
     const ticket = await prisma.eventTicket.findUnique({
       where: { id: ticketId },
@@ -1628,7 +1628,7 @@ router.get('/ticketmaster/search', async (req: AuthRequest, res: Response) => {
  */
 router.get('/ticketmaster/:eventId', async (req: AuthRequest, res: Response) => {
   try {
-    const { eventId } = req.params;
+    const eventId = req.params.eventId as string;
 
     const events = await ticketmasterService.searchEvents({
       keyword: eventId
