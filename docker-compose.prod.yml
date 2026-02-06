@@ -9,30 +9,14 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/geolocationmvp_prod
+      - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
     depends_on:
-      - db
       - redis
     volumes:
       - ./logs:/app/logs
       - ./backups:/app/backups
-    restart: unless-stopped
-    networks:
-      - app-network
-
-  db:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_DB=geolocationmvp_prod
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./backups:/backups
-    ports:
-      - "5432:5432"
     restart: unless-stopped
     networks:
       - app-network
@@ -62,7 +46,6 @@ services:
       - app-network
 
 volumes:
-  postgres_data:
   redis_data:
 
 networks:
