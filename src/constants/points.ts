@@ -14,6 +14,7 @@ export const POINT_EVENT_TYPES = {
   REFERRAL_BONUS: 7,
   HEIST_GAIN: 8,
   HEIST_LOSS: 9,
+  VENUE_REWARD_CLAIM: 10,
 } as const;
 
 /**

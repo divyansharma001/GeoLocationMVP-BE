@@ -107,6 +107,8 @@ model User {
   kittyGuesses        KittyGuess[]
   kittyGamesWon       KittyGame[]       @relation("KittyGameWinner")
   kittyGamesCreated   KittyGame[]       @relation("KittyGameCreator")
+  // Venue Reward Relations
+  venueRewardClaims   VenueRewardClaim[]
 
   @@index([referredByUserId])
   @@index([loyaltyTier])
@@ -163,6 +165,9 @@ model Merchant {
   orders              Order[]
   events              Event[]
   kittyGames          KittyGame[]
+  // Venue Reward & Verification Relations
+  venueRewards        VenueReward[]
+  verifications       MerchantVerification[]
 }
 
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
@@ -302,8 +307,9 @@ model Store {
   active     Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-  city       City     @relation(fields: [cityId], references: [id])
-  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  city         City          @relation(fields: [cityId], references: [id])
+  merchant     Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  venueRewards VenueReward[]
 
   @@index([merchantId])
   @@index([cityId])
@@ -1496,4 +1502,119 @@ enum KittyGameStatus {
   CLOSED
   RESOLVED
   CANCELLED
+}
+
+// ── Venue Rewards & Verification ──
+
+enum VenueRewardStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  EXPIRED
+}
+
+enum VenueRewardType {
+  COINS
+  DISCOUNT_PERCENTAGE
+  DISCOUNT_FIXED
+  BONUS_POINTS
+  FREE_ITEM
+}
+
+enum VerificationStatus {
+  PENDING
+  DOCUMENTS_SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum VerificationStepType {
+  IDENTITY
+  BUSINESS_LICENSE
+  ADDRESS_PROOF
+  TAX_DOCUMENT
+}
+
+enum ClaimVerificationMethod {
+  GPS
+  QR_CODE
+}
+
+model VenueReward {
+  id                   Int               @id @default(autoincrement())
+  merchantId           Int
+  storeId              Int?
+  title                String            @db.VarChar(200)
+  description          String?           @db.Text
+  rewardType           VenueRewardType   @default(COINS)
+  rewardAmount         Float
+  geoFenceRadiusMeters Int               @default(100)
+  latitude             Float?
+  longitude            Float?
+  status               VenueRewardStatus @default(DRAFT)
+  startDate            DateTime
+  endDate              DateTime
+  maxTotalClaims       Int?
+  currentClaims        Int               @default(0)
+  maxClaimsPerUser     Int               @default(1)
+  cooldownHours        Int               @default(24)
+  requiresCheckIn      Boolean           @default(true)
+  isVerifiedOnly       Boolean           @default(true)
+  imageUrl             String?
+  metadata             Json?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  merchant             Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  store                Store?            @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  claims               VenueRewardClaim[]
+
+  @@index([merchantId, status])
+  @@index([status, startDate, endDate])
+  @@index([merchantId, storeId])
+}
+
+model VenueRewardClaim {
+  id                  Int                     @id @default(autoincrement())
+  venueRewardId       Int
+  userId              Int
+  claimLatitude       Float
+  claimLongitude      Float
+  distanceMeters      Float
+  verificationMethod  ClaimVerificationMethod @default(GPS)
+  coinsAwarded        Int                     @default(0)
+  pointsAwarded       Int                     @default(0)
+  rewardValue         Float
+  metadata            Json?
+  createdAt           DateTime                @default(now())
+
+  venueReward         VenueReward             @relation(fields: [venueRewardId], references: [id], onDelete: Cascade)
+  user                User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, venueRewardId, createdAt])
+  @@index([venueRewardId, createdAt])
+}
+
+model MerchantVerification {
+  id               Int                  @id @default(autoincrement())
+  merchantId       Int
+  stepType         VerificationStepType
+  status           VerificationStatus   @default(PENDING)
+  documentUrl      String?
+  documentType     String?              @db.VarChar(100)
+  submittedAt      DateTime?
+  reviewedAt       DateTime?
+  reviewedBy       Int?
+  rejectionReason  String?              @db.Text
+  notes            String?              @db.Text
+  metadata         Json?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  merchant         Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, stepType])
+  @@index([merchantId, status])
+  @@index([status])
 }

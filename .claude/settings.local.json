@@ -4,7 +4,9 @@
       "Bash(cmd.exe /c \"del \\\\?\\\\c:\\\\GeolocationMVPBackend\\\\nul\")",
       "Bash(cmd.exe /c \"del /f /q \\\\?\\\\c:\\\\GeolocationMVPBackend\\\\nul\")",
       "Bash(powershell -Command:*)",
-      "Bash(python -c:*)"
+      "Bash(python -c:*)",
+      "Bash(ls -la \"c:\\\\GeolocationMVPBackend\\\\src\\\\middleware\"\" 2>&1 || echo \"Checking middleware directory \")",
+      "Bash(dir:*)"
     ]
   }
 }

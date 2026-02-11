@@ -18,6 +18,7 @@ export const COIN_REWARDS = {
   DEAL_SAVE: 5,
   REFERRAL: 100,
   ACHIEVEMENT: 25,
+  VENUE_REWARD: 15,
 };
 
 // Experience points for different actions

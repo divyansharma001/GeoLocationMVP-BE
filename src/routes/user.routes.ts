@@ -7,6 +7,7 @@ import { getPointConfig } from '../lib/points';
 import { invalidateLeaderboardCache } from '../lib/leaderboard/cache';
 import { updateStreakAfterCheckIn } from '../lib/streak';
 import { POINT_EVENT_TYPES } from '../constants/points';
+import { haversineMeters } from '../lib/geo';
 
 const router = Router();
 
@@ -21,17 +22,6 @@ const checkInSchema = z.object({
   latitude: z.number().refine(v => v >= -90 && v <= 90, { message: 'Latitude must be between -90 and 90.' }),
   longitude: z.number().refine(v => v >= -180 && v <= 180, { message: 'Longitude must be between -180 and 180.' })
 });
-
-// Simple Haversine distance (meters)
-function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000; // meters
-  const toRad = (d: number) => d * Math.PI / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
 
 // --- Endpoint: POST /api/users/save-deal ---
 // Save a deal for the authenticated user
