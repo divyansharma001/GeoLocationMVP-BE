@@ -28,6 +28,8 @@ import socialAuthRoutes from './routes/social.routes';
 import eventsRoutes from './routes/events.routes';
 import nudgesRoutes from './routes/nudges.routes';
 import adminNudgesRoutes from './routes/admin-nudges.routes';
+import kittyRoutes from './routes/kitty.routes';
+import adminGamesRoutes from './routes/admin-games.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -136,6 +138,8 @@ app.use('/api/heist', heistRoutes);
 app.use('/api/payments', paymentsRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/nudges', nudgesRoutes);
+app.use('/api/kitty', kittyRoutes);
+app.use('/api/admin/games', adminGamesRoutes);
 
 export default app;
 

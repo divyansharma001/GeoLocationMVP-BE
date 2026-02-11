@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd.exe /c \"del \\\\?\\\\c:\\\\GeolocationMVPBackend\\\\nul\")",
+      "Bash(cmd.exe /c \"del /f /q \\\\?\\\\c:\\\\GeolocationMVPBackend\\\\nul\")",
+      "Bash(powershell -Command:*)",
+      "Bash(python -c:*)"
+    ]
+  }
+}

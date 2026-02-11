@@ -102,6 +102,11 @@ model User {
   // Nudge Relations
   userNudges          UserNudge[]
   nudgePreferences    UserNudgePreferences?
+  // Bounty & Kitty Game Relations
+  bountyProgress      BountyProgress[]
+  kittyGuesses        KittyGuess[]
+  kittyGamesWon       KittyGame[]       @relation("KittyGameWinner")
+  kittyGamesCreated   KittyGame[]       @relation("KittyGameCreator")
 
   @@index([referredByUserId])
   @@index([loyaltyTier])
@@ -157,6 +162,7 @@ model Merchant {
   loyaltyRedemptions  LoyaltyRedemption[]
   orders              Order[]
   events              Event[]
+  kittyGames          KittyGame[]
 }
 
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
@@ -200,7 +206,8 @@ model Deal {
   kickbackEvents         KickbackEvent[]
   savedByUsers           UserDeal[]
   pointEvents            UserPointEvent[]
-  
+  bountyProgress         BountyProgress[]
+
   @@index([accessCode])
   @@index([merchantId, dealTypeId])
   @@index([isFlashSale, endTime])
@@ -1411,4 +1418,82 @@ model UserNudgePreferences {
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, enabled])
+}
+
+// ===== BOUNTY PROGRESS SYSTEM =====
+
+model BountyProgress {
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  dealId            Int
+  referralCount     Int      @default(0)
+  rewardsEarned     Float    @default(0)
+  isCompleted       Boolean  @default(false)
+  completedAt       DateTime?
+  qrCodeScannedAt   DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deal              Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dealId])
+  @@index([userId])
+  @@index([dealId])
+  @@index([isCompleted])
+}
+
+// ===== GUESS THE KITTY GAME SYSTEM =====
+
+model KittyGame {
+  id              Int            @id @default(autoincrement())
+  merchantId      Int
+  title           String         @db.VarChar(200)
+  prizePool       Float          @default(0)
+  entryFee        Int            @default(10) // Cost in coins to enter
+  secretValue     Float?         // The random value players try to guess
+  guessWindowStart DateTime
+  guessWindowEnd   DateTime
+  status          KittyGameStatus @default(PENDING)
+  winnerId        Int?
+  winnerGuessId   Int?
+  minPlayers      Int            @default(2)
+  maxPlayers      Int?
+  createdBy       Int
+  resolvedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  merchant        Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  winner          User?          @relation("KittyGameWinner", fields: [winnerId], references: [id])
+  creator         User           @relation("KittyGameCreator", fields: [createdBy], references: [id])
+  guesses         KittyGuess[]
+
+  @@index([merchantId, status])
+  @@index([status])
+  @@index([guessWindowEnd])
+  @@index([winnerId])
+}
+
+model KittyGuess {
+  id          Int       @id @default(autoincrement())
+  gameId      Int
+  userId      Int
+  guessValue  Float
+  coinsSpent  Int       @default(0)
+  isWinner    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  game        KittyGame @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, userId])
+  @@index([gameId])
+  @@index([userId])
+  @@index([isWinner])
+}
+
+enum KittyGameStatus {
+  PENDING
+  ACTIVE
+  CLOSED
+  RESOLVED
+  CANCELLED
 }
