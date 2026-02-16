@@ -179,3 +179,110 @@ export async function sendBirthdayEmail(params: { to: string; name?: string }) {
     </div>`;
   await sendEmail({ to: { email: to }, subject, html, tags: ['birthday'] });
 }
+
+// Notify merchant that their verification document was received
+export async function sendVerificationSubmittedEmail(params: { to: string; merchantName: string; stepType: string }) {
+  const { to, merchantName, stepType } = params;
+  const safeName = merchantName ? merchantName.split(/\s+/).slice(0, 3).join(' ') : 'there';
+  const subject = `Verification Document Submitted - ${stepType.replace(/_/g, ' ')}`;
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#222;background:#f9fafb;padding:24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+        <tr>
+          <td style="background:#111827;padding:18px 24px;">
+            <h1 style="margin:0;font-size:20px;color:#ffffff;font-weight:600;">YOHOP</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:24px;">
+            <p style="margin-top:0;">Hi ${safeName},</p>
+            <p style="margin:16px 0;">We've received your <strong>${stepType.replace(/_/g, ' ').toLowerCase()}</strong> verification document. Our team will review it within 24-48 hours.</p>
+            <p style="margin:16px 0;">You'll receive an email once the review is complete. No action is needed from you at this time.</p>
+            <p style="margin:24px 0 0;">Thanks,<br/>The YOHOP Team</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f3f4f6;padding:16px 24px;font-size:12px;color:#6b7280;">
+            <p style="margin:0;">You're receiving this because you submitted a verification document for ${merchantName}.</p>
+          </td>
+        </tr>
+      </table>
+    </div>`;
+  await sendEmail({ to: { email: to }, subject, html, tags: ['verification-submitted'] });
+}
+
+// Notify merchant of verification step review result
+export async function sendVerificationReviewedEmail(params: {
+  to: string; merchantName: string; stepType: string; approved: boolean; rejectionReason?: string;
+}) {
+  const { to, merchantName, stepType, approved, rejectionReason } = params;
+  const safeName = merchantName ? merchantName.split(/\s+/).slice(0, 3).join(' ') : 'there';
+  const stepLabel = stepType.replace(/_/g, ' ').toLowerCase();
+  const subject = approved
+    ? `Verification Approved: ${stepType.replace(/_/g, ' ')}`
+    : `Verification Update Required: ${stepType.replace(/_/g, ' ')}`;
+  const bodyContent = approved
+    ? `<p style="margin:16px 0;">Your <strong>${stepLabel}</strong> verification has been <span style="color:#16a34a;font-weight:600;">approved</span>. You're one step closer to unlocking all features.</p>`
+    : `<p style="margin:16px 0;">Your <strong>${stepLabel}</strong> verification was <span style="color:#dc2626;font-weight:600;">not approved</span>.</p>
+       ${rejectionReason ? `<p style="margin:16px 0;padding:12px;background:#fef2f2;border-radius:6px;"><strong>Reason:</strong> ${rejectionReason}</p>` : ''}
+       <p style="margin:16px 0;">Please review the feedback and resubmit your document.</p>`;
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#222;background:#f9fafb;padding:24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+        <tr>
+          <td style="background:#111827;padding:18px 24px;">
+            <h1 style="margin:0;font-size:20px;color:#ffffff;font-weight:600;">YOHOP</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:24px;">
+            <p style="margin-top:0;">Hi ${safeName},</p>
+            ${bodyContent}
+            <p style="margin:24px 0 0;">Thanks,<br/>The YOHOP Team</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f3f4f6;padding:16px 24px;font-size:12px;color:#6b7280;">
+            <p style="margin:0;">You're receiving this because a verification step for ${merchantName} was reviewed.</p>
+          </td>
+        </tr>
+      </table>
+    </div>`;
+  await sendEmail({ to: { email: to }, subject, html, tags: ['verification-reviewed'] });
+}
+
+// Notify merchant that all verification steps are complete
+export async function sendVerificationCompleteEmail(params: { to: string; merchantName: string }) {
+  const { to, merchantName } = params;
+  const safeName = merchantName ? merchantName.split(/\s+/).slice(0, 3).join(' ') : 'there';
+  const subject = 'Your Business is Fully Verified!';
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#222;background:#f9fafb;padding:24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+        <tr>
+          <td style="background:#111827;padding:18px 24px;">
+            <h1 style="margin:0;font-size:20px;color:#ffffff;font-weight:600;">YOHOP</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:24px;">
+            <p style="margin-top:0;">Hi ${safeName},</p>
+            <p style="margin:16px 0;">All your verification steps have been <span style="color:#16a34a;font-weight:600;">approved</span>! Your business is now fully verified on YOHOP.</p>
+            <p style="margin:16px 0;">You can now:</p>
+            <ul style="padding-left:20px;margin:16px 0;">
+              <li>Create and activate <strong>venue rewards</strong> for your customers</li>
+              <li>Set up <strong>geo-fenced rewards</strong> at your venue</li>
+              <li>Access all premium merchant features</li>
+            </ul>
+            <p style="margin:24px 0 0;">Congratulations!<br/>The YOHOP Team</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f3f4f6;padding:16px 24px;font-size:12px;color:#6b7280;">
+            <p style="margin:0;">You're receiving this because all verification steps for ${merchantName} have been approved.</p>
+          </td>
+        </tr>
+      </table>
+    </div>`;
+  await sendEmail({ to: { email: to }, subject, html, tags: ['verification-complete'] });
+}

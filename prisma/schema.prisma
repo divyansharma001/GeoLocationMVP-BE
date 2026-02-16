@@ -168,6 +168,7 @@ model Merchant {
   // Venue Reward & Verification Relations
   venueRewards        VenueReward[]
   verifications       MerchantVerification[]
+  interestLogs        BusinessInterestLog[]
 }
 
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
@@ -1617,4 +1618,20 @@ model MerchantVerification {
   @@unique([merchantId, stepType])
   @@index([merchantId, status])
   @@index([status])
+}
+
+model BusinessInterestLog {
+  id            Int      @id @default(autoincrement())
+  merchantId    Int
+  userId        Int?
+  eventType     String   @db.VarChar(50)
+  dealId        Int?
+  venueRewardId Int?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  merchant      Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, eventType, createdAt])
+  @@index([merchantId, createdAt])
 }

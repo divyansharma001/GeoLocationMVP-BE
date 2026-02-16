@@ -57,6 +57,29 @@ export const uploadToCloudinary = async (buffer: Buffer, options: { publicId?: s
   }
 };
 
+// Upload document (images or PDFs) from buffer
+export const uploadDocumentToCloudinary = async (
+  buffer: Buffer,
+  mimetype: string,
+  options: { publicId?: string; folder?: string } = {}
+): Promise<{ secure_url: string; public_id: string }> => {
+  try {
+    const dataUri = `data:${mimetype};base64,${buffer.toString('base64')}`;
+    const resourceType = mimetype === 'application/pdf' ? 'raw' as const : 'image' as const;
+    const result = await cloudinary.uploader.upload(dataUri, {
+      public_id: options.publicId,
+      folder: options.folder || 'verification-docs',
+      resource_type: resourceType,
+      overwrite: true,
+      invalidate: true,
+    });
+    return { secure_url: result.secure_url, public_id: result.public_id };
+  } catch (error) {
+    console.error('Cloudinary document upload error:', error);
+    throw new Error('Failed to upload document to Cloudinary');
+  }
+};
+
 // Helper function to delete image from Cloudinary
 export const deleteImage = async (publicId: string): Promise<void> => {
   try {

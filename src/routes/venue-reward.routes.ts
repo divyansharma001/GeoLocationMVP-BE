@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
 import {
   protect,
   AuthRequest,
@@ -17,14 +18,32 @@ import {
   claimVenueReward,
   getAvailableVenueRewards,
   getMerchantVenueRewards,
+  getVenueRewardById,
+  updateVenueReward,
+  deleteVenueReward,
   activateVenueReward,
   deactivateVenueReward,
   submitVerificationStep,
   reviewVerificationStep,
   getMerchantVerificationStatus,
+  listPendingVerifications,
 } from '../services/venue-reward.service';
+import { uploadDocumentToCloudinary } from '../lib/cloudinary';
 
 const router = Router();
+
+// Multer for verification document uploads (images + PDFs)
+const docUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image and PDF files are allowed!'));
+    }
+  },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
 
 // ── Merchant Reward Endpoints ──
 
@@ -93,6 +112,85 @@ router.get(
   }
 );
 
+// ── Single Reward Detail, Update, Delete ──
+
+router.get(
+  '/rewards/:id',
+  protect,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const rewardId = Number(req.params.id);
+      const userId = req.user!.id;
+      const reward = await getVenueRewardById(rewardId, userId);
+      res.json({ success: true, data: reward });
+    } catch (error: any) {
+      const status = error.message?.includes('not found') ? 404 : 500;
+      res.status(status).json({ success: false, error: error.message });
+    }
+  }
+);
+
+const updateRewardSchema = z.object({
+  title: z.string().min(3).max(200).optional(),
+  description: z.string().optional(),
+  rewardType: z.enum(['COINS', 'DISCOUNT_PERCENTAGE', 'DISCOUNT_FIXED', 'BONUS_POINTS', 'FREE_ITEM']).optional(),
+  rewardAmount: z.number().positive().optional(),
+  geoFenceRadiusMeters: z.number().int().min(10).max(5000).optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+  maxTotalClaims: z.number().int().positive().nullable().optional(),
+  maxClaimsPerUser: z.number().int().positive().optional(),
+  cooldownHours: z.number().int().min(0).optional(),
+  requiresCheckIn: z.boolean().optional(),
+  imageUrl: z.string().url().optional(),
+});
+
+router.patch(
+  '/rewards/:id',
+  protect,
+  isApprovedMerchant,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const data = updateRewardSchema.parse(req.body);
+      const rewardId = Number(req.params.id);
+      const merchantId = req.merchant!.id;
+      const reward = await updateVenueReward({
+        venueRewardId: rewardId,
+        merchantId,
+        ...data,
+        startDate: data.startDate ? new Date(data.startDate) : undefined,
+        endDate: data.endDate ? new Date(data.endDate) : undefined,
+      });
+      res.json({ success: true, data: reward });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ errors: error.issues });
+      }
+      const status = error.message?.includes('not found') ? 404 : 400;
+      res.status(status).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.delete(
+  '/rewards/:id',
+  protect,
+  isApprovedMerchant,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const rewardId = Number(req.params.id);
+      const merchantId = req.merchant!.id;
+      const result = await deleteVenueReward(rewardId, merchantId);
+      res.json({ success: true, message: result.soft ? 'Reward archived (has existing claims)' : 'Reward deleted', soft: result.soft });
+    } catch (error: any) {
+      const status = error.message?.includes('not found') ? 404 : 400;
+      res.status(status).json({ success: false, error: error.message });
+    }
+  }
+);
+
 router.patch(
   '/rewards/:id/activate',
   protect,
@@ -130,12 +228,53 @@ router.patch(
   }
 );
 
+// ── QR Code Generation ──
+
+router.get(
+  '/rewards/:id/qr-code',
+  protect,
+  isApprovedMerchant,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const rewardId = Number(req.params.id);
+      const merchantId = req.merchant!.id;
+      const reward = await getVenueRewardById(rewardId);
+      if (reward.merchantId !== merchantId) {
+        return res.status(404).json({ success: false, error: 'Venue reward not found' });
+      }
+      if (reward.status !== 'ACTIVE') {
+        return res.status(400).json({ success: false, error: 'QR code can only be generated for active rewards' });
+      }
+      const { generateVenueRewardQRData, generateVenueRewardQRImage } = await import('../lib/venue-reward-qr.service');
+      const qrData = generateVenueRewardQRData({
+        venueRewardId: reward.id,
+        merchantId: reward.merchantId,
+        timestamp: Date.now(),
+      });
+      const qrCodeImage = await generateVenueRewardQRImage(qrData);
+      res.json({
+        success: true,
+        data: {
+          qrData,
+          qrCodeImage,
+          expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+        },
+      });
+    } catch (error: any) {
+      console.error('Error generating QR code:', error);
+      const status = error.message?.includes('not found') ? 404 : 500;
+      res.status(status).json({ success: false, error: error.message });
+    }
+  }
+);
+
 // ── User Reward Endpoints ──
 
 const claimSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   verificationMethod: z.enum(['GPS', 'QR_CODE']).optional(),
+  qrData: z.string().optional(),
 });
 
 router.post(
@@ -154,6 +293,7 @@ router.post(
         latitude: parsed.latitude,
         longitude: parsed.longitude,
         verificationMethod: parsed.verificationMethod,
+        qrData: parsed.qrData,
       });
 
       // Release lock and set cooldown after successful claim
@@ -216,6 +356,31 @@ router.get(
 // ── Verification Endpoints ──
 
 router.post(
+  '/verification/upload-document',
+  protect,
+  isApprovedMerchant,
+  docUpload.single('document'),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No document file provided' });
+      }
+      const merchantId = req.merchant!.id;
+      const stepType = req.body.stepType || 'general';
+      const publicId = `merchant-${merchantId}/${stepType}-${Date.now()}`;
+      const result = await uploadDocumentToCloudinary(req.file.buffer, req.file.mimetype, {
+        publicId,
+        folder: 'verification-docs',
+      });
+      res.json({ success: true, data: { documentUrl: result.secure_url, publicId: result.public_id } });
+    } catch (error: any) {
+      console.error('Error uploading verification document:', error);
+      res.status(500).json({ success: false, error: error.message || 'Failed to upload document' });
+    }
+  }
+);
+
+router.post(
   '/verification/submit',
   protect,
   isApprovedMerchant,
@@ -249,6 +414,24 @@ router.get(
     } catch (error: any) {
       console.error('Error fetching verification status:', error);
       res.status(500).json({ success: false, error: 'Failed to fetch verification status' });
+    }
+  }
+);
+
+router.get(
+  '/verification/pending',
+  protect,
+  requireAdmin,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const page = Math.max(1, parseInt(req.query.page as string) || 1);
+      const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 20));
+      const result = await listPendingVerifications({ status, page, limit });
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      console.error('Error fetching pending verifications:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch pending verifications' });
     }
   }
 );

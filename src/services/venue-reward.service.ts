@@ -4,6 +4,13 @@ import { awardCoinsInTransaction } from '../lib/gamification';
 import { haversineMeters } from '../lib/geo';
 import { getIO } from '../lib/websocket/socket.server';
 import redis from '../lib/redis';
+import { verifyVenueRewardQRData } from '../lib/venue-reward-qr.service';
+import {
+  sendVerificationSubmittedEmail,
+  sendVerificationReviewedEmail,
+  sendVerificationCompleteEmail,
+} from '../lib/email';
+import { trackInterest } from '../lib/interest-tracking';
 
 const REQUIRED_VERIFICATION_STEPS: VerificationStepType[] = [
   VerificationStepType.IDENTITY,
@@ -102,6 +109,7 @@ export async function claimVenueReward(params: {
   latitude: number;
   longitude: number;
   verificationMethod?: 'GPS' | 'QR_CODE';
+  qrData?: string;
 }) {
   const reward = await prisma.venueReward.findUnique({
     where: { id: params.venueRewardId },
@@ -131,6 +139,20 @@ export async function claimVenueReward(params: {
     throw new Error(
       `You are outside the geo-fence. Distance: ${Math.round(distanceMeters)}m, required: ${reward.geoFenceRadiusMeters}m`
     );
+  }
+
+  // QR code validation (when verificationMethod is QR_CODE)
+  if (params.verificationMethod === 'QR_CODE') {
+    if (!params.qrData) {
+      throw new Error('QR code data is required for QR_CODE verification');
+    }
+    const qrPayload = verifyVenueRewardQRData(params.qrData);
+    if (!qrPayload) {
+      throw new Error('Invalid or expired QR code');
+    }
+    if (qrPayload.venueRewardId !== params.venueRewardId) {
+      throw new Error('QR code does not match this reward');
+    }
   }
 
   // Check requires check-in
@@ -229,6 +251,14 @@ export async function claimVenueReward(params: {
       coinsAwarded: result.coinsAwarded,
     });
   } catch (_) { /* WebSocket not critical */ }
+
+  // Track interest (fire-and-forget)
+  trackInterest({
+    merchantId: reward.merchantId,
+    userId: params.userId,
+    eventType: 'REWARD_CLAIM',
+    venueRewardId: reward.id,
+  });
 
   return {
     claim: result.claim,
@@ -370,6 +400,99 @@ export async function getMerchantVenueRewards(params: {
   };
 }
 
+export async function getVenueRewardById(venueRewardId: number, requestingUserId?: number) {
+  const reward = await prisma.venueReward.findUnique({
+    where: { id: venueRewardId },
+    include: {
+      merchant: { select: { id: true, businessName: true, logoUrl: true, latitude: true, longitude: true } },
+      store: { select: { id: true, address: true, latitude: true, longitude: true } },
+      _count: { select: { claims: true } },
+    },
+  });
+
+  if (!reward) throw new Error('Venue reward not found');
+
+  if (requestingUserId) {
+    const userClaims = await prisma.venueRewardClaim.findMany({
+      where: { userId: requestingUserId, venueRewardId },
+      select: { id: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const lastClaimedAt = userClaims[0]?.createdAt ?? null;
+    const userClaimCount = userClaims.length;
+    const canClaim = userClaimCount < reward.maxClaimsPerUser &&
+      (!lastClaimedAt || (Date.now() - lastClaimedAt.getTime()) > reward.cooldownHours * 3600000);
+    return { ...reward, userClaimCount, lastClaimedAt, canClaim };
+  }
+
+  return reward;
+}
+
+export async function updateVenueReward(params: {
+  venueRewardId: number;
+  merchantId: number;
+  title?: string;
+  description?: string;
+  rewardType?: 'COINS' | 'DISCOUNT_PERCENTAGE' | 'DISCOUNT_FIXED' | 'BONUS_POINTS' | 'FREE_ITEM';
+  rewardAmount?: number;
+  geoFenceRadiusMeters?: number;
+  latitude?: number;
+  longitude?: number;
+  startDate?: Date;
+  endDate?: Date;
+  maxTotalClaims?: number | null;
+  maxClaimsPerUser?: number;
+  cooldownHours?: number;
+  requiresCheckIn?: boolean;
+  imageUrl?: string;
+}) {
+  const reward = await prisma.venueReward.findUnique({ where: { id: params.venueRewardId } });
+  if (!reward) throw new Error('Venue reward not found');
+  if (reward.merchantId !== params.merchantId) throw new Error('Venue reward not found');
+  if (reward.status !== 'DRAFT' && reward.status !== 'PAUSED') {
+    throw new Error('Cannot edit an active or expired reward. Pause it first.');
+  }
+
+  if (params.rewardAmount !== undefined && params.rewardAmount <= 0) {
+    throw new Error('rewardAmount must be positive');
+  }
+  if (params.startDate && params.endDate && params.endDate <= params.startDate) {
+    throw new Error('endDate must be after startDate');
+  }
+
+  const { venueRewardId, merchantId, ...updateFields } = params;
+  const data: any = {};
+  for (const [key, value] of Object.entries(updateFields)) {
+    if (value !== undefined) data[key] = value;
+  }
+
+  return prisma.venueReward.update({
+    where: { id: venueRewardId },
+    data,
+    include: { merchant: { select: { id: true, businessName: true } } },
+  });
+}
+
+export async function deleteVenueReward(venueRewardId: number, merchantId: number) {
+  const reward = await prisma.venueReward.findUnique({
+    where: { id: venueRewardId },
+    select: { id: true, merchantId: true, currentClaims: true },
+  });
+  if (!reward) throw new Error('Venue reward not found');
+  if (reward.merchantId !== merchantId) throw new Error('Venue reward not found');
+
+  if (reward.currentClaims > 0) {
+    await prisma.venueReward.update({
+      where: { id: venueRewardId },
+      data: { status: 'EXPIRED' },
+    });
+    return { deleted: true, soft: true };
+  }
+
+  await prisma.venueReward.delete({ where: { id: venueRewardId } });
+  return { deleted: true, soft: false };
+}
+
 export async function activateVenueReward(venueRewardId: number, merchantId: number) {
   const reward = await prisma.venueReward.findUnique({ where: { id: venueRewardId } });
   if (!reward) throw new Error('Venue reward not found');
@@ -445,6 +568,21 @@ export async function submitVerificationStep(params: {
   // Invalidate verification cache
   await redis.del(`merchant_verified:${params.merchantId}`).catch(() => {});
 
+  // Send confirmation email (fire-and-forget)
+  try {
+    const merchant = await prisma.merchant.findUnique({
+      where: { id: params.merchantId },
+      select: { businessName: true, owner: { select: { email: true } } },
+    });
+    if (merchant?.owner?.email) {
+      sendVerificationSubmittedEmail({
+        to: merchant.owner.email,
+        merchantName: merchant.businessName,
+        stepType: params.stepType,
+      });
+    }
+  } catch (_) { /* email not critical */ }
+
   return verification;
 }
 
@@ -457,7 +595,7 @@ export async function reviewVerificationStep(params: {
 }) {
   const verification = await prisma.merchantVerification.findUnique({
     where: { id: params.verificationId },
-    include: { merchant: { select: { id: true, ownerId: true } } },
+    include: { merchant: { select: { id: true, ownerId: true, businessName: true, owner: { select: { email: true } } } } },
   });
 
   if (!verification) throw new Error('Verification step not found');
@@ -497,6 +635,24 @@ export async function reviewVerificationStep(params: {
     }
   } catch (_) { /* WebSocket not critical */ }
 
+  // Send review email (fire-and-forget)
+  try {
+    const ownerEmail = verification.merchant.owner?.email;
+    const merchantName = verification.merchant.businessName || 'Your business';
+    if (ownerEmail) {
+      sendVerificationReviewedEmail({
+        to: ownerEmail,
+        merchantName,
+        stepType: verification.stepType,
+        approved: params.approved,
+        rejectionReason: params.rejectionReason,
+      });
+      if (isFullyVerified) {
+        sendVerificationCompleteEmail({ to: ownerEmail, merchantName });
+      }
+    }
+  } catch (_) { /* email not critical */ }
+
   return { ...updated, isFullyVerified };
 }
 
@@ -518,6 +674,48 @@ export async function getMerchantVerificationStatus(merchantId: number) {
     steps,
     isFullyVerified: pendingSteps.length === 0,
     pendingSteps,
+  };
+}
+
+export async function listPendingVerifications(params: {
+  status?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const page = params.page ?? 1;
+  const limit = params.limit ?? 20;
+
+  const where: any = {};
+  if (params.status) {
+    where.status = params.status;
+  } else {
+    where.status = { in: ['DOCUMENTS_SUBMITTED', 'UNDER_REVIEW'] };
+  }
+
+  const [verifications, total] = await Promise.all([
+    prisma.merchantVerification.findMany({
+      where,
+      include: {
+        merchant: {
+          select: {
+            id: true,
+            businessName: true,
+            address: true,
+            ownerId: true,
+            owner: { select: { email: true, name: true } },
+          },
+        },
+      },
+      orderBy: { submittedAt: 'asc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.merchantVerification.count({ where }),
+  ]);
+
+  return {
+    verifications,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
 }
 
