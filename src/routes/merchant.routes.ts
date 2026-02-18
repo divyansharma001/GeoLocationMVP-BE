@@ -1,6 +1,7 @@
 // src/routes/merchant.routes.ts
 import { Router, Response } from 'express';
 import { protect, isApprovedMerchant, isMerchant, AuthRequest } from '../middleware/auth.middleware';
+import { requireMerchantVerified } from '../middleware/verification-lock.middleware';
 import prisma from '../lib/prisma';
 import { uploadImage, deleteImage, uploadToCloudinary } from '../lib/cloudinary';
 import { slugify } from '../lib/slugify';
@@ -4205,7 +4206,7 @@ router.get('/merchants/stores', protect, isApprovedMerchant, async (req: AuthReq
 // --- Endpoint: POST /api/merchants/stores ---
 // Create a new store for the authenticated approved merchant
 // Body: { address, latitude?, longitude?, cityId? OR (cityName & state), active? }
-router.post('/merchants/stores', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+router.post('/merchants/stores', protect, isApprovedMerchant, requireMerchantVerified, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });

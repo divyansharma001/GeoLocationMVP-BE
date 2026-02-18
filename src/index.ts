@@ -2,6 +2,7 @@ import app from './app';
 import { scheduleMonthlyReset } from './jobs/monthlyReset';
 import { scheduleDailyBirthdays } from './jobs/dailyBirthday';
 import { startNudgeCronJobs } from './jobs/checkNudges';
+import { startInterestReportJob } from './jobs/sendInterestEmail';
 import http from 'http';
 import { setupWebSocket } from './lib/websocket/socket.server';
 
@@ -16,8 +17,10 @@ server.listen(PORT, () => {
     scheduleMonthlyReset();
     scheduleDailyBirthdays();
     startNudgeCronJobs();
+    startInterestReportJob();
     console.log('[scheduler]: Monthly reset scheduled.');
     console.log('[scheduler]: Daily birthdays scheduled.');
     console.log('[scheduler]: Nudge jobs scheduled.');
+    console.log('[scheduler]: Interest report job scheduled.');
   }
 });
