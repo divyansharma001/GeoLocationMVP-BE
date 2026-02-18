@@ -594,6 +594,62 @@ async function seedMenuItems(
   console.log(`  ✅ ${total} menu items ready`);
 }
 
+// ─── 10b. Deal ↔ Menu Item links ────────────────────────────────
+
+async function seedDealMenuItems(
+  merchants: { id: number; businessName: string }[],
+) {
+  console.log('\n🔗 Linking deals to menu items...');
+
+  let linked = 0;
+
+  for (const merchant of merchants) {
+    // Get all deals for this merchant
+    const deals = await prisma.deal.findMany({
+      where: { merchantId: merchant.id },
+      select: { id: true, title: true },
+    });
+
+    // Get all menu items for this merchant
+    const menuItems = await prisma.menuItem.findMany({
+      where: { merchantId: merchant.id },
+      select: { id: true },
+    });
+
+    if (deals.length === 0 || menuItems.length === 0) continue;
+
+    for (const deal of deals) {
+      // Check if this deal already has DealMenuItem records
+      const existingCount = await prisma.dealMenuItem.count({
+        where: { dealId: deal.id },
+      });
+      if (existingCount > 0) {
+        linked += existingCount;
+        continue;
+      }
+
+      // Link ALL of the merchant's menu items to the deal
+      for (const mi of menuItems) {
+        try {
+          await prisma.dealMenuItem.create({
+            data: {
+              dealId: deal.id,
+              menuItemId: mi.id,
+              useGlobalDiscount: true,
+            },
+          });
+          linked++;
+        } catch (e: any) {
+          // Skip duplicates (unique constraint)
+          if (e?.code !== 'P2002') throw e;
+        }
+      }
+    }
+  }
+
+  console.log(`  ✅ ${linked} deal–menu links ready`);
+}
+
 // ─── 11. Menu Collections ───────────────────────────────────────
 
 async function seedMenuCollections(
@@ -1281,6 +1337,9 @@ async function main() {
     // 10: Menu Items
     await seedMenuItems(merchants);
 
+    // 10b: Link deals ↔ menu items (DealMenuItem join records)
+    await seedDealMenuItems(merchants);
+
     // 11: Menu Collections
     await seedMenuCollections(merchants);
 
@@ -1330,6 +1389,7 @@ async function main() {
       dealTypes: await prisma.dealTypeMaster.count(),
       deals: await prisma.deal.count(),
       menuItems: await prisma.menuItem.count(),
+      dealMenuLinks: await prisma.dealMenuItem.count(),
       menuCollections: await prisma.menuCollection.count(),
       tables: await prisma.table.count(),
       timeSlots: await prisma.timeSlot.count(),
