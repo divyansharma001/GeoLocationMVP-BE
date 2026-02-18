@@ -27,6 +27,10 @@ import {
   LoyaltyTier,
   NudgeType,
   NudgeFrequency,
+  MenuDealType,
+  TableStatus,
+  VenueRewardType,
+  VenueRewardStatus,
 } from '@prisma/client';
 
 const PASSWORD = 'Test@1234';
@@ -509,7 +513,519 @@ async function seedNudges() {
   console.log(`  ✅ ${nudges.length} nudges ready`);
 }
 
-// ─── 10. Events + Ticket Tiers + Add-ons ────────────────────────
+// ─── 10. Menu Items ─────────────────────────────────────────────
+
+async function seedMenuItems(
+  merchants: { id: number; businessName: string }[],
+) {
+  console.log('\n🍽️  Seeding menu items...');
+
+  const menuData: Record<string, { name: string; description: string; price: number; category: string; happyHourPrice?: number; isHappyHour?: boolean; dealType?: MenuDealType }[]> = {
+    'The Velvet Lounge': [
+      { name: 'Espresso Martini', description: 'Vodka, fresh espresso, Kahlúa, vanilla syrup', price: 16, category: 'Cocktails', happyHourPrice: 10, isHappyHour: true, dealType: MenuDealType.HAPPY_HOUR_BOUNTY },
+      { name: 'Old Fashioned', description: 'Bourbon, bitters, orange peel, luxardo cherry', price: 18, category: 'Cocktails', happyHourPrice: 12, isHappyHour: true },
+      { name: 'Smoky Negroni', description: 'Mezcal, Campari, sweet vermouth, smoked rosemary', price: 17, category: 'Cocktails' },
+      { name: 'Truffle Fries', description: 'Parmesan, truffle oil, fresh herbs', price: 14, category: 'Small Plates' },
+      { name: 'Wagyu Sliders', description: 'Three wagyu beef sliders with aioli and pickled onion', price: 22, category: 'Small Plates' },
+      { name: 'Charcuterie Board', description: 'Imported cheeses, cured meats, honeycomb, artisan crackers', price: 28, category: 'Shared Plates' },
+      { name: 'Champagne Flight', description: 'Three 3oz pours of premium champagne', price: 32, category: 'Wine & Bubbles', happyHourPrice: 20, isHappyHour: true },
+      { name: 'Red Wine Glass', description: 'Rotating selection of premium red wines', price: 15, category: 'Wine & Bubbles' },
+    ],
+    'Spice Route Kitchen': [
+      { name: 'Butter Chicken', description: 'Tender chicken in rich tomato-cream sauce, served with basmati', price: 19, category: 'Mains' },
+      { name: 'Lamb Rogan Josh', description: 'Slow-braised lamb in Kashmiri spices', price: 23, category: 'Mains' },
+      { name: 'Paneer Tikka Masala', description: 'Grilled paneer in creamy spiced sauce', price: 17, category: 'Mains' },
+      { name: 'Samosa Platter', description: 'Six crispy samosas with three chutneys', price: 11, category: 'Starters', happyHourPrice: 7, isHappyHour: true },
+      { name: 'Garlic Naan', description: 'Wood-fired naan with roasted garlic and butter', price: 5, category: 'Breads' },
+      { name: 'Mango Lassi', description: 'Creamy mango yogurt drink', price: 6, category: 'Drinks' },
+      { name: 'Masala Chai', description: 'Authentic spiced tea with cardamom and ginger', price: 4, category: 'Drinks' },
+      { name: 'Gulab Jamun', description: 'Three warm milk dumplings in rose-cardamom syrup', price: 8, category: 'Desserts' },
+      { name: 'Thali Platter', description: 'Chef\'s selection: appetizer, two curries, rice, naan, raita, dessert', price: 26, category: 'Specials', happyHourPrice: 13, isHappyHour: true, dealType: MenuDealType.HAPPY_HOUR_MID_DAY },
+    ],
+    'Neon Nights Club': [
+      { name: 'Neon Glow Shot', description: 'UV-reactive vodka shot with blue curaçao', price: 8, category: 'Shots', happyHourPrice: 5, isHappyHour: true },
+      { name: 'DJ\'s Punch Bowl', description: 'Serves 4 — rum, passion fruit, pineapple, grenadine', price: 45, category: 'Shared Drinks' },
+      { name: 'Vodka Red Bull', description: 'Premium vodka with Red Bull — classic club fuel', price: 14, category: 'Cocktails', happyHourPrice: 9, isHappyHour: true },
+      { name: 'Bottle Service (Grey Goose)', description: '750ml Grey Goose with mixers and sparklers', price: 350, category: 'Bottle Service' },
+      { name: 'Bottle Service (Dom Pérignon)', description: '750ml Dom Pérignon with sparklers', price: 500, category: 'Bottle Service' },
+      { name: 'Loaded Nachos', description: 'Nachos with cheese, jalapeños, guac, sour cream', price: 13, category: 'Late Night Bites', happyHourPrice: 8, isHappyHour: true, dealType: MenuDealType.HAPPY_HOUR_LATE_NIGHT },
+      { name: 'Chicken Wings Basket', description: 'Buffalo or BBQ wings, served with ranch', price: 14, category: 'Late Night Bites' },
+    ],
+    'Sunset Taco Co.': [
+      { name: 'Street Taco (Carne Asada)', description: 'Grilled steak, onion, cilantro, lime on corn tortilla', price: 4, category: 'Tacos' },
+      { name: 'Street Taco (Al Pastor)', description: 'Marinated pork, pineapple, onion, cilantro', price: 4, category: 'Tacos' },
+      { name: 'Street Taco (Carnitas)', description: 'Slow-braised pork, pickled onion, salsa verde', price: 4, category: 'Tacos' },
+      { name: 'Street Taco (Veggie)', description: 'Grilled peppers, squash, black beans, queso fresco', price: 3.5, category: 'Tacos' },
+      { name: 'Burrito Grande', description: 'Choose your protein — rice, beans, cheese, pico, guac', price: 12, category: 'Burritos' },
+      { name: 'Queso Fundido', description: 'Melted Oaxaca cheese with chorizo, served with chips', price: 10, category: 'Starters', happyHourPrice: 6, isHappyHour: true },
+      { name: 'Elotes', description: 'Mexican street corn with mayo, cotija, tajín', price: 6, category: 'Sides' },
+      { name: 'Horchata', description: 'Traditional rice and cinnamon drink', price: 4, category: 'Drinks' },
+      { name: 'Margarita (Classic)', description: 'Tequila, fresh lime, agave, salt rim', price: 11, category: 'Cocktails', happyHourPrice: 7, isHappyHour: true },
+      { name: 'Mexican Beer Bucket', description: '5 bottles: Corona, Modelo, Pacifico mix', price: 22, category: 'Beer', happyHourPrice: 15, isHappyHour: true },
+    ],
+  };
+
+  let total = 0;
+  for (const [bizName, items] of Object.entries(menuData)) {
+    const merchant = merchants.find((m) => m.businessName === bizName);
+    if (!merchant) continue;
+
+    for (const item of items) {
+      const existing = await prisma.menuItem.findFirst({
+        where: { merchantId: merchant.id, name: item.name },
+      });
+      if (existing) { total++; continue; }
+
+      await prisma.menuItem.create({
+        data: {
+          merchantId: merchant.id,
+          name: item.name,
+          description: item.description,
+          price: item.price,
+          category: item.category,
+          happyHourPrice: item.happyHourPrice ?? null,
+          isHappyHour: item.isHappyHour ?? false,
+          dealType: item.dealType ?? MenuDealType.STANDARD,
+        },
+      });
+      total++;
+    }
+  }
+  console.log(`  ✅ ${total} menu items ready`);
+}
+
+// ─── 11. Menu Collections ───────────────────────────────────────
+
+async function seedMenuCollections(
+  merchants: { id: number; businessName: string }[],
+) {
+  console.log('\n📋 Seeding menu collections...');
+
+  const collectionsData: Record<string, { name: string; description: string; itemNames: string[] }[]> = {
+    'The Velvet Lounge': [
+      { name: 'Happy Hour Specials', description: 'Discounted cocktails 5–8 PM daily', itemNames: ['Espresso Martini', 'Old Fashioned', 'Champagne Flight'] },
+      { name: 'Date Night', description: 'Perfect pairing for two', itemNames: ['Charcuterie Board', 'Smoky Negroni', 'Red Wine Glass'] },
+    ],
+    'Spice Route Kitchen': [
+      { name: 'Lunch Express', description: 'Quick weekday lunch options', itemNames: ['Thali Platter', 'Garlic Naan', 'Mango Lassi'] },
+      { name: 'Vegetarian Favorites', description: 'Our best meat-free dishes', itemNames: ['Paneer Tikka Masala', 'Samosa Platter', 'Garlic Naan', 'Gulab Jamun'] },
+    ],
+    'Sunset Taco Co.': [
+      { name: 'Taco Tuesday Picks', description: 'Our most popular Tuesday tacos', itemNames: ['Street Taco (Carne Asada)', 'Street Taco (Al Pastor)', 'Street Taco (Carnitas)', 'Street Taco (Veggie)'] },
+      { name: 'Happy Hour Combos', description: 'Drinks + bites at special prices', itemNames: ['Margarita (Classic)', 'Mexican Beer Bucket', 'Queso Fundido'] },
+    ],
+  };
+
+  let total = 0;
+  for (const [bizName, collections] of Object.entries(collectionsData)) {
+    const merchant = merchants.find((m) => m.businessName === bizName);
+    if (!merchant) continue;
+
+    for (const col of collections) {
+      const existing = await prisma.menuCollection.findFirst({
+        where: { merchantId: merchant.id, name: col.name },
+      });
+      if (existing) { total++; continue; }
+
+      const collection = await prisma.menuCollection.create({
+        data: { merchantId: merchant.id, name: col.name, description: col.description, isActive: true },
+      });
+
+      const menuItems = await prisma.menuItem.findMany({
+        where: { merchantId: merchant.id, name: { in: col.itemNames } },
+      });
+
+      for (let i = 0; i < menuItems.length; i++) {
+        await prisma.menuCollectionItem.create({
+          data: { collectionId: collection.id, menuItemId: menuItems[i].id, sortOrder: i + 1 },
+        });
+      }
+      total++;
+    }
+  }
+  console.log(`  ✅ ${total} menu collections ready`);
+}
+
+// ─── 12. Tables & Booking Settings ──────────────────────────────
+
+async function seedTablesAndBookings(
+  merchants: { id: number; businessName: string }[],
+) {
+  console.log('\n🪑 Seeding tables & booking settings...');
+
+  const tablesData: Record<string, { name: string; capacity: number; features: string[] }[]> = {
+    'The Velvet Lounge': [
+      { name: 'Bar Seat 1-4', capacity: 4, features: ['bar_seating'] },
+      { name: 'Booth A', capacity: 4, features: ['booth', 'intimate'] },
+      { name: 'Booth B', capacity: 6, features: ['booth', 'group'] },
+      { name: 'Rooftop Table 1', capacity: 4, features: ['rooftop', 'view'] },
+      { name: 'Rooftop Table 2', capacity: 6, features: ['rooftop', 'view'] },
+      { name: 'VIP Lounge', capacity: 8, features: ['vip', 'private', 'bottle_service'] },
+    ],
+    'Spice Route Kitchen': [
+      { name: 'Window Table 1', capacity: 2, features: ['window', 'romantic'] },
+      { name: 'Window Table 2', capacity: 2, features: ['window', 'romantic'] },
+      { name: 'Main Floor 1', capacity: 4, features: ['main_floor'] },
+      { name: 'Main Floor 2', capacity: 4, features: ['main_floor'] },
+      { name: 'Large Party Table', capacity: 10, features: ['group', 'main_floor'] },
+      { name: 'Private Dining Room', capacity: 12, features: ['private', 'group', 'events'] },
+    ],
+    'Sunset Taco Co.': [
+      { name: 'Patio Table 1', capacity: 4, features: ['patio', 'outdoor'] },
+      { name: 'Patio Table 2', capacity: 4, features: ['patio', 'outdoor'] },
+      { name: 'Patio Table 3', capacity: 6, features: ['patio', 'outdoor', 'group'] },
+      { name: 'Indoor Booth', capacity: 4, features: ['booth', 'indoor'] },
+      { name: 'Bar Counter', capacity: 6, features: ['bar_seating', 'casual'] },
+    ],
+  };
+
+  let tableCount = 0;
+  for (const [bizName, tables] of Object.entries(tablesData)) {
+    const merchant = merchants.find((m) => m.businessName === bizName);
+    if (!merchant) continue;
+
+    // Booking settings
+    const existingSettings = await prisma.bookingSettings.findUnique({ where: { merchantId: merchant.id } });
+    if (!existingSettings) {
+      await prisma.bookingSettings.create({
+        data: {
+          merchantId: merchant.id,
+          advanceBookingDays: 30,
+          minPartySize: 1,
+          maxPartySize: bizName === 'Spice Route Kitchen' ? 12 : 8,
+          bookingDuration: bizName === 'The Velvet Lounge' ? 150 : 90,
+          requiresConfirmation: true,
+          autoConfirm: bizName === 'Sunset Taco Co.',
+          cancellationHours: 2,
+          sendReminders: true,
+          reminderHours: 2,
+        },
+      });
+    }
+
+    for (const t of tables) {
+      const existing = await prisma.table.findFirst({
+        where: { merchantId: merchant.id, name: t.name },
+      });
+      if (existing) { tableCount++; continue; }
+
+      await prisma.table.create({
+        data: {
+          merchantId: merchant.id,
+          name: t.name,
+          capacity: t.capacity,
+          features: t.features,
+          status: TableStatus.AVAILABLE,
+        },
+      });
+      tableCount++;
+    }
+  }
+  console.log(`  ✅ ${tableCount} tables + booking settings ready`);
+}
+
+// ─── 13. Time Slots ─────────────────────────────────────────────
+
+async function seedTimeSlots(
+  merchants: { id: number; businessName: string }[],
+) {
+  console.log('\n🕐 Seeding time slots...');
+
+  const slotsData: Record<string, { dayOfWeek: number; startTime: string; endTime: string; duration: number; maxBookings: number }[]> = {
+    'The Velvet Lounge': [
+      // Tue–Sat evenings (dayOfWeek 2–6)
+      ...([2, 3, 4, 5, 6] as number[]).flatMap((day) => [
+        { dayOfWeek: day, startTime: '17:00', endTime: '19:00', duration: 120, maxBookings: 4 },
+        { dayOfWeek: day, startTime: '19:00', endTime: '21:00', duration: 120, maxBookings: 4 },
+        { dayOfWeek: day, startTime: '21:00', endTime: '23:00', duration: 120, maxBookings: 3 },
+      ]),
+    ],
+    'Spice Route Kitchen': [
+      // Mon–Sat lunch + dinner
+      ...([1, 2, 3, 4, 5, 6] as number[]).flatMap((day) => [
+        { dayOfWeek: day, startTime: '11:00', endTime: '12:30', duration: 90, maxBookings: 5 },
+        { dayOfWeek: day, startTime: '12:30', endTime: '14:00', duration: 90, maxBookings: 5 },
+        { dayOfWeek: day, startTime: '18:00', endTime: '19:30', duration: 90, maxBookings: 5 },
+        { dayOfWeek: day, startTime: '19:30', endTime: '21:00', duration: 90, maxBookings: 5 },
+        { dayOfWeek: day, startTime: '21:00', endTime: '22:30', duration: 90, maxBookings: 3 },
+      ]),
+    ],
+    'Sunset Taco Co.': [
+      // Every day lunch + dinner
+      ...([0, 1, 2, 3, 4, 5, 6] as number[]).flatMap((day) => [
+        { dayOfWeek: day, startTime: '11:00', endTime: '13:00', duration: 60, maxBookings: 4 },
+        { dayOfWeek: day, startTime: '17:00', endTime: '19:00', duration: 60, maxBookings: 4 },
+        { dayOfWeek: day, startTime: '19:00', endTime: '21:00', duration: 60, maxBookings: 4 },
+      ]),
+    ],
+  };
+
+  let total = 0;
+  for (const [bizName, slots] of Object.entries(slotsData)) {
+    const merchant = merchants.find((m) => m.businessName === bizName);
+    if (!merchant) continue;
+
+    for (const s of slots) {
+      const existing = await prisma.timeSlot.findFirst({
+        where: { merchantId: merchant.id, dayOfWeek: s.dayOfWeek, startTime: s.startTime },
+      });
+      if (existing) { total++; continue; }
+
+      await prisma.timeSlot.create({
+        data: { merchantId: merchant.id, ...s, isActive: true },
+      });
+      total++;
+    }
+  }
+  console.log(`  ✅ ${total} time slots ready`);
+}
+
+// ─── 14. Merchant Loyalty Programs ──────────────────────────────
+
+async function seedLoyaltyPrograms(
+  merchants: { id: number; businessName: string }[],
+) {
+  console.log('\n💎 Seeding loyalty programs...');
+
+  const programsData: Record<string, { pointsPerDollar: number; minimumPurchase: number; minimumRedemption: number; redemptionValue: number; allowCombineWithDeals: boolean }> = {
+    'The Velvet Lounge': { pointsPerDollar: 0.5, minimumPurchase: 10, minimumRedemption: 50, redemptionValue: 10, allowCombineWithDeals: false },
+    'Spice Route Kitchen': { pointsPerDollar: 0.4, minimumPurchase: 5, minimumRedemption: 25, redemptionValue: 5, allowCombineWithDeals: true },
+    'Neon Nights Club': { pointsPerDollar: 0.3, minimumPurchase: 20, minimumRedemption: 30, redemptionValue: 8, allowCombineWithDeals: true },
+    'Sunset Taco Co.': { pointsPerDollar: 0.6, minimumPurchase: 5, minimumRedemption: 20, redemptionValue: 5, allowCombineWithDeals: true },
+  };
+
+  for (const [bizName, config] of Object.entries(programsData)) {
+    const merchant = merchants.find((m) => m.businessName === bizName);
+    if (!merchant) continue;
+
+    const existing = await prisma.merchantLoyaltyProgram.findUnique({ where: { merchantId: merchant.id } });
+    if (existing) continue;
+
+    await prisma.merchantLoyaltyProgram.create({
+      data: {
+        merchantId: merchant.id,
+        isActive: true,
+        ...config,
+        pointExpirationDays: 365,
+        earnOnDiscounted: false,
+      },
+    });
+  }
+  console.log(`  ✅ ${Object.keys(programsData).length} loyalty programs ready`);
+}
+
+// ─── 15. Loyalty Tier Config ────────────────────────────────────
+
+async function seedLoyaltyTierConfig() {
+  console.log('\n🏅 Seeding loyalty tier config...');
+
+  const tiers = [
+    { tier: LoyaltyTier.BRONZE, minSpent: 0, coinMultiplier: 1.0, discountPercentage: 0, tierColor: '#CD7F32', tierIcon: '🥉', specialPerks: { perks: ['Access to standard deals'] } },
+    { tier: LoyaltyTier.SILVER, minSpent: 100, coinMultiplier: 1.25, discountPercentage: 5, tierColor: '#C0C0C0', tierIcon: '🥈', specialPerks: { perks: ['5% discount on all deals', 'Early access to flash sales'] } },
+    { tier: LoyaltyTier.GOLD, minSpent: 500, coinMultiplier: 1.5, discountPercentage: 10, tierColor: '#FFD700', tierIcon: '🥇', specialPerks: { perks: ['10% discount', 'Priority booking', 'Free birthday reward'] } },
+    { tier: LoyaltyTier.PLATINUM, minSpent: 1500, coinMultiplier: 2.0, discountPercentage: 15, tierColor: '#E5E4E2', tierIcon: '💎', specialPerks: { perks: ['15% discount', 'VIP events access', 'Concierge support'] } },
+    { tier: LoyaltyTier.DIAMOND, minSpent: 5000, coinMultiplier: 3.0, discountPercentage: 20, tierColor: '#B9F2FF', tierIcon: '👑', specialPerks: { perks: ['20% discount', 'Exclusive deals', 'Personal account manager', 'Free upgrades'] } },
+  ];
+
+  for (const t of tiers) {
+    await prisma.loyaltyTierConfig.upsert({
+      where: { tier: t.tier },
+      update: { minSpent: t.minSpent, coinMultiplier: t.coinMultiplier, discountPercentage: t.discountPercentage },
+      create: t,
+    });
+  }
+  console.log(`  ✅ ${tiers.length} loyalty tiers configured`);
+}
+
+// ─── 16. User Streaks ───────────────────────────────────────────
+
+async function seedUserStreaks(
+  users: { id: number; email: string; role: UserRole }[],
+) {
+  console.log('\n🔥 Seeding user streaks...');
+  const consumers = users.filter((u) => u.role === UserRole.USER);
+
+  const streakData = [
+    { email: 'alex@test.com', currentStreak: 5, longestStreak: 12, totalCheckIns: 34, currentWeekCheckIns: 3 },
+    { email: 'james@test.com', currentStreak: 15, longestStreak: 15, totalCheckIns: 78, currentWeekCheckIns: 5 },
+    { email: 'maria@test.com', currentStreak: 2, longestStreak: 7, totalCheckIns: 12, currentWeekCheckIns: 2 },
+    { email: 'david@test.com', currentStreak: 0, longestStreak: 4, totalCheckIns: 8, currentWeekCheckIns: 0 },
+    { email: 'priya@test.com', currentStreak: 1, longestStreak: 3, totalCheckIns: 5, currentWeekCheckIns: 1 },
+  ];
+
+  for (const s of streakData) {
+    const user = consumers.find((u) => u.email === s.email);
+    if (!user) continue;
+
+    const existing = await prisma.userStreak.findUnique({ where: { userId: user.id } });
+    if (existing) continue;
+
+    await prisma.userStreak.create({
+      data: {
+        userId: user.id,
+        currentStreak: s.currentStreak,
+        longestStreak: s.longestStreak,
+        totalCheckIns: s.totalCheckIns,
+        currentWeekCheckIns: s.currentWeekCheckIns,
+        lastCheckInDate: s.currentStreak > 0 ? new Date() : new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+        streakStartDate: s.currentStreak > 0 ? new Date(Date.now() - s.currentStreak * 24 * 60 * 60 * 1000) : null,
+        currentDiscountPercent: Math.min(s.currentStreak * 2, 20),
+      },
+    });
+  }
+  console.log(`  ✅ ${streakData.length} user streaks ready`);
+}
+
+// ─── 17. Delivered Nudges (UserNudge) ───────────────────────────
+
+async function seedUserNudges(
+  users: { id: number; email: string; role: UserRole }[],
+) {
+  console.log('\n📬 Seeding delivered nudges for consumer UI testing...');
+  const consumers = users.filter((u) => u.role === UserRole.USER);
+  const nudges = await prisma.nudge.findMany();
+  if (nudges.length === 0) { console.log('  ⏭  No nudge templates — skipping'); return; }
+
+  let count = 0;
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000);
+
+  for (const consumer of consumers.slice(0, 3)) {
+    for (const nudge of nudges.slice(0, 3)) {
+      const existing = await prisma.userNudge.findFirst({
+        where: { userId: consumer.id, nudgeId: nudge.id },
+      });
+      if (existing) { count++; continue; }
+
+      const isRecent = count % 2 === 0;
+      await prisma.userNudge.create({
+        data: {
+          userId: consumer.id,
+          nudgeId: nudge.id,
+          sentAt: isRecent ? hoursAgo(1) : hoursAgo(48),
+          deliveredVia: isRecent ? 'websocket' : 'email',
+          delivered: true,
+          opened: !isRecent,
+          openedAt: !isRecent ? hoursAgo(47) : null,
+          clicked: false,
+          dismissed: !isRecent,
+          contextData: { source: 'seed_script', testData: true },
+        },
+      });
+      count++;
+    }
+  }
+  console.log(`  ✅ ${count} delivered nudges seeded`);
+}
+
+// ─── 18. Venue Rewards ──────────────────────────────────────────
+
+async function seedVenueRewards(
+  merchants: { id: number; businessName: string; latitude?: number | null; longitude?: number | null }[],
+) {
+  console.log('\n🎯 Seeding venue rewards...');
+
+  const now = new Date();
+  const inDays = (d: number) => new Date(now.getTime() + d * 24 * 60 * 60 * 1000);
+
+  const rewardsData = [
+    {
+      merchantBiz: 'The Velvet Lounge',
+      title: 'Check-in Bonus: 50 Coins',
+      description: 'Visit The Velvet Lounge and earn 50 bonus coins just for checking in!',
+      rewardType: VenueRewardType.COINS,
+      rewardAmount: 50,
+      geoFenceRadiusMeters: 100,
+      status: VenueRewardStatus.ACTIVE,
+      startDate: now,
+      endDate: inDays(60),
+      maxTotalClaims: 500,
+      maxClaimsPerUser: 3,
+      cooldownHours: 48,
+    },
+    {
+      merchantBiz: 'Spice Route Kitchen',
+      title: '10% Off Your Next Visit',
+      description: 'Check in at Spice Route and get 10% off your next meal!',
+      rewardType: VenueRewardType.DISCOUNT_PERCENTAGE,
+      rewardAmount: 10,
+      geoFenceRadiusMeters: 150,
+      status: VenueRewardStatus.ACTIVE,
+      startDate: now,
+      endDate: inDays(90),
+      maxTotalClaims: 200,
+      maxClaimsPerUser: 2,
+      cooldownHours: 72,
+    },
+    {
+      merchantBiz: 'Neon Nights Club',
+      title: 'Free Glow Shot on Entry',
+      description: 'Check in at Neon Nights and claim a free Neon Glow Shot at the bar!',
+      rewardType: VenueRewardType.FREE_ITEM,
+      rewardAmount: 8,
+      geoFenceRadiusMeters: 80,
+      status: VenueRewardStatus.ACTIVE,
+      startDate: now,
+      endDate: inDays(30),
+      maxTotalClaims: 100,
+      maxClaimsPerUser: 1,
+      cooldownHours: 168,
+    },
+    {
+      merchantBiz: 'Sunset Taco Co.',
+      title: 'Bonus Points: Double Loyalty',
+      description: 'Check in during happy hour and earn double loyalty points on your order!',
+      rewardType: VenueRewardType.BONUS_POINTS,
+      rewardAmount: 2,
+      geoFenceRadiusMeters: 120,
+      status: VenueRewardStatus.ACTIVE,
+      startDate: now,
+      endDate: inDays(45),
+      maxTotalClaims: 300,
+      maxClaimsPerUser: 5,
+      cooldownHours: 24,
+    },
+  ];
+
+  let count = 0;
+  for (const r of rewardsData) {
+    const merchant = merchants.find((m) => m.businessName === r.merchantBiz) as any;
+    if (!merchant) continue;
+
+    const existing = await prisma.venueReward.findFirst({
+      where: { merchantId: merchant.id, title: r.title },
+    });
+    if (existing) { count++; continue; }
+
+    // Find the store for this merchant
+    const store = await prisma.store.findFirst({ where: { merchantId: merchant.id } });
+
+    await prisma.venueReward.create({
+      data: {
+        merchantId: merchant.id,
+        storeId: store?.id ?? null,
+        title: r.title,
+        description: r.description,
+        rewardType: r.rewardType,
+        rewardAmount: r.rewardAmount,
+        geoFenceRadiusMeters: r.geoFenceRadiusMeters,
+        latitude: merchant.latitude ?? null,
+        longitude: merchant.longitude ?? null,
+        status: r.status,
+        startDate: r.startDate,
+        endDate: r.endDate,
+        maxTotalClaims: r.maxTotalClaims,
+        maxClaimsPerUser: r.maxClaimsPerUser,
+        cooldownHours: r.cooldownHours,
+        requiresCheckIn: true,
+        isVerifiedOnly: false,
+      },
+    });
+    count++;
+  }
+  console.log(`  ✅ ${count} venue rewards ready`);
+}
+
+// ─── 19. Events + Ticket Tiers + Add-ons ────────────────────────
 
 async function seedEvents(
   users: { id: number; email: string; role: UserRole }[],
@@ -762,7 +1278,42 @@ async function main() {
     // 9: Nudges
     await seedNudges();
 
-    // 10: Events
+    // 10: Menu Items
+    await seedMenuItems(merchants);
+
+    // 11: Menu Collections
+    await seedMenuCollections(merchants);
+
+    // 12: Tables & Booking Settings
+    await seedTablesAndBookings(merchants);
+
+    // 13: Time Slots
+    await seedTimeSlots(merchants);
+
+    // 14: Loyalty Programs
+    await seedLoyaltyPrograms(merchants);
+
+    // 15: Loyalty Tier Config
+    await seedLoyaltyTierConfig();
+
+    // 16: User Streaks
+    await seedUserStreaks(users);
+
+    // 17: Delivered Nudges
+    await seedUserNudges(users);
+
+    // 18: Venue Rewards (optional — table may not exist yet)
+    try {
+      await seedVenueRewards(merchants);
+    } catch (e: any) {
+      if (e?.code === 'P2021') {
+        console.log('\n🎯 Skipping venue rewards — table not yet migrated');
+      } else {
+        throw e;
+      }
+    }
+
+    // 19: Events
     await seedEvents(users, merchants, cities);
 
     // ─── Summary ──────────────────────────────────────
@@ -778,8 +1329,16 @@ async function main() {
       dealCategories: await prisma.dealCategoryMaster.count(),
       dealTypes: await prisma.dealTypeMaster.count(),
       deals: await prisma.deal.count(),
+      menuItems: await prisma.menuItem.count(),
+      menuCollections: await prisma.menuCollection.count(),
+      tables: await prisma.table.count(),
+      timeSlots: await prisma.timeSlot.count(),
       achievements: await prisma.achievement.count(),
+      loyaltyPrograms: await prisma.merchantLoyaltyProgram.count(),
       nudges: await prisma.nudge.count(),
+      deliveredNudges: await prisma.userNudge.count(),
+      userStreaks: await prisma.userStreak.count(),
+      venueRewards: await prisma.venueReward.count(),
       events: await prisma.event.count(),
       ticketTiers: await prisma.eventTicketTier.count(),
       eventAddOns: await prisma.eventAddOn.count(),
