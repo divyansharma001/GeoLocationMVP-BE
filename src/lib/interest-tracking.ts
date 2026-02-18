@@ -22,7 +22,7 @@ export function trackInterest(params: {
 }) {
   prisma.businessInterestLog
     .create({ data: params })
-    .catch((err) => {
+    .catch((err: unknown) => {
       logger.error('[interest-tracking] Failed to log interest event:', err);
     });
 }
