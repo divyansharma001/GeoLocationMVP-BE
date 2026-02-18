@@ -55,7 +55,7 @@ export class NudgeService {
     if (nudge.timeWindowStart && nudge.timeWindowEnd) {
       const now = new Date();
       const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-      
+
       if (currentTime < nudge.timeWindowStart || currentTime > nudge.timeWindowEnd) {
         logger.info(`Nudge ${nudgeId} blocked by time window for user ${userId}`);
         return false;
@@ -66,8 +66,14 @@ export class NudgeService {
     if (prefs?.quietHoursStart && prefs?.quietHoursEnd) {
       const now = new Date();
       const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-      
-      if (currentTime >= prefs.quietHoursStart || currentTime <= prefs.quietHoursEnd) {
+
+      // Quiet hours may span midnight (e.g. 22:00 - 08:00)
+      const spans_midnight = prefs.quietHoursStart > prefs.quietHoursEnd;
+      const inQuietHours = spans_midnight
+        ? (currentTime >= prefs.quietHoursStart || currentTime <= prefs.quietHoursEnd)
+        : (currentTime >= prefs.quietHoursStart && currentTime <= prefs.quietHoursEnd);
+
+      if (inQuietHours) {
         logger.info(`Nudge blocked by user quiet hours for user ${userId}`);
         return false;
       }
@@ -129,6 +135,54 @@ export class NudgeService {
   }
 
   /**
+   * Force-send a nudge (bypasses cooldown, preferences, and quiet hours).
+   * Sends directly via WebSocket — does NOT require the Bull queue / Redis.
+   * Used by the admin "test nudge" endpoint.
+   */
+  async forceSendNudge(userId: number, nudgeId: number, contextData?: any): Promise<void> {
+    const nudge = await prisma.nudge.findUnique({ where: { id: nudgeId } });
+    if (!nudge) throw new Error(`Nudge ${nudgeId} not found`);
+
+    const userNudge = await prisma.userNudge.create({
+      data: {
+        userId,
+        nudgeId,
+        contextData,
+        delivered: false,
+        deliveredVia: 'pending'
+      }
+    });
+
+    // Send directly via WebSocket (no queue needed)
+    try {
+      const { getIO } = await import('../lib/websocket/socket.server');
+      const io = getIO();
+      io.to(`user:${userId}`).emit('nudge', {
+        id: userNudge.id,
+        type: nudge.type,
+        title: nudge.title,
+        message: nudge.message,
+        data: contextData,
+        timestamp: new Date().toISOString()
+      });
+
+      await prisma.userNudge.update({
+        where: { id: userNudge.id },
+        data: { delivered: true, deliveredVia: 'websocket' }
+      });
+
+      logger.info(`Force-sent nudge ${nudgeId} to user ${userId} via WebSocket (admin test)`);
+    } catch (err) {
+      // WebSocket not available — still mark as delivered so admin sees it in history
+      await prisma.userNudge.update({
+        where: { id: userNudge.id },
+        data: { delivered: true, deliveredVia: 'direct' }
+      });
+      logger.warn(`Force-sent nudge ${nudgeId} to user ${userId} (WS unavailable, saved to DB)`, err);
+    }
+  }
+
+  /**
    * Send nudge to multiple users
    */
   async sendNudgeToMany(userIds: number[], nudgeId: number, contextData?: any): Promise<void> {
@@ -146,6 +200,15 @@ export class NudgeService {
       include: { nudge: true },
       orderBy: { sentAt: 'desc' },
       take: limit
+    });
+  }
+
+  /**
+   * Get a single UserNudge record by ID (for ownership validation).
+   */
+  async getUserNudgeById(userNudgeId: number) {
+    return prisma.userNudge.findUnique({
+      where: { id: userNudgeId }
     });
   }
 
@@ -168,7 +231,7 @@ export class NudgeService {
    */
   async getNudgeAnalytics(nudgeId?: number) {
     const where = nudgeId ? { nudgeId } : {};
-    
+
     const [total, delivered, opened, clicked] = await Promise.all([
       prisma.userNudge.count({ where }),
       prisma.userNudge.count({ where: { ...where, delivered: true } }),

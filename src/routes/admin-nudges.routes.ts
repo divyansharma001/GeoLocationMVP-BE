@@ -226,7 +226,7 @@ router.post('/:id/test/:userId', async (req, res) => {
       });
     }
 
-    await nudgeService.sendNudge(userId, nudgeId, contextData);
+    await nudgeService.forceSendNudge(userId, nudgeId, contextData);
 
     res.json({
       success: true,

@@ -90,6 +90,27 @@ export const isMerchant = async (req: AuthRequest, res: Response, next: NextFunc
   }
 };
 
+/**
+ * Optional auth middleware - populates req.user if a valid token exists,
+ * but does NOT reject the request if no token or invalid token.
+ */
+export const optionalAuth = async (req: AuthRequest, _res: Response, next: NextFunction) => {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) return next();
+
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, jwtSecret) as { userId: number; email: string };
+      req.user = { id: decoded.userId, email: decoded.email };
+    } catch {
+      // Token invalid/expired — continue as unauthenticated
+    }
+  }
+  next();
+};
+
 // Middleware: require ADMIN role
 export const requireAdmin = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {

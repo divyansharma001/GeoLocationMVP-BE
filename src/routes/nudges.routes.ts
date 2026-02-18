@@ -111,6 +111,14 @@ router.post('/:id/engage', protect, async (req: AuthRequest, res) => {
       });
     }
 
+    const userNudge = await nudgeService.getUserNudgeById(userNudgeId);
+    if (!userNudge || userNudge.userId !== req.user!.id) {
+      return res.status(404).json({
+        success: false,
+        message: 'Nudge not found'
+      });
+    }
+
     await nudgeService.trackEngagement(userNudgeId, action);
 
     res.json({

@@ -27,8 +27,8 @@ export const requireEventOrganizer = async (
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Allow EVENT_ORGANIZER, EVENT_OWNER, SUPER_ADMIN, or ADMIN
-    if (!['EVENT_ORGANIZER', 'EVENT_OWNER', 'SUPER_ADMIN', 'ADMIN'].includes(user.role)) {
+    // Allow EVENT_ORGANIZER, EVENT_OWNER, SUPER_ADMIN, ADMIN, or MERCHANT
+    if (!['EVENT_ORGANIZER', 'EVENT_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MERCHANT'].includes(user.role)) {
       return res.status(403).json({ 
         error: 'Access denied. Event organizer privileges required.' 
       });

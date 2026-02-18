@@ -655,8 +655,8 @@ router.get('/deals/:id', async (req, res) => {
       `${deal.discountPercentage}% OFF` : 
       (deal.discountAmount ? `$${deal.discountAmount} OFF` : 'Special Offer');
 
-    // Format menu items
-    const formattedMenuItems = deal.menuItems.map(item => ({
+    // Format menu items from DealMenuItem join records
+    let formattedMenuItems = deal.menuItems.map(item => ({
       id: item.menuItem.id,
       name: item.menuItem.name,
       description: item.menuItem.description,
@@ -667,6 +667,38 @@ router.get('/deals/:id', async (req, res) => {
       imageUrl: item.menuItem.imageUrl,
       category: item.menuItem.category
     }));
+
+    // Fallback: if no DealMenuItem records, show all merchant menu items
+    if (formattedMenuItems.length === 0 && deal.merchantId) {
+      const merchantMenuItems = await prisma.menuItem.findMany({
+        where: { merchantId: deal.merchantId },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          price: true,
+          imageUrl: true,
+          category: true,
+          isHappyHour: true,
+          happyHourPrice: true,
+          dealType: true,
+        },
+        orderBy: [{ category: 'asc' }, { name: 'asc' }],
+      });
+      formattedMenuItems = merchantMenuItems.map(item => ({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        originalPrice: item.price,
+        discountedPrice: deal.discountPercentage
+          ? item.price * (1 - deal.discountPercentage / 100)
+          : deal.discountAmount
+          ? Math.max(0, item.price - deal.discountAmount)
+          : item.price,
+        imageUrl: item.imageUrl,
+        category: item.category,
+      }));
+    }
 
     // Enhanced social proof with both saves and check-ins
     const socialProof = {

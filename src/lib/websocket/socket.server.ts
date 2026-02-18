@@ -26,7 +26,7 @@ export function setupWebSocket(httpServer: HTTPServer) {
       const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
       socket.data.userId = decoded.id;
       socket.data.email = decoded.email;
-      
+
       next();
     } catch (error) {
       next(new Error('Authentication error: Invalid token'));
@@ -57,6 +57,8 @@ export function setupWebSocket(httpServer: HTTPServer) {
     // Handle nudge engagement
     socket.on('nudge:opened', async (data: { userNudgeId: number }) => {
       try {
+        const record = await prisma.userNudge.findUnique({ where: { id: data.userNudgeId } });
+        if (!record || record.userId !== userId) return; // ownership check
         await prisma.userNudge.update({
           where: { id: data.userNudgeId },
           data: { opened: true, openedAt: new Date() }
@@ -69,6 +71,8 @@ export function setupWebSocket(httpServer: HTTPServer) {
 
     socket.on('nudge:clicked', async (data: { userNudgeId: number }) => {
       try {
+        const record = await prisma.userNudge.findUnique({ where: { id: data.userNudgeId } });
+        if (!record || record.userId !== userId) return; 
         await prisma.userNudge.update({
           where: { id: data.userNudgeId },
           data: { clicked: true, clickedAt: new Date() }
@@ -81,6 +85,8 @@ export function setupWebSocket(httpServer: HTTPServer) {
 
     socket.on('nudge:dismissed', async (data: { userNudgeId: number }) => {
       try {
+        const record = await prisma.userNudge.findUnique({ where: { id: data.userNudgeId } });
+        if (!record || record.userId !== userId) return; 
         await prisma.userNudge.update({
           where: { id: data.userNudgeId },
           data: { dismissed: true }

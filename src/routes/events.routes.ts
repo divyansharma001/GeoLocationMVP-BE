@@ -2,7 +2,7 @@
 
 import { Router, Response } from 'express';
 import crypto from 'crypto';
-import { protect, AuthRequest } from '../middleware/auth.middleware';
+import { protect, optionalAuth, AuthRequest } from '../middleware/auth.middleware';
 import { 
   requireEventOrganizer, 
   verifyEventOwnership,
@@ -201,7 +201,7 @@ router.get('/events', async (req: AuthRequest, res: Response) => {
  * GET /api/events/:id
  * Get single event details (public)
  */
-router.get('/events/:id', async (req: AuthRequest, res: Response) => {
+router.get('/events/:id', optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
     const eventId = parseInt(req.params.id as string);
 
@@ -250,11 +250,39 @@ router.get('/events/:id', async (req: AuthRequest, res: Response) => {
     }
 
     // Check if event is private and requires access code
-    if (event.isPrivate && !req.user) {
-      return res.status(403).json({ 
-        error: 'This is a private event. Authentication required.',
-        requiresAccessCode: true
+    if (event.isPrivate) {
+      if (!req.user) {
+        return res.status(403).json({ 
+          error: 'This is a private event. Authentication required.',
+          requiresAccessCode: true
+        });
+      }
+
+      // Allow organizer or merchant owner to always view their own private events
+      const isOrganizer = event.organizerId === req.user.id;
+      let isMerchantOwner = false;
+      if (event.merchantId) {
+        const merchant = await prisma.merchant.findUnique({
+          where: { id: event.merchantId },
+          select: { ownerId: true }
+        });
+        isMerchantOwner = merchant?.ownerId === req.user.id;
+      }
+
+      // Check user role for admin access
+      const userRecord = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { role: true }
       });
+      const isAdmin = userRecord?.role === 'ADMIN' || userRecord?.role === 'SUPER_ADMIN';
+
+      if (!isOrganizer && !isMerchantOwner && !isAdmin) {
+        // Non-owner authenticated users still need access code
+        return res.status(403).json({ 
+          error: 'This is a private event. Access code required.',
+          requiresAccessCode: true
+        });
+      }
     }
 
     // If user is authenticated, check if they have access
@@ -283,6 +311,13 @@ router.get('/events/:id', async (req: AuthRequest, res: Response) => {
     const formattedEvent = formatEventResponse(event);
 
     res.json({
+      event: {
+        ...formattedEvent,
+        userAttendee,
+        userTickets,
+        isUserAttending: !!userAttendee || (userTickets && userTickets.length > 0)
+      },
+      // Also spread at top level for backward compatibility
       ...formattedEvent,
       userAttendee,
       userTickets,
@@ -1423,7 +1458,20 @@ router.get('/my-events', protect, async (req: AuthRequest, res: Response) => {
     const userId = req.user!.id;
     const { status } = req.query;
 
-    const where: any = { organizerId: userId };
+    // Find merchant IDs owned by this user
+    const ownedMerchants = await prisma.merchant.findMany({
+      where: { ownerId: userId },
+      select: { id: true }
+    });
+    const merchantIds = ownedMerchants.map(m => m.id);
+
+    // Include events the user organizes OR events hosted by their merchants
+    const where: any = {
+      OR: [
+        { organizerId: userId },
+        ...(merchantIds.length > 0 ? [{ merchantId: { in: merchantIds } }] : [])
+      ]
+    };
     if (status) {
       where.status = status;
     }
