@@ -161,7 +161,17 @@ router.get('/me', protect, async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.status(200).json(user);
+    // Check if user owns a merchant
+    const merchant = await prisma.merchant.findUnique({
+      where: { ownerId: userId! },
+      select: { id: true, status: true },
+    });
+
+    res.status(200).json({
+      ...user,
+      merchantId: merchant?.id ?? null,
+      merchantStatus: merchant?.status ?? null,
+    });
   } catch (error) {
     console.error('Get me error:', error);
     res.status(500).json({ error: 'Internal server error' });
