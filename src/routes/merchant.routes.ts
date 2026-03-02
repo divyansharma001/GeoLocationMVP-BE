@@ -48,45 +48,37 @@ const excelUpload = multer({
 });
 
 // --- Endpoint: POST /api/merchants/register ---
-// Allows a user to register as a merchant.
+// Allows a user to register as a merchant. No location/store required — those are added via store creation.
 router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
   try {
-  const { businessName, address, description, logoUrl, phoneNumber, latitude, longitude, cityId, businessType } = req.body;
+    const {
+      businessName,
+      description,
+      logoUrl,
+      phoneNumber,
+      businessType,
+      businessCategory,
+      categoryId,
+      websiteUrl,
+      instagramUrl,
+      facebookUrl,
+      twitterUrl,
+      priceRange,
+      galleryUrls,
+    } = req.body;
     const userId = req.user?.id;
 
     if (!userId) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    if (!businessName || !address) {
-      return res.status(400).json({ error: 'Business name and address are required' });
+    if (!businessName) {
+      return res.status(400).json({ error: 'Business name is required' });
     }
 
     // Validate businessType if provided
     if (businessType && !['NATIONAL', 'LOCAL'].includes(businessType)) {
       return res.status(400).json({ error: 'Business type must be either NATIONAL or LOCAL' });
-    }
-
-    // Validate coordinates if provided
-    if (latitude !== undefined || longitude !== undefined) {
-      if (latitude === undefined || longitude === undefined) {
-        return res.status(400).json({ error: 'Both latitude and longitude must be provided together' });
-      }
-
-      const lat = parseFloat(latitude);
-      const lon = parseFloat(longitude);
-
-      if (isNaN(lat) || isNaN(lon)) {
-        return res.status(400).json({ error: 'Latitude and longitude must be valid numbers' });
-      }
-
-      if (lat < -90 || lat > 90) {
-        return res.status(400).json({ error: 'Latitude must be between -90 and 90 degrees' });
-      }
-
-      if (lon < -180 || lon > 180) {
-        return res.status(400).json({ error: 'Longitude must be between -180 and 180 degrees' });
-      }
     }
 
     const existingMerchant = await prisma.merchant.findUnique({
@@ -97,34 +89,38 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
       return res.status(409).json({ error: 'You have already registered as a merchant.' });
     }
 
-    // Enforce selection of an existing ACTIVE city (no on-the-fly creation anymore)
-    if (!cityId) {
-      return res.status(400).json({ error: 'cityId is required. Only pre-approved active cities may be selected.' });
+    // Resolve categoryId from businessCategory string if provided (e.g. "Restaurant" -> DealCategoryMaster id)
+    let resolvedCategoryId: number | null = null;
+    if (categoryId) {
+      const cat = await prisma.dealCategoryMaster.findUnique({ where: { id: Number(categoryId) } });
+      if (cat) resolvedCategoryId = cat.id;
     }
-    // @ts-ignore - available after Prisma generate
-    const existingCity = await prisma.city.findUnique({ where: { id: Number(cityId) } });
-    if (!existingCity) {
-      return res.status(400).json({ error: 'Invalid cityId provided.' });
+    if (!resolvedCategoryId && businessCategory) {
+      const cat = await prisma.dealCategoryMaster.findFirst({
+        where: { name: { equals: businessCategory, mode: 'insensitive' } },
+      });
+      if (cat) resolvedCategoryId = cat.id;
     }
-    if (!existingCity.active) {
-      return res.status(400).json({ error: 'Selected city is not active for merchant onboarding.' });
-    }
-    const resolvedCityId: number = existingCity.id;
+
+    const galleryArray = Array.isArray(galleryUrls) ? galleryUrls : typeof galleryUrls === 'string' ? (galleryUrls ? [galleryUrls] : []) : [];
 
     const [merchant] = await prisma.$transaction([
       prisma.merchant.create({
         data: {
           businessName,
-          address,
-          description,
-          logoUrl,
+          address: null, // No address during onboarding; set when stores are added
+          description: description || null,
+          logoUrl: logoUrl || null,
           phoneNumber: phoneNumber || null,
-          businessType: businessType || 'LOCAL', // Default to LOCAL if not provided
-          latitude: latitude ? parseFloat(latitude) : null,
-          longitude: longitude ? parseFloat(longitude) : null,
-          // legacy free-form city usage disabled for new merchants
-          city: null,
-          owner: { connect: { id: userId } },
+          businessType: businessType || 'LOCAL',
+          websiteUrl: websiteUrl || null,
+          instagramUrl: instagramUrl || null,
+          facebookUrl: facebookUrl || null,
+          twitterUrl: twitterUrl || null,
+          priceRange: priceRange || null,
+          galleryUrls: galleryArray,
+          categoryId: resolvedCategoryId,
+          ownerId: userId,
         },
       }),
       prisma.user.update({
@@ -133,25 +129,10 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
       }),
     ]);
 
-    // If a city was resolved, create a Store for this merchant
-    let store = null as any;
-    // @ts-ignore - available after Prisma generate
-    store = await prisma.store.create({
-      data: {
-        merchantId: merchant.id,
-        cityId: resolvedCityId,
-        address,
-        latitude: latitude ? parseFloat(latitude) : null,
-        longitude: longitude ? parseFloat(longitude) : null,
-      }
-    });
-
     res.status(201).json({
-      message: 'Merchant application submitted successfully. It is now pending approval.',
+      message: 'Merchant application submitted successfully. It is now pending approval. Add your first location from the dashboard.',
       merchant,
-      store,
     });
-
   } catch (error) {
     console.error('Merchant registration error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -180,6 +161,13 @@ router.get('/merchants/status', protect, async (req: AuthRequest, res) => {
         logoUrl: true,
         phoneNumber: true,
         city: true,
+        websiteUrl: true,
+        instagramUrl: true,
+        facebookUrl: true,
+        twitterUrl: true,
+        priceRange: true,
+        galleryUrls: true,
+        categoryId: true,
         createdAt: true,
         updatedAt: true
       }
@@ -4211,7 +4199,7 @@ router.post('/merchants/stores', protect, isApprovedMerchant, requireMerchantVer
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
 
-    const { address, latitude, longitude, cityId, active } = req.body || {};
+    const { address, latitude, longitude, cityId, active, description, operatingHours, galleryUrls, isFoodTruck } = req.body || {};
     if (!address) return res.status(400).json({ error: 'address is required' });
     if (!cityId) return res.status(400).json({ error: 'cityId is required. Only existing active cities may be used.' });
     // @ts-ignore
@@ -4225,21 +4213,70 @@ router.post('/merchants/stores', protect, isApprovedMerchant, requireMerchantVer
     if (lat !== null && (isNaN(lat) || lat < -90 || lat > 90)) return res.status(400).json({ error: 'Latitude must be a number between -90 and 90' });
     if (lon !== null && (isNaN(lon) || lon < -180 || lon > 180)) return res.status(400).json({ error: 'Longitude must be a number between -180 and 180' });
 
+    const galleryArray = Array.isArray(galleryUrls) ? galleryUrls : typeof galleryUrls === 'string' ? (galleryUrls ? [galleryUrls] : []) : [];
+    const hours = operatingHours && typeof operatingHours === 'object' ? operatingHours : null;
+
     // @ts-ignore
     const store = await prisma.store.create({
       data: {
         merchantId,
-  cityId: resolvedCityId,
+        cityId: resolvedCityId,
         address,
         latitude: lat,
         longitude: lon,
         active: typeof active === 'boolean' ? active : true,
+        description: description || null,
+        operatingHours: hours,
+        galleryUrls: galleryArray,
+        isFoodTruck: typeof isFoodTruck === 'boolean' ? isFoodTruck : false,
       },
       include: { city: true }
     });
     res.status(201).json({ message: 'Store created', store });
   } catch (e) {
     console.error('Create store failed', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Endpoint: PUT /api/merchants/stores/:storeId ---
+// Update a store for the authenticated approved merchant
+router.put('/merchants/stores/:storeId', protect, isApprovedMerchant, requireMerchantVerified, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const storeId = parseInt(req.params.storeId as string, 10);
+    if (isNaN(storeId)) return res.status(400).json({ error: 'Invalid store ID' });
+
+    const existing = await prisma.store.findFirst({ where: { id: storeId, merchantId } });
+    if (!existing) return res.status(404).json({ error: 'Store not found' });
+
+    const { address, latitude, longitude, cityId, active, description, operatingHours, galleryUrls, isFoodTruck } = req.body || {};
+
+    const updateData: Record<string, unknown> = {};
+    if (address !== undefined) updateData.address = address;
+    if (cityId !== undefined) {
+      const city = await prisma.city.findUnique({ where: { id: Number(cityId) } });
+      if (!city || !city.active) return res.status(400).json({ error: 'Invalid or inactive city' });
+      updateData.cityId = city.id;
+    }
+    if (latitude !== undefined) updateData.latitude = latitude === null || latitude === '' ? null : parseFloat(latitude);
+    if (longitude !== undefined) updateData.longitude = longitude === null || longitude === '' ? null : parseFloat(longitude);
+    if (typeof active === 'boolean') updateData.active = active;
+    if (description !== undefined) updateData.description = description || null;
+    if (operatingHours !== undefined) updateData.operatingHours = operatingHours && typeof operatingHours === 'object' ? operatingHours : null;
+    if (galleryUrls !== undefined) updateData.galleryUrls = Array.isArray(galleryUrls) ? galleryUrls : [];
+    if (typeof isFoodTruck === 'boolean') updateData.isFoodTruck = isFoodTruck;
+
+    const store = await prisma.store.update({
+      where: { id: storeId },
+      data: updateData,
+      include: { city: true }
+    });
+    res.status(200).json({ message: 'Store updated', store });
+  } catch (e) {
+    console.error('Update store failed', e);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

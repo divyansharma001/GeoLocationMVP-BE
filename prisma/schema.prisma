@@ -18,6 +18,7 @@ model DealCategoryMaster {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   deals       Deal[]
+  merchants   Merchant[]
 
   @@index([active, sortOrder])
 }
@@ -135,7 +136,7 @@ model SocialAccount {
 model Merchant {
   id                  Int                       @id @default(autoincrement())
   businessName        String
-  address             String
+  address             String?                   // Optional during onboarding; set when stores are added
   description         String?
   logoUrl             String?
   status              MerchantStatus            @default(PENDING)
@@ -147,6 +148,17 @@ model Merchant {
   city                String?
   phoneNumber         String?
   businessType        BusinessType              @default(LOCAL)
+  // Extended onboarding fields (no location required)
+  websiteUrl          String?
+  instagramUrl        String?
+  facebookUrl         String?
+  twitterUrl          String?
+  priceRange          String?                   // e.g. "$", "$$", "$$$"
+  galleryUrls         String[]                  @default([])
+  categoryId          Int?                      // Link to DealCategoryMaster for business category
+  vibeTags            String[]                  @default([]) // e.g. ENERGIZED, CHILL, UPSCALE, FAMILY-FRIENDLY
+  amenities           String[]                  @default([]) // e.g. WIFI, PARKING, OUTDOOR_SEATING
+  thingsToNote        String?                   // Optional extra info for customers
   bookings            Booking[]
   bookingSettings     BookingSettings?
   deals               Deal[]
@@ -154,6 +166,7 @@ model Merchant {
   menuCollections     MenuCollection[]
   menuItems           MenuItem[]
   owner               User                      @relation(fields: [ownerId], references: [id])
+  category            DealCategoryMaster?       @relation(fields: [categoryId], references: [id])
   stores              Store[]
   tables              Table[]
   timeSlots           TimeSlot[]
@@ -299,18 +312,23 @@ model City {
 }
 
 model Store {
-  id         Int      @id @default(autoincrement())
-  merchantId Int
-  cityId     Int
-  address    String
-  latitude   Float?
-  longitude  Float?
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  city         City          @relation(fields: [cityId], references: [id])
-  merchant     Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  venueRewards VenueReward[]
+  id             Int      @id @default(autoincrement())
+  merchantId     Int
+  cityId         Int
+  address        String
+  latitude       Float?
+  longitude      Float?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  // Store-specific fields (location, food truck, hours, media)
+  description    String?  // Store about; fallback to merchant.description
+  operatingHours Json?    // { "0": { "open": "11:00", "close": "22:00", "closed": false }, ... } day 0=Sun, 6=Sat
+  galleryUrls    String[] @default([])
+  isFoodTruck    Boolean  @default(false)
+  city           City     @relation(fields: [cityId], references: [id])
+  merchant       Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  venueRewards   VenueReward[]
 
   @@index([merchantId])
   @@index([cityId])

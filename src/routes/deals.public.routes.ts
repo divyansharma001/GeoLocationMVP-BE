@@ -729,7 +729,7 @@ router.get('/deals/:id', async (req, res) => {
       })
       .slice(0, 10);
 
-    // Format merchant details
+    // Format merchant details (include status for Verified Venue badge)
     const merchantDetails = {
       id: deal.merchant.id,
       businessName: deal.merchant.businessName,
@@ -739,14 +739,19 @@ router.get('/deals/:id', async (req, res) => {
       longitude: deal.merchant.longitude,
       logoUrl: deal.merchant.logoUrl,
       phoneNumber: deal.merchant.phoneNumber,
+      status: deal.merchant.status,
       totalDeals: deal.merchant._count.deals,
       totalStores: deal.merchant._count.stores,
-      stores: deal.merchant.stores.map(store => ({
+      stores: deal.merchant.stores.map((store: any) => ({
         id: store.id,
         address: store.address,
         latitude: store.latitude,
         longitude: store.longitude,
         active: store.active,
+        description: store.description ?? null,
+        operatingHours: store.operatingHours ?? null,
+        galleryUrls: store.galleryUrls ?? [],
+        isFoodTruck: store.isFoodTruck ?? false,
         city: {
           id: store.city.id,
           name: store.city.name,
