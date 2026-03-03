@@ -70,11 +70,11 @@ export class ChatbotService {
       const events = await prisma.event.findMany({
         where: {
           status: 'PUBLISHED',
-          startTime: { gte: new Date() },
+          startDate: { gte: new Date() },
           latitude: { gte: lat - delta, lte: lat + delta },
           longitude: { gte: lng - delta, lte: lng + delta },
         },
-        select: { title: true, eventType: true, venueName: true, startTime: true },
+        select: { title: true, eventType: true, venueName: true, startDate: true },
         take: 3,
       });
 
@@ -82,7 +82,7 @@ export class ChatbotService {
         title: e.title,
         type: e.eventType,
         venue: e.venueName ?? null,
-        date: e.startTime ? e.startTime.toLocaleDateString() : 'TBD',
+        date: e.startDate ? e.startDate.toLocaleDateString() : 'TBD',
       }));
     }
 

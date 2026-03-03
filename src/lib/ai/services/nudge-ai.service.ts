@@ -24,14 +24,14 @@ export class NudgeAIService {
       select: {
         name: true,
         loyaltyTier: true,
-        streak: { select: { currentStreak: true, lastCheckInAt: true } },
+        streak: { select: { currentStreak: true, lastCheckInDate: true } },
       },
     });
 
     if (!user) throw new Error('User not found.');
 
-    const daysSinceLastCheckIn = user.streak?.lastCheckInAt
-      ? Math.floor((Date.now() - user.streak.lastCheckInAt.getTime()) / (1000 * 60 * 60 * 24))
+    const daysSinceLastCheckIn = user.streak?.lastCheckInDate
+      ? Math.floor((Date.now() - user.streak.lastCheckInDate.getTime()) / (1000 * 60 * 60 * 24))
       : 99;
 
     const prompt = NUDGE_PERSONALIZATION_PROMPT({

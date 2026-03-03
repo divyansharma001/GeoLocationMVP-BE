@@ -108,7 +108,7 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
       prisma.merchant.create({
         data: {
           businessName,
-          address: null, // No address during onboarding; set when stores are added
+          address: '', // No address during onboarding; set when stores are added
           description: description || null,
           logoUrl: logoUrl || null,
           phoneNumber: phoneNumber || null,
@@ -161,7 +161,6 @@ router.get('/merchants/status', protect, async (req: AuthRequest, res) => {
         logoUrl: true,
         phoneNumber: true,
         city: true,
-        websiteUrl: true,
         instagramUrl: true,
         facebookUrl: true,
         twitterUrl: true,
@@ -4225,7 +4224,6 @@ router.post('/merchants/stores', protect, isApprovedMerchant, requireMerchantVer
         latitude: lat,
         longitude: lon,
         active: typeof active === 'boolean' ? active : true,
-        description: description || null,
         operatingHours: hours,
         galleryUrls: galleryArray,
         isFoodTruck: typeof isFoodTruck === 'boolean' ? isFoodTruck : false,
