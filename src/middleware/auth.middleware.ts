@@ -23,7 +23,7 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
       token = req.headers.authorization.split(' ')[1];
       const decoded = jwt.verify(token, jwtSecret) as { userId: number; email: string };
       req.user = { id: decoded.userId, email: decoded.email };
-      next();
+      return next();
     } catch (error) {
       return res.status(401).json({ error: 'Not authorized, token failed' });
     }

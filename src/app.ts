@@ -31,6 +31,7 @@ import adminNudgesRoutes from './routes/admin-nudges.routes';
 import kittyRoutes from './routes/kitty.routes';
 import adminGamesRoutes from './routes/admin-games.routes';
 import venueRewardRoutes from './routes/venue-reward.routes';
+import aiRoutes from './routes/ai.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -142,6 +143,7 @@ app.use('/api/nudges', nudgesRoutes);
 app.use('/api/kitty', kittyRoutes);
 app.use('/api/admin/games', adminGamesRoutes);
 app.use('/api/venue-rewards', venueRewardRoutes);
+app.use('/api/ai', aiRoutes);
 
 export default app;
 
