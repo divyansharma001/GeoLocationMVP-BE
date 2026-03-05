@@ -12,7 +12,7 @@ export const genAI = new GoogleGenerativeAI(apiKey || '');
 export const flashModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 // Pro model — structured JSON extraction, business insights, menu parsing
-export const proModel = genAI.getGenerativeModel({ model: 'gemini-3.1-pro-preview' });
+export const proModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 export const isAIEnabled = (): boolean => !!apiKey;
 
