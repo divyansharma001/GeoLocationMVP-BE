@@ -3,6 +3,7 @@ import { Router, Response } from 'express';
 import { protect, isApprovedMerchant, isMerchant, AuthRequest } from '../middleware/auth.middleware';
 import { requireMerchantVerified } from '../middleware/verification-lock.middleware';
 import prisma from '../lib/prisma';
+import { Prisma } from '@prisma/client';
 import { uploadImage, deleteImage, uploadToCloudinary } from '../lib/cloudinary';
 import { slugify } from '../lib/slugify';
 import multer from 'multer';
@@ -53,6 +54,7 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
   try {
     const {
       businessName,
+      address,
       description,
       logoUrl,
       phoneNumber,
@@ -65,6 +67,9 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
       twitterUrl,
       priceRange,
       galleryUrls,
+      vibeTags,
+      amenities,
+      stores,
     } = req.body;
     const userId = req.user?.id;
 
@@ -103,12 +108,91 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
     }
 
     const galleryArray = Array.isArray(galleryUrls) ? galleryUrls : typeof galleryUrls === 'string' ? (galleryUrls ? [galleryUrls] : []) : [];
+    const vibeTagsArray = Array.isArray(vibeTags) ? vibeTags.filter((tag: unknown) => typeof tag === 'string') : [];
+    const amenitiesArray = Array.isArray(amenities) ? amenities.filter((item: unknown) => typeof item === 'string') : [];
 
-    const [merchant] = await prisma.$transaction([
-      prisma.merchant.create({
+    const storeInputs = Array.isArray(stores) ? stores : [];
+    const firstStoreAddress =
+      storeInputs.length > 0 && typeof storeInputs[0]?.address === 'string' && storeInputs[0].address.trim()
+        ? storeInputs[0].address.trim()
+        : null;
+    const merchantAddress = typeof address === 'string' && address.trim() ? address.trim() : firstStoreAddress;
+
+    const preparedStores: Array<{
+      cityId: number;
+      address: string;
+      latitude: number | null;
+      longitude: number | null;
+      active: boolean;
+      description: string | null;
+      operatingHours: Prisma.InputJsonValue | null;
+      galleryUrls: string[];
+      isFoodTruck: boolean;
+    }> = [];
+
+    for (const rawStore of storeInputs) {
+      if (!rawStore || typeof rawStore !== 'object') {
+        return res.status(400).json({ error: 'Each store must be an object' });
+      }
+
+      const rawAddress = typeof (rawStore as { address?: unknown }).address === 'string' ? (rawStore as { address: string }).address.trim() : '';
+      const rawCityId = (rawStore as { cityId?: unknown }).cityId;
+      const rawLatitude = (rawStore as { latitude?: unknown }).latitude;
+      const rawLongitude = (rawStore as { longitude?: unknown }).longitude;
+
+      if (!rawAddress) {
+        return res.status(400).json({ error: 'Store address is required' });
+      }
+
+      const parsedCityId = Number(rawCityId);
+      if (!rawCityId || Number.isNaN(parsedCityId)) {
+        return res.status(400).json({ error: 'Each store requires a valid cityId' });
+      }
+
+      // @ts-ignore
+      const city = await prisma.city.findUnique({ where: { id: parsedCityId } });
+      if (!city) {
+        return res.status(400).json({ error: `Invalid cityId: ${parsedCityId}` });
+      }
+      if (!city.active) {
+        return res.status(400).json({ error: `City is not active for cityId: ${parsedCityId}` });
+      }
+
+      const lat = rawLatitude !== undefined && rawLatitude !== null && String(rawLatitude) !== '' ? parseFloat(String(rawLatitude)) : null;
+      const lon = rawLongitude !== undefined && rawLongitude !== null && String(rawLongitude) !== '' ? parseFloat(String(rawLongitude)) : null;
+
+      if (lat !== null && (Number.isNaN(lat) || lat < -90 || lat > 90)) {
+        return res.status(400).json({ error: 'Store latitude must be a number between -90 and 90' });
+      }
+      if (lon !== null && (Number.isNaN(lon) || lon < -180 || lon > 180)) {
+        return res.status(400).json({ error: 'Store longitude must be a number between -180 and 180' });
+      }
+
+      const storeGallery = Array.isArray((rawStore as { galleryUrls?: unknown }).galleryUrls)
+        ? ((rawStore as { galleryUrls: unknown[] }).galleryUrls.filter((item) => typeof item === 'string') as string[])
+        : [];
+
+      const rawHours = (rawStore as { operatingHours?: unknown }).operatingHours;
+      const storeHours = rawHours && typeof rawHours === 'object' ? (rawHours as Prisma.InputJsonValue) : null;
+
+      preparedStores.push({
+        cityId: parsedCityId,
+        address: rawAddress,
+        latitude: lat,
+        longitude: lon,
+        active: typeof (rawStore as { active?: unknown }).active === 'boolean' ? Boolean((rawStore as { active: unknown }).active) : true,
+        description: typeof (rawStore as { description?: unknown }).description === 'string' ? (rawStore as { description: string }).description : null,
+        operatingHours: storeHours,
+        galleryUrls: storeGallery,
+        isFoodTruck: typeof (rawStore as { isFoodTruck?: unknown }).isFoodTruck === 'boolean' ? Boolean((rawStore as { isFoodTruck: unknown }).isFoodTruck) : false,
+      });
+    }
+
+    const { merchant, createdStoreIds } = await prisma.$transaction(async (tx) => {
+      const createdMerchant = await tx.merchant.create({
         data: {
           businessName,
-          address: '', // No address during onboarding; set when stores are added
+          address: merchantAddress || '',
           description: description || null,
           logoUrl: logoUrl || null,
           phoneNumber: phoneNumber || null,
@@ -119,19 +203,51 @@ router.post('/merchants/register', protect, async (req: AuthRequest, res) => {
           twitterUrl: twitterUrl || null,
           priceRange: priceRange || null,
           galleryUrls: galleryArray,
+          vibeTags: vibeTagsArray,
+          amenities: amenitiesArray,
           categoryId: resolvedCategoryId,
           ownerId: userId,
         },
-      }),
-      prisma.user.update({
+      });
+
+      await tx.user.update({
         where: { id: userId },
         data: { role: 'MERCHANT' },
-      }),
-    ]);
+      });
+
+      const ids: number[] = [];
+      for (const store of preparedStores) {
+        // @ts-ignore
+        const createdStore = await tx.store.create({
+          data: {
+            merchantId: createdMerchant.id,
+            cityId: store.cityId,
+            address: store.address,
+            latitude: store.latitude,
+            longitude: store.longitude,
+            active: store.active,
+            description: store.description,
+            operatingHours: store.operatingHours ?? undefined,
+            galleryUrls: store.galleryUrls,
+            isFoodTruck: store.isFoodTruck,
+          },
+        });
+        ids.push(createdStore.id);
+      }
+
+      return { merchant: createdMerchant, createdStoreIds: ids };
+    });
+
+    const createdStores = createdStoreIds.length
+      ? await prisma.store.findMany({ where: { id: { in: createdStoreIds } }, include: { city: true } })
+      : [];
 
     res.status(201).json({
-      message: 'Merchant application submitted successfully. It is now pending approval. Add your first location from the dashboard.',
+      message: createdStores.length
+        ? 'Merchant application submitted successfully with initial store(s). It is now pending approval.'
+        : 'Merchant application submitted successfully. It is now pending approval. Add your first location from the dashboard.',
       merchant,
+      stores: createdStores,
     });
   } catch (error) {
     console.error('Merchant registration error:', error);
