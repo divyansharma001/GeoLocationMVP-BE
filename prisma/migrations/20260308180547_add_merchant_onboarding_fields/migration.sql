@@ -1,0 +1,2 @@
+-- This migration was intentionally left empty (placeholder).
+-- The schema changes were applied inline with prior migrations.

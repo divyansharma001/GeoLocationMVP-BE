@@ -329,6 +329,7 @@ model Store {
   city           City     @relation(fields: [cityId], references: [id])
   merchant       Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   venueRewards   VenueReward[]
+  menuCollections MenuCollection[]
 
   @@index([merchantId])
   @@index([cityId])
@@ -343,6 +344,7 @@ model MenuItem {
   price              Float
   category           String
   imageUrl           String?
+  imageUrls          String[]             @default([])
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
   happyHourPrice     Float?
@@ -386,13 +388,26 @@ model MenuCollection {
   name        String
   description String?
   isActive    Boolean              @default(true)
+  menuType    MenuCollectionType   @default(STANDARD)
+  subType     String?              // e.g. DAILY, KIDS, DRINKS, DESSERTS, EARLY_MORNING, EVENING, LATE_NIGHT
+  startTime   String?              // Happy hour start e.g. "06:00"
+  endTime     String?              // Happy hour end e.g. "11:00"
+  themeName   String?              // For special event menus
+  icon        String?              // Lucide icon name for display
+  color       String?              // Theme color hex
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
+  
+  storeId     Int?
+  store       Store?               @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
   merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   items       MenuCollectionItem[]
 
   @@index([merchantId])
+  @@index([storeId])
   @@index([merchantId, isActive])
+  @@index([merchantId, menuType])
   @@index([name])
 }
 
@@ -1125,6 +1140,12 @@ enum MenuDealType {
   REDEEM_NOW_SURPRISE
   STANDARD
   RECURRING
+}
+
+enum MenuCollectionType {
+  STANDARD
+  HAPPY_HOUR
+  SPECIAL
 }
 
 enum PointEventType {
