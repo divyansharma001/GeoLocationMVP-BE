@@ -312,7 +312,6 @@ model Store {
   galleryUrls    String[]         @default([])
   isFoodTruck    Boolean          @default(false)
   operatingHours Json?
-  MenuCollection MenuCollection[]
   city           City             @relation(fields: [cityId], references: [id])
   merchant       Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   venueRewards   VenueReward[]
@@ -342,7 +341,6 @@ model MenuItem {
   validDays          String?
   validEndTime       String?
   validStartTime     String?
-  imageUrls          String[]             @default([])
   dealLinks          DealMenuItem[]
   collectionItems    MenuCollectionItem[]
   merchant           Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
@@ -385,13 +383,6 @@ model MenuCollection {
   color       String?              // Theme color hex
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
-  menuType    MenuCollectionType   @default(STANDARD)
-  subType     String?
-  startTime   String?
-  endTime     String?
-  themeName   String?
-  icon        String?
-  color       String?
   storeId     Int?
   merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   Store       Store?               @relation(fields: [storeId], references: [id])
@@ -402,8 +393,6 @@ model MenuCollection {
   @@index([merchantId, isActive])
   @@index([merchantId, menuType])
   @@index([name])
-  @@index([merchantId, menuType])
-  @@index([storeId])
 }
 
 model MenuCollectionItem {
@@ -1642,12 +1631,6 @@ enum VerificationStepType {
 enum ClaimVerificationMethod {
   GPS
   QR_CODE
-}
-
-enum MenuCollectionType {
-  STANDARD
-  HAPPY_HOUR
-  SPECIAL
 }
 
 enum ServiceStatus {
