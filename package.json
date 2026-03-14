@@ -10,6 +10,7 @@
     "test:ci": "jest --ci --reporters=default --runInBand",
     "backfill:referrals": "ts-node scripts/backfill-referral-codes.ts",
     "seed:cities": "ts-node scripts/seed-cities.ts",
+    "seed:all": "ts-node scripts/seed-all.ts",
     "seed:gamification": "ts-node scripts/seed-gamification.ts",
     "db:ensure-city-store": "ts-node scripts/manual-create-city-store.ts",
     "db:ensure-and-seed-cities": "npm run db:ensure-city-store && npm run seed:cities",

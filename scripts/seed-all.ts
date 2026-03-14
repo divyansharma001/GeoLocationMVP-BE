@@ -28,6 +28,7 @@ import {
   NudgeType,
   NudgeFrequency,
   MenuDealType,
+  ServiceStatus,
   TableStatus,
   VenueRewardType,
   VenueRewardStatus,
@@ -207,7 +208,22 @@ async function seedMerchants(users: { id: number; email: string; role: UserRole 
 
     const existing = await prisma.merchant.findUnique({ where: { ownerId: owner.id } });
     if (existing) {
-      createdMerchants.push({ id: existing.id, ownerId: existing.ownerId, businessName: existing.businessName, latitude: existing.latitude, longitude: existing.longitude });
+      const updated = await prisma.merchant.update({
+        where: { id: existing.id },
+        data: {
+          businessName: m.businessName,
+          address: m.address,
+          description: m.description,
+          phoneNumber: m.phoneNumber,
+          latitude: m.latitude,
+          longitude: m.longitude,
+          city: m.city,
+          logoUrl: m.logoUrl,
+          businessType: m.businessType,
+          status: MerchantStatus.APPROVED,
+        },
+      });
+      createdMerchants.push({ id: updated.id, ownerId: updated.ownerId, businessName: updated.businessName, latitude: updated.latitude, longitude: updated.longitude });
       continue;
     }
 
@@ -321,6 +337,41 @@ async function seedDeals(
   const now = new Date();
   const inDays = (d: number) => new Date(now.getTime() + d * 24 * 60 * 60 * 1000);
 
+  const categoryImageFallbacks: Record<string, string[]> = {
+    'Food': [
+      'https://images.unsplash.com/photo-1551504734-5ee1c4a1479b?w=900&q=80',
+      'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=900&q=80',
+      'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=900&q=80',
+    ],
+    'Entertainment': [
+      'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=900&q=80',
+      'https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=900&q=80',
+      'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=900&q=80',
+    ],
+    'Nightlife': [
+      'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=900&q=80',
+      'https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=900&q=80',
+      'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=900&q=80',
+    ],
+    'Health & Fitness': [
+      'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=900&q=80',
+      'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=900&q=80',
+      'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=900&q=80',
+    ],
+    'Beauty & Spa': [
+      'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?w=900&q=80',
+      'https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?w=900&q=80',
+      'https://images.unsplash.com/photo-1515377905703-c4788e51af15?w=900&q=80',
+    ],
+  };
+
+  const enrichDealImages = (imageUrls: string[] | undefined, categoryName: string): string[] => {
+    const base = (imageUrls || []).filter(Boolean);
+    const fallbacks = categoryImageFallbacks[categoryName] || categoryImageFallbacks['Food'];
+    const merged = [...new Set([...base, ...fallbacks])];
+    return merged.slice(0, 5);
+  };
+
   const dealsData = [
     // Velvet Lounge deals
     {
@@ -430,6 +481,30 @@ async function seedDeals(
       redemptionInstructions: 'Show this deal at checkout. Valid for dine-in and takeout.',
       imageUrls: ['https://images.unsplash.com/photo-1626700051175-6818013e1d4f?w=600'],
     },
+    {
+      merchantBiz: 'Spice Route Kitchen',
+      title: 'Wellness Bowl + Fresh Juice Combo',
+      description: 'Balanced protein bowl paired with a fresh-pressed juice at 35% off during lunch.',
+      categoryName: 'Health & Fitness',
+      dealTypeName: 'Standard',
+      discountPercentage: 35,
+      startTime: inDays(-2),
+      endTime: inDays(60),
+      redemptionInstructions: 'Show this deal at the counter between 11 AM and 3 PM.',
+      imageUrls: ['https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=600'],
+    },
+    {
+      merchantBiz: 'The Velvet Lounge',
+      title: 'Beauty & Spa Night Package',
+      description: 'Pre-event glam package with partner studio: makeup touch-up and styling at 30% off.',
+      categoryName: 'Beauty & Spa',
+      dealTypeName: 'Standard',
+      discountPercentage: 30,
+      startTime: inDays(-1),
+      endTime: inDays(75),
+      redemptionInstructions: 'Book through the host desk and mention this package.',
+      imageUrls: ['https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?w=600'],
+    },
   ];
 
   let count = 0;
@@ -440,7 +515,34 @@ async function seedDeals(
     const existing = await prisma.deal.findFirst({
       where: { merchantId: merchant.id, title: d.title },
     });
-    if (existing) { count++; continue; }
+    if (existing) {
+      const enrichedImageUrls = enrichDealImages(d.imageUrls, d.categoryName);
+      await prisma.deal.update({
+        where: { id: existing.id },
+        data: {
+          description: d.description,
+          categoryId: catId(d.categoryName),
+          dealTypeId: typeId(d.dealTypeName),
+          discountPercentage: d.discountPercentage,
+          discountAmount: d.discountAmount,
+          startTime: d.startTime,
+          endTime: d.endTime,
+          redemptionInstructions: d.redemptionInstructions,
+          imageUrls: enrichedImageUrls,
+          kickbackEnabled: d.dealTypeName === 'Bounty Deal',
+          bountyRewardAmount: d.bountyRewardAmount,
+          minReferralsRequired: d.minReferralsRequired,
+          accessCode: d.accessCode,
+          isFlashSale: d.isFlashSale || false,
+          maxRedemptions: d.maxRedemptions,
+          recurringDays: d.recurringDays,
+        },
+      });
+      count++;
+      continue;
+    }
+
+    const enrichedImageUrls = enrichDealImages(d.imageUrls, d.categoryName);
 
     await prisma.deal.create({
       data: {
@@ -454,7 +556,7 @@ async function seedDeals(
         startTime: d.startTime,
         endTime: d.endTime,
         redemptionInstructions: d.redemptionInstructions,
-        imageUrls: d.imageUrls || [],
+        imageUrls: enrichedImageUrls,
         kickbackEnabled: d.dealTypeName === 'Bounty Deal',
         bountyRewardAmount: d.bountyRewardAmount,
         minReferralsRequired: d.minReferralsRequired,
@@ -467,6 +569,349 @@ async function seedDeals(
     count++;
   }
   console.log(`  ✅ ${count} deals ready`);
+}
+
+// ─── 7b. Services ───────────────────────────────────────────────
+
+async function seedServices(
+  merchants: { id: number; businessName: string }[],
+) {
+  console.log('\n🛠️  Seeding services...');
+
+  const servicesData: Array<{
+    merchantBiz: string;
+    title: string;
+    description: string;
+    shortDescription: string;
+    serviceType: string;
+    category: string;
+    durationMinutes: number;
+    coverImageUrl: string;
+    imageGallery: string[];
+    tags: string[];
+    requiresApproval?: boolean;
+    advanceBookingDays?: number;
+    cancellationHours?: number;
+    maxBookingsPerDay?: number;
+    status?: ServiceStatus;
+    tiers: Array<{
+      name: string;
+      description: string;
+      price: number;
+      durationMinutes: number;
+      totalSlots?: number;
+      maxPerUser?: number;
+      isActive?: boolean;
+    }>;
+    addOns: Array<{
+      name: string;
+      description: string;
+      price: number;
+      isOptional?: boolean;
+      isActive?: boolean;
+    }>;
+  }> = [
+    {
+      merchantBiz: 'The Velvet Lounge',
+      title: 'Craft Cocktail Masterclass',
+      description:
+        'Hands-on mixology workshop led by our head bartender. Learn stirring, shaking, garnish pairing, and spirit balancing techniques in a premium lounge setting.',
+      shortDescription: '90-minute mixology workshop with tastings.',
+      serviceType: 'MIXOLOGY',
+      category: 'Nightlife',
+      durationMinutes: 90,
+      coverImageUrl: 'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=1200&q=80',
+      imageGallery: [
+        'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=1200&q=80',
+        'https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=1200&q=80',
+        'https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=1200&q=80',
+      ],
+      tags: ['cocktails', 'experience', 'nightlife'],
+      requiresApproval: false,
+      advanceBookingDays: 30,
+      cancellationHours: 12,
+      maxBookingsPerDay: 16,
+      status: ServiceStatus.PUBLISHED,
+      tiers: [
+        {
+          name: 'Standard Seat',
+          description: 'Shared station, all tools included.',
+          price: 39,
+          durationMinutes: 90,
+          totalSlots: 20,
+          maxPerUser: 4,
+        },
+        {
+          name: 'VIP Tasting Seat',
+          description: 'Premium spirits + extended tasting flight.',
+          price: 69,
+          durationMinutes: 110,
+          totalSlots: 8,
+          maxPerUser: 2,
+        },
+      ],
+      addOns: [
+        { name: 'Take-home Syrup Kit', description: 'House-made syrup sampler.', price: 12, isOptional: true },
+        { name: 'Polaroid Memory Pack', description: 'Instant photo set from the class.', price: 8, isOptional: true },
+      ],
+    },
+    {
+      merchantBiz: 'Spice Route Kitchen',
+      title: 'Chef’s Table Tasting Experience',
+      description:
+        'A guided 5-course tasting with chef commentary, spice pairing notes, and curated plating stories from regional Indian cuisines.',
+      shortDescription: '5-course chef-led tasting journey.',
+      serviceType: 'DINING_EXPERIENCE',
+      category: 'Food & Beverage',
+      durationMinutes: 120,
+      coverImageUrl: 'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=1200&q=80',
+      imageGallery: [
+        'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=1200&q=80',
+        'https://images.unsplash.com/photo-1601050690117-94f5f6fa3bd4?w=1200&q=80',
+        'https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=1200&q=80',
+      ],
+      tags: ['chef-table', 'tasting', 'fine-dining'],
+      requiresApproval: true,
+      advanceBookingDays: 45,
+      cancellationHours: 24,
+      maxBookingsPerDay: 10,
+      status: ServiceStatus.PUBLISHED,
+      tiers: [
+        {
+          name: 'Counter Seat',
+          description: 'Interactive chef counter seat.',
+          price: 59,
+          durationMinutes: 120,
+          totalSlots: 14,
+          maxPerUser: 4,
+        },
+        {
+          name: 'Private Pairing Seat',
+          description: 'Includes non-alcoholic pairing flight.',
+          price: 89,
+          durationMinutes: 130,
+          totalSlots: 6,
+          maxPerUser: 2,
+        },
+      ],
+      addOns: [
+        { name: 'Dessert Upgrade', description: 'Signature trio dessert plate.', price: 11 },
+        { name: 'Spice Box Gift', description: 'Chef curated spice sampler.', price: 15 },
+      ],
+    },
+    {
+      merchantBiz: 'Neon Nights Club',
+      title: 'VIP Table Setup & Host Service',
+      description:
+        'Pre-booked VIP zone with dedicated host, priority entry lane, and table styling for birthdays and group celebrations.',
+      shortDescription: 'Priority-entry VIP table with host support.',
+      serviceType: 'VIP_HOSTING',
+      category: 'Entertainment',
+      durationMinutes: 180,
+      coverImageUrl: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=1200&q=80',
+      imageGallery: [
+        'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=1200&q=80',
+        'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=1200&q=80',
+        'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200&q=80',
+      ],
+      tags: ['vip', 'club', 'hosting'],
+      requiresApproval: true,
+      advanceBookingDays: 21,
+      cancellationHours: 24,
+      maxBookingsPerDay: 8,
+      status: ServiceStatus.PUBLISHED,
+      tiers: [
+        {
+          name: 'Silver VIP',
+          description: 'Entry + premium table zone.',
+          price: 129,
+          durationMinutes: 180,
+          totalSlots: 10,
+          maxPerUser: 2,
+        },
+        {
+          name: 'Gold VIP',
+          description: 'Front row zone + dedicated host.',
+          price: 219,
+          durationMinutes: 210,
+          totalSlots: 6,
+          maxPerUser: 2,
+        },
+      ],
+      addOns: [
+        { name: 'Birthday Sparkler Pack', description: 'Table celebration add-on.', price: 25 },
+        { name: 'Priority Photo Booth', description: 'Unlimited express queue access.', price: 18 },
+      ],
+    },
+    {
+      merchantBiz: 'Sunset Taco Co.',
+      title: 'Taco Making Workshop',
+      description:
+        'Learn marination, tortilla prep, and salsa balancing with our kitchen team. Includes live demos and a build-your-own taco finale.',
+      shortDescription: 'Interactive taco workshop + tasting.',
+      serviceType: 'COOKING_CLASS',
+      category: 'Food & Beverage',
+      durationMinutes: 75,
+      coverImageUrl: 'https://images.unsplash.com/photo-1551504734-5ee1c4a1479b?w=1200&q=80',
+      imageGallery: [
+        'https://images.unsplash.com/photo-1551504734-5ee1c4a1479b?w=1200&q=80',
+        'https://images.unsplash.com/photo-1626700051175-6818013e1d4f?w=1200&q=80',
+        'https://images.unsplash.com/photo-1618040996337-56904b7850b9?w=1200&q=80',
+      ],
+      tags: ['tacos', 'class', 'family-friendly'],
+      requiresApproval: false,
+      advanceBookingDays: 20,
+      cancellationHours: 8,
+      maxBookingsPerDay: 24,
+      status: ServiceStatus.PUBLISHED,
+      tiers: [
+        {
+          name: 'Solo Apron Seat',
+          description: 'Single participant workstation.',
+          price: 29,
+          durationMinutes: 75,
+          totalSlots: 18,
+          maxPerUser: 4,
+        },
+        {
+          name: 'Duo Date Seat',
+          description: 'Two-person workstation with shared platter.',
+          price: 49,
+          durationMinutes: 85,
+          totalSlots: 10,
+          maxPerUser: 2,
+        },
+      ],
+      addOns: [
+        { name: 'Guac Upgrade', description: 'Fresh table-side guacamole.', price: 7 },
+        { name: 'Margarita Pairing', description: 'Classic or spicy margarita.', price: 9 },
+      ],
+    },
+  ];
+
+  let serviceCount = 0;
+  let tierCount = 0;
+  let addOnCount = 0;
+
+  for (const entry of servicesData) {
+    const merchant = merchants.find((m) => m.businessName === entry.merchantBiz);
+    if (!merchant) continue;
+
+    const existing = await prisma.service.findFirst({
+      where: { merchantId: merchant.id, title: entry.title },
+    });
+
+    const service = existing
+      ? await prisma.service.update({
+          where: { id: existing.id },
+          data: {
+            description: entry.description,
+            shortDescription: entry.shortDescription,
+            serviceType: entry.serviceType,
+            status: entry.status ?? ServiceStatus.PUBLISHED,
+            category: entry.category,
+            durationMinutes: entry.durationMinutes,
+            coverImageUrl: entry.coverImageUrl,
+            imageGallery: entry.imageGallery,
+            tags: entry.tags,
+            requiresApproval: entry.requiresApproval ?? false,
+            advanceBookingDays: entry.advanceBookingDays ?? 30,
+            cancellationHours: entry.cancellationHours ?? 24,
+            maxBookingsPerDay: entry.maxBookingsPerDay ?? null,
+            publishedAt: new Date(),
+          },
+        })
+      : await prisma.service.create({
+          data: {
+            merchantId: merchant.id,
+            title: entry.title,
+            description: entry.description,
+            shortDescription: entry.shortDescription,
+            serviceType: entry.serviceType,
+            status: entry.status ?? ServiceStatus.PUBLISHED,
+            category: entry.category,
+            durationMinutes: entry.durationMinutes,
+            coverImageUrl: entry.coverImageUrl,
+            imageGallery: entry.imageGallery,
+            tags: entry.tags,
+            requiresApproval: entry.requiresApproval ?? false,
+            advanceBookingDays: entry.advanceBookingDays ?? 30,
+            cancellationHours: entry.cancellationHours ?? 24,
+            maxBookingsPerDay: entry.maxBookingsPerDay ?? null,
+            publishedAt: new Date(),
+          },
+        });
+
+    serviceCount++;
+
+    for (const tier of entry.tiers) {
+      const existingTier = await prisma.servicePricingTier.findFirst({
+        where: { serviceId: service.id, name: tier.name },
+      });
+
+      if (existingTier) {
+        await prisma.servicePricingTier.update({
+          where: { id: existingTier.id },
+          data: {
+            description: tier.description,
+            price: tier.price,
+            durationMinutes: tier.durationMinutes,
+            totalSlots: tier.totalSlots ?? null,
+            maxPerUser: tier.maxPerUser ?? 1,
+            isActive: tier.isActive ?? true,
+          },
+        });
+      } else {
+        await prisma.servicePricingTier.create({
+          data: {
+            serviceId: service.id,
+            name: tier.name,
+            description: tier.description,
+            price: tier.price,
+            durationMinutes: tier.durationMinutes,
+            totalSlots: tier.totalSlots ?? null,
+            maxPerUser: tier.maxPerUser ?? 1,
+            isActive: tier.isActive ?? true,
+          },
+        });
+      }
+      tierCount++;
+    }
+
+    for (const addOn of entry.addOns) {
+      const existingAddOn = await prisma.serviceAddOn.findFirst({
+        where: { serviceId: service.id, name: addOn.name },
+      });
+
+      if (existingAddOn) {
+        await prisma.serviceAddOn.update({
+          where: { id: existingAddOn.id },
+          data: {
+            description: addOn.description,
+            price: addOn.price,
+            isOptional: addOn.isOptional ?? true,
+            isActive: addOn.isActive ?? true,
+          },
+        });
+      } else {
+        await prisma.serviceAddOn.create({
+          data: {
+            serviceId: service.id,
+            name: addOn.name,
+            description: addOn.description,
+            price: addOn.price,
+            isOptional: addOn.isOptional ?? true,
+            isActive: addOn.isActive ?? true,
+          },
+        });
+      }
+      addOnCount++;
+    }
+  }
+
+  console.log(`  ✅ ${serviceCount} services ready`);
+  console.log(`     └─ ${tierCount} service tier entries ready`);
+  console.log(`     └─ ${addOnCount} service add-on entries ready`);
 }
 
 // ─── 8. Gamification ────────────────────────────────────────────
@@ -565,16 +1010,146 @@ async function seedMenuItems(
     ],
   };
 
+  const menuCategoryImageLibrary: Record<string, string[]> = {
+    Cocktails: [
+      'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=900&q=80',
+      'https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=900&q=80',
+      'https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=900&q=80',
+    ],
+    'Wine & Bubbles': [
+      'https://images.unsplash.com/photo-1474722883778-792e7990302f?w=900&q=80',
+      'https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?w=900&q=80',
+      'https://images.unsplash.com/photo-1470158499416-75be9aa0c4db?w=900&q=80',
+    ],
+    'Small Plates': [
+      'https://images.unsplash.com/photo-1544025162-d76694265947?w=900&q=80',
+      'https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?w=900&q=80',
+      'https://images.unsplash.com/photo-1541014741259-de529411b96a?w=900&q=80',
+    ],
+    'Shared Plates': [
+      'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=900&q=80',
+      'https://images.unsplash.com/photo-1473093295043-cdd812d0e601?w=900&q=80',
+      'https://images.unsplash.com/photo-1498837167922-ddd27525d352?w=900&q=80',
+    ],
+    Mains: [
+      'https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=900&q=80',
+      'https://images.unsplash.com/photo-1601050690117-94f5f6fa3bd4?w=900&q=80',
+      'https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=900&q=80',
+    ],
+    Starters: [
+      'https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?w=900&q=80',
+      'https://images.unsplash.com/photo-1626082927389-6cd097cdc6ec?w=900&q=80',
+      'https://images.unsplash.com/photo-1541592106381-b31e9677c0e5?w=900&q=80',
+    ],
+    Breads: [
+      'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=900&q=80',
+      'https://images.unsplash.com/photo-1608198093002-ad4e005484ec?w=900&q=80',
+      'https://images.unsplash.com/photo-1573140401552-3fab0b24306f?w=900&q=80',
+    ],
+    Drinks: [
+      'https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=900&q=80',
+      'https://images.unsplash.com/photo-1560508179-b2c9a3f8e92b?w=900&q=80',
+      'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=900&q=80',
+    ],
+    Desserts: [
+      'https://images.unsplash.com/photo-1551024506-0bccd828d307?w=900&q=80',
+      'https://images.unsplash.com/photo-1563729784474-d77dbb933a9e?w=900&q=80',
+      'https://images.unsplash.com/photo-1488477181946-6428a0291777?w=900&q=80',
+    ],
+    Specials: [
+      'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=900&q=80',
+      'https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=900&q=80',
+      'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=900&q=80',
+    ],
+    Shots: [
+      'https://images.unsplash.com/photo-1544145945-f90425340c7e?w=900&q=80',
+      'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=900&q=80',
+      'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=900&q=80',
+    ],
+    'Shared Drinks': [
+      'https://images.unsplash.com/photo-1462887749044-b47cb05b83b8?w=900&q=80',
+      'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=900&q=80',
+      'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=900&q=80',
+    ],
+    'Bottle Service': [
+      'https://images.unsplash.com/photo-1547595628-c61a29f496f0?w=900&q=80',
+      'https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?w=900&q=80',
+      'https://images.unsplash.com/photo-1497534446932-c925b458314e?w=900&q=80',
+    ],
+    'Late Night Bites': [
+      'https://images.unsplash.com/photo-1606755962773-d324e0a13086?w=900&q=80',
+      'https://images.unsplash.com/photo-1608039755401-742074f0548d?w=900&q=80',
+      'https://images.unsplash.com/photo-1565299507177-b0ac66763828?w=900&q=80',
+    ],
+    Tacos: [
+      'https://images.unsplash.com/photo-1551504734-5ee1c4a1479b?w=900&q=80',
+      'https://images.unsplash.com/photo-1618040996337-56904b7850b9?w=900&q=80',
+      'https://images.unsplash.com/photo-1624300629298-e9de39c13be5?w=900&q=80',
+    ],
+    Burritos: [
+      'https://images.unsplash.com/photo-1626700051175-6818013e1d4f?w=900&q=80',
+      'https://images.unsplash.com/photo-1534352956036-cd81e27dd615?w=900&q=80',
+      'https://images.unsplash.com/photo-1604467715878-83e57e8bc129?w=900&q=80',
+    ],
+    Sides: [
+      'https://images.unsplash.com/photo-1592417817098-8fd3d9eb14a5?w=900&q=80',
+      'https://images.unsplash.com/photo-1525755662778-989d0524087e?w=900&q=80',
+      'https://images.unsplash.com/photo-1562967914-608f82629710?w=900&q=80',
+    ],
+    Beer: [
+      'https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?w=900&q=80',
+      'https://images.unsplash.com/photo-1532634922-8fe0b757fb13?w=900&q=80',
+      'https://images.unsplash.com/photo-1527661591475-527312dd65f5?w=900&q=80',
+    ],
+  };
+
+  const defaultMenuImages = [
+    'https://images.unsplash.com/photo-1498837167922-ddd27525d352?w=900&q=80',
+    'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=900&q=80',
+    'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=900&q=80',
+  ];
+
+  const hashSeed = (input: string) =>
+    input.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+
+  const resolveMenuImages = (itemName: string, category: string) => {
+    const pool = menuCategoryImageLibrary[category] || defaultMenuImages;
+    const seed = hashSeed(`${itemName}-${category}`);
+    const ordered = pool.map((_, idx) => pool[(idx + seed) % pool.length]);
+    const unique = [...new Set(ordered)];
+    return {
+      imageUrl: unique[0],
+      imageUrls: unique.slice(0, 4),
+    };
+  };
+
   let total = 0;
   for (const [bizName, items] of Object.entries(menuData)) {
     const merchant = merchants.find((m) => m.businessName === bizName);
     if (!merchant) continue;
 
     for (const item of items) {
+      const { imageUrl, imageUrls } = resolveMenuImages(item.name, item.category);
       const existing = await prisma.menuItem.findFirst({
         where: { merchantId: merchant.id, name: item.name },
       });
-      if (existing) { total++; continue; }
+      if (existing) {
+        await prisma.menuItem.update({
+          where: { id: existing.id },
+          data: {
+            description: item.description,
+            price: item.price,
+            category: item.category,
+            happyHourPrice: item.happyHourPrice ?? null,
+            isHappyHour: item.isHappyHour ?? false,
+            dealType: item.dealType ?? MenuDealType.STANDARD,
+            imageUrl,
+            imageUrls,
+          },
+        });
+        total++;
+        continue;
+      }
 
       await prisma.menuItem.create({
         data: {
@@ -583,6 +1158,8 @@ async function seedMenuItems(
           description: item.description,
           price: item.price,
           category: item.category,
+          imageUrl,
+          imageUrls,
           happyHourPrice: item.happyHourPrice ?? null,
           isHappyHour: item.isHappyHour ?? false,
           dealType: item.dealType ?? MenuDealType.STANDARD,
@@ -1328,6 +1905,9 @@ async function main() {
     // 7: Deals
     await seedDeals(merchants);
 
+    // 7b: Services
+    await seedServices(merchants);
+
     // 8: Gamification
     await seedGamification();
 
@@ -1388,6 +1968,9 @@ async function main() {
       dealCategories: await prisma.dealCategoryMaster.count(),
       dealTypes: await prisma.dealTypeMaster.count(),
       deals: await prisma.deal.count(),
+      services: await prisma.service.count(),
+      servicePricingTiers: await prisma.servicePricingTier.count(),
+      serviceAddOns: await prisma.serviceAddOn.count(),
       menuItems: await prisma.menuItem.count(),
       dealMenuLinks: await prisma.dealMenuItem.count(),
       menuCollections: await prisma.menuCollection.count(),

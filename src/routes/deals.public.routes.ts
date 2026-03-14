@@ -1728,6 +1728,7 @@ router.get('/menu-collections/:merchantId', async (req, res) => {
                 price: true,
                 category: true,
                 imageUrl: true,
+                imageUrls: true,
                 description: true,
                 dealType: true,
                 isHappyHour: true,
