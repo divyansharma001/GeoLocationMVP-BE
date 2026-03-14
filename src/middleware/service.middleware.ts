@@ -1,8 +1,19 @@
 // src/middleware/service.middleware.ts
 
+import { Prisma } from '@prisma/client';
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from './auth.middleware';
 import prisma from '../lib/prisma';
+
+function isServiceCatalogSchemaError(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2021') {
+    return false;
+  }
+
+  const modelName = String(error.meta?.modelName ?? '');
+  const tableName = String(error.meta?.table ?? '');
+  return modelName.startsWith('Service') || tableName.includes('Service');
+}
 
 /**
  * Middleware to verify service ownership
@@ -56,6 +67,12 @@ export const verifyServiceOwnership = async (
     next();
   } catch (error) {
     console.error('Service ownership verification error:', error);
+    if (isServiceCatalogSchemaError(error)) {
+      return res.status(503).json({
+        error: 'Service catalog is temporarily unavailable. Database migration is pending.',
+        code: 'SERVICE_CATALOG_SCHEMA_MISSING',
+      });
+    }
     res.status(500).json({ error: 'Failed to verify service ownership' });
   }
 };
@@ -96,6 +113,12 @@ export const verifyBookingOwnership = async (
     next();
   } catch (error) {
     console.error('Booking ownership verification error:', error);
+    if (isServiceCatalogSchemaError(error)) {
+      return res.status(503).json({
+        error: 'Service catalog is temporarily unavailable. Database migration is pending.',
+        code: 'SERVICE_CATALOG_SCHEMA_MISSING',
+      });
+    }
     res.status(500).json({ error: 'Failed to verify booking ownership' });
   }
 };

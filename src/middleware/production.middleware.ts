@@ -1,9 +1,91 @@
+import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import logger from '../lib/logging/logger';
 import { metricsMiddleware } from '../lib/metrics';
+
+function parseIntEnv(names: string | string[], fallback: number): number {
+  const orderedNames = Array.isArray(names) ? names : [names];
+
+  for (const name of orderedNames) {
+    const raw = process.env[name];
+    if (!raw) {
+      continue;
+    }
+
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return fallback;
+}
+
+function getForwardedIp(req: Request): string | undefined {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string') {
+    return forwardedFor.split(',')[0]?.trim();
+  }
+
+  if (Array.isArray(forwardedFor)) {
+    return forwardedFor[0]?.split(',')[0]?.trim();
+  }
+
+  return undefined;
+}
+
+function getClientKey(req: Request): string {
+  const authorization = req.headers.authorization?.trim();
+  if (authorization?.startsWith('Bearer ')) {
+    const token = authorization.slice('Bearer '.length).trim();
+    if (token) {
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex').slice(0, 24);
+      return `token:${tokenHash}`;
+    }
+  }
+
+  const forwardedIp = getForwardedIp(req);
+  const ip = forwardedIp || req.ip || req.socket.remoteAddress || 'unknown';
+  return `ip:${ip}`;
+}
+
+function shouldSkipRateLimit(req: Request): boolean {
+  if (req.method === 'OPTIONS') {
+    return true;
+  }
+
+  return req.path === '/health' || req.path === '/ready' || req.path === '/live';
+}
+
+function buildRateLimiter(options: {
+  windowMs: number;
+  limit: number;
+  message: string;
+}) {
+  return rateLimit({
+    windowMs: options.windowMs,
+    limit: options.limit,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: getClientKey,
+    skip: shouldSkipRateLimit,
+    handler: (req, res) => {
+      const requestWithRateLimit = req as Request & { rateLimit?: { resetTime?: Date } };
+      const resetTime = requestWithRateLimit.rateLimit?.resetTime;
+      const retryAfterSeconds = resetTime
+        ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+        : undefined;
+
+      res.status(429).json({
+        error: options.message,
+        retryAfterSeconds,
+      });
+    },
+  });
+}
 
 // Compression middleware
 export const compressionMiddleware = compression({
@@ -47,14 +129,16 @@ export const requestLoggingMiddleware = morgan('combined', {
 // });
 
 // Strict rate limiting for auth endpoints
-export const authRateLimit = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  limit: 5, // Very strict limit for auth endpoints
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: 'Too many authentication attempts, please try again later.',
-  },
+export const apiRateLimit = buildRateLimiter({
+  windowMs: parseIntEnv(['API_RATE_LIMIT_WINDOW_MS', 'RATE_LIMIT_WINDOW_MS'], 15 * 60 * 1000),
+  limit: parseIntEnv(['API_RATE_LIMIT_MAX', 'RATE_LIMIT_MAX_REQUESTS'], 1000),
+  message: 'Too many API requests, please try again later.',
+});
+
+export const authRateLimit = buildRateLimiter({
+  windowMs: parseIntEnv('AUTH_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+  limit: parseIntEnv('AUTH_RATE_LIMIT_MAX', 20),
+  message: 'Too many authentication attempts, please try again later.',
 });
 
 // Security headers middleware

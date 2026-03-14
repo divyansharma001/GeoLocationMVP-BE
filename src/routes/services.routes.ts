@@ -1,12 +1,44 @@
 // src/routes/services.routes.ts
-
 import { Router, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { protect, isApprovedMerchant, isMerchant, AuthRequest } from '../middleware/auth.middleware';
 import { verifyServiceOwnership, verifyBookingOwnership } from '../middleware/service.middleware';
 import * as svc from '../services/service-catalog.service';
 import prisma from '../lib/prisma';
 
 const router = Router();
+
+function isServiceCatalogSchemaError(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2021') {
+    return false;
+  }
+
+  const modelName = String(error.meta?.modelName ?? '');
+  const tableName = String(error.meta?.table ?? '');
+  return modelName.startsWith('Service') || tableName.includes('Service');
+}
+
+function handleServiceRouteError(
+  res: Response,
+  error: unknown,
+  options: { logLabel: string; fallbackMessage: string; badRequest?: boolean }
+) {
+  console.error(options.logLabel, error);
+
+  if (isServiceCatalogSchemaError(error)) {
+    return res.status(503).json({
+      error: 'Service catalog is temporarily unavailable. Database migration is pending.',
+      code: 'SERVICE_CATALOG_SCHEMA_MISSING',
+    });
+  }
+
+  if (options.badRequest) {
+    const message = error instanceof Error ? error.message : options.fallbackMessage;
+    return res.status(400).json({ error: message || options.fallbackMessage });
+  }
+
+  return res.status(500).json({ error: options.fallbackMessage });
+}
 
 // ==================== PUBLIC ROUTES ====================
 
@@ -26,8 +58,10 @@ router.get('/services', async (req: AuthRequest, res: Response) => {
     });
     res.json(result);
   } catch (error) {
-    console.error('Browse services error:', error);
-    res.status(500).json({ error: 'Failed to fetch services' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Browse services error:',
+      fallbackMessage: 'Failed to fetch services',
+    });
   }
 });
 
@@ -56,8 +90,10 @@ router.get('/services/:id', async (req: AuthRequest, res: Response) => {
 
     res.json({ service });
   } catch (error) {
-    console.error('Get service error:', error);
-    res.status(500).json({ error: 'Failed to fetch service' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Get service error:',
+      fallbackMessage: 'Failed to fetch service',
+    });
   }
 });
 
@@ -72,8 +108,10 @@ router.get('/merchants/:merchantId/services', async (req: AuthRequest, res: Resp
     const result = await svc.getPublicServices({ merchantId });
     res.json(result);
   } catch (error) {
-    console.error('Merchant services error:', error);
-    res.status(500).json({ error: 'Failed to fetch merchant services' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Merchant services error:',
+      fallbackMessage: 'Failed to fetch merchant services',
+    });
   }
 });
 
@@ -90,8 +128,10 @@ router.get('/services/me/list', protect, isMerchant, async (req: AuthRequest, re
     const services = await svc.getMerchantServices(merchantId, { status: status as string | undefined });
     res.json({ services });
   } catch (error) {
-    console.error('List services error:', error);
-    res.status(500).json({ error: 'Failed to list services' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'List services error:',
+      fallbackMessage: 'Failed to list services',
+    });
   }
 });
 
@@ -105,8 +145,11 @@ router.post('/services', protect, isApprovedMerchant, async (req: AuthRequest, r
     const service = await svc.createService(merchantId, req.body);
     res.status(201).json({ service, message: 'Service created. Add pricing tiers and a cover image, then publish.' });
   } catch (error: any) {
-    console.error('Create service error:', error);
-    res.status(400).json({ error: error.message || 'Failed to create service' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Create service error:',
+      fallbackMessage: 'Failed to create service',
+      badRequest: true,
+    });
   }
 });
 
@@ -121,8 +164,11 @@ router.put('/services/:id', protect, isApprovedMerchant, verifyServiceOwnership,
     const service = await svc.updateService(merchantId, serviceId, req.body);
     res.json({ service, message: 'Service updated successfully' });
   } catch (error: any) {
-    console.error('Update service error:', error);
-    res.status(400).json({ error: error.message || 'Failed to update service' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Update service error:',
+      fallbackMessage: 'Failed to update service',
+      badRequest: true,
+    });
   }
 });
 
@@ -137,8 +183,11 @@ router.delete('/services/:id', protect, isApprovedMerchant, verifyServiceOwnersh
     const result = await svc.deleteService(merchantId, serviceId);
     res.json({ result, message: 'Service removed' });
   } catch (error: any) {
-    console.error('Delete service error:', error);
-    res.status(400).json({ error: error.message || 'Failed to delete service' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Delete service error:',
+      fallbackMessage: 'Failed to delete service',
+      badRequest: true,
+    });
   }
 });
 
@@ -152,8 +201,11 @@ router.post('/services/:id/publish', protect, isApprovedMerchant, verifyServiceO
     const service = await svc.publishService(merchantId, serviceId);
     res.json({ service, message: 'Service published successfully!' });
   } catch (error: any) {
-    console.error('Publish service error:', error);
-    res.status(400).json({ error: error.message || 'Failed to publish service' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Publish service error:',
+      fallbackMessage: 'Failed to publish service',
+      badRequest: true,
+    });
   }
 });
 
@@ -167,8 +219,11 @@ router.post('/services/:id/pause', protect, isApprovedMerchant, verifyServiceOwn
     const service = await svc.pauseService(merchantId, serviceId);
     res.json({ service, message: 'Service paused' });
   } catch (error: any) {
-    console.error('Pause service error:', error);
-    res.status(400).json({ error: error.message || 'Failed to pause service' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Pause service error:',
+      fallbackMessage: 'Failed to pause service',
+      badRequest: true,
+    });
   }
 });
 
@@ -182,8 +237,11 @@ router.post('/services/:id/cancel', protect, isApprovedMerchant, verifyServiceOw
     const service = await svc.cancelService(merchantId, serviceId);
     res.json({ service, message: 'Service cancelled. Active bookings have been cancelled.' });
   } catch (error: any) {
-    console.error('Cancel service error:', error);
-    res.status(400).json({ error: error.message || 'Failed to cancel service' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Cancel service error:',
+      fallbackMessage: 'Failed to cancel service',
+      badRequest: true,
+    });
   }
 });
 
@@ -199,8 +257,11 @@ router.post('/services/:serviceId/pricing-tiers', protect, isApprovedMerchant, v
     const tier = await svc.createPricingTier(merchantId, serviceId, req.body);
     res.status(201).json({ tier, message: 'Pricing tier created' });
   } catch (error: any) {
-    console.error('Create pricing tier error:', error);
-    res.status(400).json({ error: error.message || 'Failed to create pricing tier' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Create pricing tier error:',
+      fallbackMessage: 'Failed to create pricing tier',
+      badRequest: true,
+    });
   }
 });
 
@@ -215,8 +276,11 @@ router.put('/services/:serviceId/pricing-tiers/:tierId', protect, isApprovedMerc
     const tier = await svc.updatePricingTier(merchantId, serviceId, tierId, req.body);
     res.json({ tier, message: 'Pricing tier updated' });
   } catch (error: any) {
-    console.error('Update pricing tier error:', error);
-    res.status(400).json({ error: error.message || 'Failed to update pricing tier' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Update pricing tier error:',
+      fallbackMessage: 'Failed to update pricing tier',
+      badRequest: true,
+    });
   }
 });
 
@@ -231,8 +295,11 @@ router.delete('/services/:serviceId/pricing-tiers/:tierId', protect, isApprovedM
     const result = await svc.deletePricingTier(merchantId, serviceId, tierId);
     res.json({ result, message: 'Pricing tier removed' });
   } catch (error: any) {
-    console.error('Delete pricing tier error:', error);
-    res.status(400).json({ error: error.message || 'Failed to delete pricing tier' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Delete pricing tier error:',
+      fallbackMessage: 'Failed to delete pricing tier',
+      badRequest: true,
+    });
   }
 });
 
@@ -248,8 +315,11 @@ router.post('/services/:serviceId/add-ons', protect, isApprovedMerchant, verifyS
     const addOn = await svc.createAddOn(merchantId, serviceId, req.body);
     res.status(201).json({ addOn, message: 'Add-on created' });
   } catch (error: any) {
-    console.error('Create add-on error:', error);
-    res.status(400).json({ error: error.message || 'Failed to create add-on' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Create add-on error:',
+      fallbackMessage: 'Failed to create add-on',
+      badRequest: true,
+    });
   }
 });
 
@@ -264,8 +334,11 @@ router.put('/services/:serviceId/add-ons/:addOnId', protect, isApprovedMerchant,
     const addOn = await svc.updateAddOn(merchantId, serviceId, addOnId, req.body);
     res.json({ addOn, message: 'Add-on updated' });
   } catch (error: any) {
-    console.error('Update add-on error:', error);
-    res.status(400).json({ error: error.message || 'Failed to update add-on' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Update add-on error:',
+      fallbackMessage: 'Failed to update add-on',
+      badRequest: true,
+    });
   }
 });
 
@@ -280,8 +353,11 @@ router.delete('/services/:serviceId/add-ons/:addOnId', protect, isApprovedMercha
     const result = await svc.deleteAddOn(merchantId, serviceId, addOnId);
     res.json({ result, message: 'Add-on removed' });
   } catch (error: any) {
-    console.error('Delete add-on error:', error);
-    res.status(400).json({ error: error.message || 'Failed to delete add-on' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Delete add-on error:',
+      fallbackMessage: 'Failed to delete add-on',
+      badRequest: true,
+    });
   }
 });
 
@@ -304,8 +380,10 @@ router.get('/services/me/bookings', protect, isMerchant, async (req: AuthRequest
     });
     res.json(result);
   } catch (error) {
-    console.error('Get merchant bookings error:', error);
-    res.status(500).json({ error: 'Failed to fetch bookings' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Get merchant bookings error:',
+      fallbackMessage: 'Failed to fetch bookings',
+    });
   }
 });
 
@@ -319,8 +397,11 @@ router.put('/services/bookings/:bookingId/confirm', protect, isMerchant, async (
     const booking = await svc.confirmBooking(merchantId, bookingId);
     res.json({ booking, message: 'Booking confirmed' });
   } catch (error: any) {
-    console.error('Confirm booking error:', error);
-    res.status(400).json({ error: error.message || 'Failed to confirm booking' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Confirm booking error:',
+      fallbackMessage: 'Failed to confirm booking',
+      badRequest: true,
+    });
   }
 });
 
@@ -334,8 +415,11 @@ router.put('/services/bookings/:bookingId/complete', protect, isMerchant, async 
     const booking = await svc.completeBooking(merchantId, bookingId);
     res.json({ booking, message: 'Booking completed' });
   } catch (error: any) {
-    console.error('Complete booking error:', error);
-    res.status(400).json({ error: error.message || 'Failed to complete booking' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Complete booking error:',
+      fallbackMessage: 'Failed to complete booking',
+      badRequest: true,
+    });
   }
 });
 
@@ -349,8 +433,11 @@ router.put('/services/bookings/:bookingId/no-show', protect, isMerchant, async (
     const booking = await svc.markNoShow(merchantId, bookingId);
     res.json({ booking, message: 'Booking marked as no-show' });
   } catch (error: any) {
-    console.error('No-show booking error:', error);
-    res.status(400).json({ error: error.message || 'Failed to mark no-show' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'No-show booking error:',
+      fallbackMessage: 'Failed to mark no-show',
+      badRequest: true,
+    });
   }
 });
 
@@ -367,8 +454,11 @@ router.post('/services/bookings/:bookingId/check-in', protect, isMerchant, async
     const checkIn = await svc.checkInBooking(bookingId, checkedInBy, qrData);
     res.json({ checkIn, message: 'Customer checked in successfully' });
   } catch (error: any) {
-    console.error('Check-in error:', error);
-    res.status(400).json({ error: error.message || 'Check-in failed' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Check-in error:',
+      fallbackMessage: 'Check-in failed',
+      badRequest: true,
+    });
   }
 });
 
@@ -400,8 +490,11 @@ router.post('/services/:serviceId/bookings', protect, async (req: AuthRequest, r
         : 'Booking received and pending merchant confirmation.',
     });
   } catch (error: any) {
-    console.error('Reserve booking error:', error);
-    res.status(400).json({ error: error.message || 'Failed to reserve booking' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Reserve booking error:',
+      fallbackMessage: 'Failed to reserve booking',
+      badRequest: true,
+    });
   }
 });
 
@@ -417,8 +510,11 @@ router.delete('/services/bookings/:bookingId', protect, verifyBookingOwnership, 
     const booking = await svc.cancelBooking(bookingId, userId, reason);
     res.json({ booking, message: 'Booking cancelled' });
   } catch (error: any) {
-    console.error('Cancel booking error:', error);
-    res.status(400).json({ error: error.message || 'Failed to cancel booking' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Cancel booking error:',
+      fallbackMessage: 'Failed to cancel booking',
+      badRequest: true,
+    });
   }
 });
 
@@ -437,8 +533,10 @@ router.get('/users/me/service-bookings', protect, async (req: AuthRequest, res: 
     });
     res.json(result);
   } catch (error) {
-    console.error('Get user bookings error:', error);
-    res.status(500).json({ error: 'Failed to fetch your bookings' });
+    return handleServiceRouteError(res, error, {
+      logLabel: 'Get user bookings error:',
+      fallbackMessage: 'Failed to fetch your bookings',
+    });
   }
 });
 

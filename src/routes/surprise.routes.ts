@@ -42,28 +42,9 @@ router.post('/:dealId/reveal', protect, async (req: AuthRequest, res) => {
     const { lat, lng } = req.body;
     const userId = req.user!.id;
 
-    // Check if user has a recent check-in at this merchant (for ENGAGEMENT_BASED type)
-    const deal = await prisma.deal.findUnique({
-      where: { id: dealId },
-      select: { merchantId: true, surpriseType: true },
-    });
-
-    let hasCheckedIn = false;
-    if (deal?.surpriseType === 'ENGAGEMENT_BASED') {
-      const recentCheckIn = await prisma.checkIn.findFirst({
-        where: {
-          userId,
-          merchantId: deal.merchantId,
-          createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-        },
-      });
-      hasCheckedIn = !!recentCheckIn;
-    }
-
     const result = await surpriseService.revealSurprise(userId, dealId, {
       lat: lat !== undefined ? parseFloat(lat) : undefined,
       lng: lng !== undefined ? parseFloat(lng) : undefined,
-      hasCheckedIn,
     });
 
     if (!result.success) {

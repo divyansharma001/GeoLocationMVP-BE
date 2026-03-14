@@ -3,8 +3,7 @@ import prisma from './lib/prisma';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
-import { authRateLimit } from './middleware/production.middleware';
+import { apiRateLimit, authRateLimit } from './middleware/production.middleware';
 
 // Routes
 import authRoutes from './routes/auth.routes';
@@ -42,7 +41,15 @@ dotenv.config();
 const app: Express = express();
 
 // Trust proxy for accurate client IP detection (required for rate limiting behind load balancers)
-app.set('trust proxy', 1);
+const trustProxy =
+  process.env.TRUST_PROXY === undefined
+    ? 1
+    : process.env.TRUST_PROXY === 'true'
+      ? true
+      : Number.isNaN(Number(process.env.TRUST_PROXY))
+        ? process.env.TRUST_PROXY
+        : Number(process.env.TRUST_PROXY);
+app.set('trust proxy', trustProxy);
 
 // CORS configuration with whitelist support
 const corsOptions: cors.CorsOptions = {
@@ -103,13 +110,7 @@ app.use(helmet());
 
 // Basic rate limiting (disabled in test for speed)
 if (process.env.NODE_ENV !== 'test') {
-  const apiLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 200,
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-  app.use('/api/', apiLimiter);
+  app.use('/api/', apiRateLimit);
 }
 
 app.get('/', (req: Request, res: Response) => {
