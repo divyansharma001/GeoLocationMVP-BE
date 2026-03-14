@@ -1,5 +1,9 @@
--- CreateEnum
-CREATE TYPE "MenuCollectionType" AS ENUM ('STANDARD', 'HAPPY_HOUR', 'SPECIAL');
+-- CreateEnum (safe: skip if already exists from a prior migration)
+DO $$ BEGIN
+    CREATE TYPE "MenuCollectionType" AS ENUM ('STANDARD', 'HAPPY_HOUR', 'SPECIAL');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- CreateEnum
 CREATE TYPE "ServiceStatus" AS ENUM ('DRAFT', 'PUBLISHED', 'PAUSED', 'CANCELLED');
@@ -7,18 +11,18 @@ CREATE TYPE "ServiceStatus" AS ENUM ('DRAFT', 'PUBLISHED', 'PAUSED', 'CANCELLED'
 -- CreateEnum
 CREATE TYPE "ServiceBookingStatus" AS ENUM ('PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW');
 
--- AlterTable
-ALTER TABLE "MenuCollection" ADD COLUMN     "color" TEXT,
-ADD COLUMN     "endTime" TEXT,
-ADD COLUMN     "icon" TEXT,
-ADD COLUMN     "menuType" "MenuCollectionType" NOT NULL DEFAULT 'STANDARD',
-ADD COLUMN     "startTime" TEXT,
-ADD COLUMN     "storeId" INTEGER,
-ADD COLUMN     "subType" TEXT,
-ADD COLUMN     "themeName" TEXT;
+-- AlterTable (safe: skip columns that already exist)
+ALTER TABLE "MenuCollection" ADD COLUMN IF NOT EXISTS "color" TEXT;
+ALTER TABLE "MenuCollection" ADD COLUMN IF NOT EXISTS "endTime" TEXT;
+ALTER TABLE "MenuCollection" ADD COLUMN IF NOT EXISTS "icon" TEXT;
+ALTER TABLE "MenuCollection" ADD COLUMN IF NOT EXISTS "menuType" "MenuCollectionType" NOT NULL DEFAULT 'STANDARD';
+ALTER TABLE "MenuCollection" ADD COLUMN IF NOT EXISTS "startTime" TEXT;
+ALTER TABLE "MenuCollection" ADD COLUMN IF NOT EXISTS "storeId" INTEGER;
+ALTER TABLE "MenuCollection" ADD COLUMN IF NOT EXISTS "subType" TEXT;
+ALTER TABLE "MenuCollection" ADD COLUMN IF NOT EXISTS "themeName" TEXT;
 
--- AlterTable
-ALTER TABLE "MenuItem" ADD COLUMN     "imageUrls" TEXT[] DEFAULT ARRAY[]::TEXT[];
+-- AlterTable (safe)
+ALTER TABLE "MenuItem" ADD COLUMN IF NOT EXISTS "imageUrls" TEXT[] DEFAULT ARRAY[]::TEXT[];
 
 -- CreateTable
 CREATE TABLE "Service" (
@@ -195,14 +199,18 @@ CREATE INDEX "ServiceAddOnPurchase_addOnId_idx" ON "ServiceAddOnPurchase"("addOn
 -- CreateIndex
 CREATE INDEX "ServiceAddOnPurchase_userId_idx" ON "ServiceAddOnPurchase"("userId");
 
--- CreateIndex
-CREATE INDEX "MenuCollection_merchantId_menuType_idx" ON "MenuCollection"("merchantId", "menuType");
+-- CreateIndex (safe)
+CREATE INDEX IF NOT EXISTS "MenuCollection_merchantId_menuType_idx" ON "MenuCollection"("merchantId", "menuType");
 
--- CreateIndex
-CREATE INDEX "MenuCollection_storeId_idx" ON "MenuCollection"("storeId");
+-- CreateIndex (safe)
+CREATE INDEX IF NOT EXISTS "MenuCollection_storeId_idx" ON "MenuCollection"("storeId");
 
--- AddForeignKey
-ALTER TABLE "MenuCollection" ADD CONSTRAINT "MenuCollection_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "Store"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- AddForeignKey (safe)
+DO $$ BEGIN
+    ALTER TABLE "MenuCollection" ADD CONSTRAINT "MenuCollection_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "Store"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
 ALTER TABLE "Service" ADD CONSTRAINT "Service_merchantId_fkey" FOREIGN KEY ("merchantId") REFERENCES "Merchant"("id") ON DELETE CASCADE ON UPDATE CASCADE;

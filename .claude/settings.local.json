@@ -6,7 +6,9 @@
       "Bash(powershell -Command:*)",
       "Bash(python -c:*)",
       "Bash(ls -la \"c:\\\\GeolocationMVPBackend\\\\src\\\\middleware\"\" 2>&1 || echo \"Checking middleware directory \")",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Read(//c/GeolocationMVPBackend/**)",
+      "Bash(find /c/GeolocationMVPBackend/src -type f \\\\\\(-name *.ts -o -name *.js \\\\\\))"
     ]
   }
 }

@@ -182,6 +182,50 @@ router.post('/menu/parse', protect, isMerchant, async (req: AuthRequest, res) =>
 });
 
 // ─────────────────────────────────────────────
+// DEALS — AI Surprise Deal Generator
+// POST /api/ai/deals/surprise/generate
+// Body: { intent: string, surpriseType?: string }
+// Requires: merchant (any status)
+// Returns structured surprise deal fields + a cryptic hint
+// ─────────────────────────────────────────────
+router.post('/deals/surprise/generate', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const { intent, surpriseType = 'LOCATION_BASED' } = req.body;
+
+    if (!intent || typeof intent !== 'string' || intent.trim().length < 5) {
+      return res.status(400).json({ error: 'Please describe what surprise deal you want to create.' });
+    }
+
+    const validTypes = ['LOCATION_BASED', 'TIME_BASED', 'ENGAGEMENT_BASED', 'RANDOM_DROP'];
+    if (!validTypes.includes(surpriseType)) {
+      return res.status(400).json({ error: `surpriseType must be one of: ${validTypes.join(', ')}` });
+    }
+
+    const merchant = await prisma.merchant.findUnique({
+      where: { id: req.merchant!.id },
+      select: { businessName: true, businessType: true },
+    });
+
+    if (!merchant) return res.status(404).json({ error: 'Merchant not found.' });
+
+    const suggestion = await dealAI.generateSurpriseDeal(
+      intent.trim(),
+      merchant.businessType || 'LOCAL',
+      merchant.businessName,
+      surpriseType
+    );
+
+    res.json({ suggestion });
+  } catch (error: any) {
+    if (error.message?.includes('not configured')) {
+      return res.status(503).json({ error: 'AI features are not available right now.' });
+    }
+    console.error('[AI] deals/surprise/generate error:', error);
+    res.status(500).json({ error: 'Failed to generate surprise deal suggestion.' });
+  }
+});
+
+// ─────────────────────────────────────────────
 // NUDGE — Personalize a nudge message (admin / server-side use)
 // POST /api/ai/nudge/personalize
 // Body: { userId: number, nudgeType: string, deal?: { title, merchant, discount } }

@@ -104,8 +104,9 @@ model User {
   pointEvents          UserPointEvent[]
   streak               UserStreak?
   venueRewardClaims    VenueRewardClaim[]
-  serviceBookings      ServiceBooking[]
+  serviceBookings       ServiceBooking[]
   serviceAddOnPurchases ServiceAddOnPurchase[]
+  surpriseReveals       UserSurpriseReveal[]
 
   @@index([referredByUserId])
   @@index([loyaltyTier])
@@ -204,6 +205,15 @@ model Deal {
   isFlashSale            Boolean            @default(false)
   maxRedemptions         Int?
   minReferralsRequired   Int?
+  isSurprise             Boolean            @default(false)
+  surpriseType           SurpriseType?
+  surpriseHint           String?
+  revealRadiusMeters     Int?
+  revealAt               DateTime?
+  revealDurationMinutes  Int?               @default(60)
+  surpriseTotalSlots     Int?
+  surpriseSlotsUsed      Int                @default(0)
+  surpriseReveals        UserSurpriseReveal[]
   bountyProgress         BountyProgress[]
   checkIns               CheckIn[]
   category               DealCategoryMaster @relation(fields: [categoryId], references: [id])
@@ -217,6 +227,7 @@ model Deal {
   @@index([accessCode])
   @@index([merchantId, dealTypeId])
   @@index([isFlashSale, endTime])
+  @@index([isSurprise, surpriseType, endTime])
 }
 
 model UserDeal {
@@ -228,6 +239,23 @@ model UserDeal {
   user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, dealId])
+}
+
+model UserSurpriseReveal {
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  dealId     Int
+  revealedAt DateTime  @default(now())
+  expiresAt  DateTime
+  redeemed   Boolean   @default(false)
+  redeemedAt DateTime?
+  deal       Deal      @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dealId])
+  @@index([userId])
+  @@index([dealId])
+  @@index([expiresAt])
 }
 
 model UserPointEvent {
@@ -1165,9 +1193,10 @@ model UserNudgePreferences {
   inactivityEnabled     Boolean  @default(true)
   nearbyDealEnabled     Boolean  @default(true)
   streakReminderEnabled Boolean  @default(true)
-  happyHourAlertEnabled Boolean  @default(true)
-  weatherBasedEnabled   Boolean  @default(true)
-  quietHoursStart       String?
+  happyHourAlertEnabled  Boolean  @default(true)
+  weatherBasedEnabled    Boolean  @default(true)
+  surpriseNearbyEnabled  Boolean  @default(true)
+  quietHoursStart        String?
   quietHoursEnd         String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -1581,6 +1610,14 @@ enum NudgeType {
   STREAK_REMINDER
   HAPPY_HOUR_ALERT
   WEATHER_BASED
+  SURPRISE_NEARBY
+}
+
+enum SurpriseType {
+  LOCATION_BASED
+  TIME_BASED
+  ENGAGEMENT_BASED
+  RANDOM_DROP
 }
 
 enum NudgeFrequency {
