@@ -78,7 +78,7 @@ export const isMerchant = async (req: AuthRequest, res: Response, next: NextFunc
     });
 
     if (!merchant) {
-      return res.status(403).json({ error: 'You do not have a merchant profile.' });
+      return res.status(403).json({ error: 'xYou do not have a merchant profile.' });
     }
 
     // Allow merchants with any status (PENDING, APPROVED, REJECTED, SUSPENDED)
