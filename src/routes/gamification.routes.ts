@@ -18,6 +18,12 @@ router.get('/profile', protect, async (req: AuthRequest, res) => {
       data: profile,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === 'User not found') {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
     console.error('Error fetching gamification profile:', error);
     res.status(500).json({
       success: false,

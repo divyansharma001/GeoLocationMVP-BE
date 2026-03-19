@@ -14,6 +14,8 @@ import {
   verifyTicketQRData,
   generateQRCodeImage 
 } from '../lib/qrcode.service';
+import { seatGeekService } from '../lib/seatgeek.service';
+import type { SeatGeekSearchParams } from '../lib/seatgeek.service';
 import { ticketmasterService } from '../lib/ticketmaster.service';
 import type { TicketmasterSearchParams } from '../lib/ticketmaster.service';
 
@@ -1595,6 +1597,104 @@ router.get('/tickets/:ticketId/qr', protect, verifyTicketOwnership, async (req: 
 // ==================== TICKETMASTER INTEGRATION ====================
 
 /**
+ * @route   GET /api/events/seatgeek/search
+ * @desc    Search SeatGeek events
+ * @access  Public
+ */
+router.get('/seatgeek/search', async (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      keyword,
+      city,
+      stateCode,
+      postalCode,
+      latitude,
+      longitude,
+      radius = 25,
+      startDate,
+      endDate,
+      page = 0,
+      size = 20,
+      sort = 'datetime_utc.asc'
+    } = req.query;
+
+    const searchParams: SeatGeekSearchParams = {
+      q: keyword as string,
+      'venue.city': city as string,
+      'venue.state': stateCode as string,
+      per_page: parseInt(size as string) || 20,
+      page: (parseInt(page as string) || 0) + 1,
+      sort: sort as SeatGeekSearchParams['sort'],
+    };
+
+    if (postalCode) {
+      searchParams.geoip = postalCode as string;
+    }
+
+    if (latitude && longitude) {
+      searchParams.lat = parseFloat(latitude as string);
+      searchParams.lon = parseFloat(longitude as string);
+      searchParams.range = `${parseInt(radius as string) || 25}mi`;
+    }
+
+    if (startDate) {
+      searchParams['datetime_utc.gte'] = new Date(startDate as string).toISOString();
+    }
+
+    if (endDate) {
+      searchParams['datetime_utc.lte'] = new Date(endDate as string).toISOString();
+    }
+
+    const results = await seatGeekService.searchEvents(searchParams);
+
+    res.json({
+      events: results.events || [],
+      pagination: {
+        page: (results.meta?.page || 1) - 1,
+        size: results.meta?.per_page || 0,
+        totalPages: results.meta ? Math.ceil(results.meta.total / results.meta.per_page) : 0,
+        totalElements: results.meta?.total || 0,
+        total: results.meta?.total || 0,
+      },
+      source: 'seatgeek'
+    });
+  } catch (error: any) {
+    console.error('SeatGeek search error:', error);
+    res.status(500).json({
+      error: 'Failed to search SeatGeek events',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @route   GET /api/events/seatgeek/:eventId
+ * @desc    Get SeatGeek event details
+ * @access  Public
+ */
+router.get('/seatgeek/:eventId', async (req: AuthRequest, res: Response) => {
+  try {
+    const eventId = req.params.eventId as string;
+    const event = await seatGeekService.getEventById(eventId);
+
+    if (!event) {
+      return res.status(404).json({ error: 'SeatGeek event not found' });
+    }
+
+    res.json({
+      event,
+      source: 'seatgeek'
+    });
+  } catch (error: any) {
+    console.error('SeatGeek event details error:', error);
+    res.status(500).json({
+      error: 'Failed to fetch SeatGeek event',
+      message: error.message
+    });
+  }
+});
+
+/**
  * @route   GET /api/events/ticketmaster/search
  * @desc    Search Ticketmaster events
  * @access  Public
@@ -1717,7 +1817,8 @@ router.get('/discover', async (req: AuthRequest, res: Response) => {
       endDate,
       page = 0,
       size = 20,
-      includeTicketmaster = 'true'
+      includeTicketmaster = 'true',
+      includeSeatGeek = 'true'
     } = req.query;
 
     const pageNum = parseInt(page as string) || 0;
@@ -1804,6 +1905,42 @@ router.get('/discover', async (req: AuthRequest, res: Response) => {
       }
     }
 
+    let seatGeekEvents: any[] = [];
+    if (includeSeatGeek === 'true' && process.env.SEATGEEK_CLIENT_ID) {
+      try {
+        const sgParams: SeatGeekSearchParams = {
+          q: keyword as string,
+          'venue.city': city as string,
+          'venue.state': stateCode as string,
+          per_page: Math.max(1, Math.floor(pageSize / 2)),
+          page: pageNum + 1,
+          sort: 'datetime_utc.asc',
+        };
+
+        if (latitude && longitude) {
+          sgParams.lat = parseFloat(latitude as string);
+          sgParams.lon = parseFloat(longitude as string);
+          sgParams.range = `${parseInt(radius as string) || 25}mi`;
+        }
+
+        if (startDate) {
+          sgParams['datetime_utc.gte'] = new Date(startDate as string).toISOString();
+        }
+        if (endDate) {
+          sgParams['datetime_utc.lte'] = new Date(endDate as string).toISOString();
+        }
+
+        const sgResults = await seatGeekService.searchEvents(sgParams);
+        seatGeekEvents = (sgResults.events || []).map((event: any) => ({
+          ...event,
+          source: 'seatgeek',
+          isExternal: true
+        }));
+      } catch (sgError) {
+        console.error('SeatGeek search failed, continuing with local only:', sgError);
+      }
+    }
+
     const localEvents = await localEventsPromise;
 
     // Combine and format results
@@ -1816,13 +1953,14 @@ router.get('/discover', async (req: AuthRequest, res: Response) => {
           return sum + (tier.totalQuantity - tier.soldQuantity);
         }, 0) || 0
       })),
-      ...ticketmasterEvents
+      ...ticketmasterEvents,
+      ...seatGeekEvents
     ];
 
     // Sort by date
     combinedEvents.sort((a, b) => {
-      const dateA = new Date(a.startDate || a.dates?.start?.dateTime || 0);
-      const dateB = new Date(b.startDate || b.dates?.start?.dateTime || 0);
+      const dateA = new Date(a.startDate || a.datetime_utc || a.datetime_local || a.dates?.start?.dateTime || 0);
+      const dateB = new Date(b.startDate || b.datetime_utc || b.datetime_local || b.dates?.start?.dateTime || 0);
       return dateA.getTime() - dateB.getTime();
     });
 
@@ -1831,11 +1969,12 @@ router.get('/discover', async (req: AuthRequest, res: Response) => {
       pagination: {
         page: pageNum,
         size: pageSize,
-        total: localEvents.length + ticketmasterEvents.length
+        total: localEvents.length + ticketmasterEvents.length + seatGeekEvents.length
       },
       sources: {
         local: localEvents.length,
-        ticketmaster: ticketmasterEvents.length
+        ticketmaster: ticketmasterEvents.length,
+        seatgeek: seatGeekEvents.length
       }
     });
   } catch (error) {
