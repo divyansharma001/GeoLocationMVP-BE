@@ -43,6 +43,8 @@ import aiRoutes from './routes/ai.routes';
 import servicesRoutes from './routes/services.routes';
 import surpriseRoutes from './routes/surprise.routes';
 import merchantSurpriseRoutes from './routes/merchant-surprise.routes';
+import deliveryRoutes from './routes/delivery.routes';
+import ridesRoutes from './routes/rides.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -166,6 +168,8 @@ app.use('/api/ai', aiRoutes);
 app.use('/api', servicesRoutes);
 app.use('/api/surprises', surpriseRoutes);
 app.use('/api/merchant/surprises', merchantSurpriseRoutes);
+app.use('/api', deliveryRoutes);
+app.use('/api', ridesRoutes);
 
 export default app;
 
