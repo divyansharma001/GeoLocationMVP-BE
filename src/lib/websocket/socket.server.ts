@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { redis } from '../redis';
 import logger from '../logging/logger';
 import prisma from '../prisma';
+import { pushNotificationService } from '../../services/push-notification.service';
 
 let io: Server;
 
@@ -45,6 +46,10 @@ export function setupWebSocket(httpServer: HTTPServer) {
     await redis.hset(`user:${userId}:socket`, {
       socketId: socket.id,
       connectedAt: Date.now()
+    });
+
+    await pushNotificationService.flushPendingForUser(userId).catch((error) => {
+      logger.warn(`Failed to flush pending notifications for user ${userId}: ${String(error)}`);
     });
 
     // Handle disconnection

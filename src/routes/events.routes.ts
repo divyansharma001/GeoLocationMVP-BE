@@ -18,6 +18,7 @@ import { seatGeekService } from '../lib/seatgeek.service';
 import type { SeatGeekSearchParams } from '../lib/seatgeek.service';
 import { ticketmasterService } from '../lib/ticketmaster.service';
 import type { TicketmasterSearchParams } from '../lib/ticketmaster.service';
+import { eventTargetingService } from '../services/event-targeting.service';
 
 const router = Router();
 
@@ -330,6 +331,80 @@ router.get('/events/:id', optionalAuth, async (req: AuthRequest, res: Response) 
     res.status(500).json({ error: 'Failed to fetch event details' });
   }
 });
+
+/**
+ * POST /api/events/:eventId/targeting/preview
+ * Preview a geo-targeted audience for an event using recent nearby activity.
+ */
+router.post(
+  '/events/:eventId/targeting/preview',
+  protect,
+  requireEventOrganizer,
+  verifyEventOwnership,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const eventId = parseInt(req.params.eventId as string, 10);
+      if (isNaN(eventId)) {
+        return res.status(400).json({ error: 'Valid event ID required' });
+      }
+
+      const preview = await eventTargetingService.previewAudience(eventId, {
+        radiusKm: req.body.radiusKm !== undefined ? Number(req.body.radiusKm) : undefined,
+        recentDays: req.body.recentDays !== undefined ? Number(req.body.recentDays) : undefined,
+        maxUsers: req.body.maxUsers !== undefined ? Number(req.body.maxUsers) : undefined,
+      });
+
+      res.json(preview);
+    } catch (error: any) {
+      if (error.message?.includes('not found')) {
+        return res.status(404).json({ error: error.message });
+      }
+      if (error.message?.includes('location is required')) {
+        return res.status(400).json({ error: error.message });
+      }
+      console.error('Event targeting preview error:', error);
+      res.status(500).json({ error: 'Failed to preview event audience' });
+    }
+  }
+);
+
+/**
+ * POST /api/events/:eventId/targeting/notify
+ * Queue WebSocket notifications for users likely to be interested in a nearby event.
+ */
+router.post(
+  '/events/:eventId/targeting/notify',
+  protect,
+  requireEventOrganizer,
+  verifyEventOwnership,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const eventId = parseInt(req.params.eventId as string, 10);
+      if (isNaN(eventId)) {
+        return res.status(400).json({ error: 'Valid event ID required' });
+      }
+
+      const result = await eventTargetingService.notifyAudience(eventId, {
+        radiusKm: req.body.radiusKm !== undefined ? Number(req.body.radiusKm) : undefined,
+        recentDays: req.body.recentDays !== undefined ? Number(req.body.recentDays) : undefined,
+        maxUsers: req.body.maxUsers !== undefined ? Number(req.body.maxUsers) : undefined,
+        title: typeof req.body.title === 'string' ? req.body.title : undefined,
+        message: typeof req.body.message === 'string' ? req.body.message : undefined,
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      if (error.message?.includes('not found')) {
+        return res.status(404).json({ error: error.message });
+      }
+      if (error.message?.includes('location is required')) {
+        return res.status(400).json({ error: error.message });
+      }
+      console.error('Event targeting notify error:', error);
+      res.status(500).json({ error: 'Failed to queue event notifications' });
+    }
+  }
+);
 
 // ==================== ORGANIZER EVENT MANAGEMENT ====================
 
