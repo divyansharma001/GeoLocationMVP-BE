@@ -1,52 +1,77 @@
-version: '3.8'
+version: "3.9"
 
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile.prod
+    image: geolocationmvpbackend:prod
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      TRUST_PROXY: 1
+      RUN_MIGRATIONS: "true"
+    depends_on:
+      redis:
+        condition: service_started
     ports:
       - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL}
-      - JWT_SECRET=${JWT_SECRET}
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
-    depends_on:
-      - redis
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/live', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     volumes:
-      - ./backups:/app/backups
-    restart: unless-stopped
+      - app_logs:/app/logs
+      - app_uploads:/app/uploads
+      - app_backups:/app/backups
+    security_opt:
+      - no-new-privileges:true
     networks:
-      - app-network
+      - backend
 
   redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
     volumes:
       - redis_data:/data
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks:
-      - app-network
+      - backend
 
   nginx:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
     ports:
       - "80:80"
-      - "443:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-      - ./ssl:/etc/nginx/ssl
-    depends_on:
-      - app
-    restart: unless-stopped
+      - ./docker/nginx.prod.conf:/etc/nginx/nginx.conf:ro
     networks:
-      - app-network
+      - backend
+    profiles:
+      - proxy
 
 volumes:
   redis_data:
+  app_logs:
+  app_uploads:
+  app_backups:
 
 networks:
-  app-network:
+  backend:
     driver: bridge
