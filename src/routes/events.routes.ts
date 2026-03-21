@@ -19,6 +19,13 @@ import type { SeatGeekSearchParams } from '../lib/seatgeek.service';
 import { ticketmasterService } from '../lib/ticketmaster.service';
 import type { TicketmasterSearchParams } from '../lib/ticketmaster.service';
 import { eventTargetingService } from '../services/event-targeting.service';
+import {
+  bookingActionRateLimit,
+  detailRateLimit,
+  expensiveReadRateLimit,
+  organizerActionRateLimit,
+} from '../middleware/production.middleware';
+import { CacheTTL, createCacheKey, getOrSetCache, invalidateCachePattern } from '../lib/cache';
 
 const router = Router();
 
@@ -57,13 +64,22 @@ function formatEventResponse(event: any) {
   };
 }
 
+async function invalidateEventCaches(eventId?: number) {
+  await Promise.all([
+    invalidateCachePattern('*', 'events:list'),
+    invalidateCachePattern('*', 'events:discover'),
+    invalidateCachePattern('*', 'events:targeting'),
+    eventId ? invalidateCachePattern(`${eventId}:*`, 'events:detail') : Promise.resolve(),
+  ]);
+}
+
 // ==================== PUBLIC EVENT ROUTES ====================
 
 /**
  * GET /api/events
  * Browse published events (public)
  */
-router.get('/events', async (req: AuthRequest, res: Response) => {
+router.get('/events', expensiveReadRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const {
       eventType,
@@ -136,62 +152,86 @@ router.get('/events', async (req: AuthRequest, res: Response) => {
       orderBy.startDate = sortOrder === 'desc' ? 'desc' : 'asc';
     }
 
-    const [events, totalCount] = await Promise.all([
-      prisma.event.findMany({
-        where,
-        orderBy,
-        skip,
-        take: limitNum,
-        include: {
-          organizer: {
-            select: { id: true, name: true, email: true }
-          },
-          merchant: {
-            select: { 
-              id: true, 
-              businessName: true, 
-              logoUrl: true,
-              address: true,
-              latitude: true,
-              longitude: true
+    const { value, hit } = await getOrSetCache({
+      namespace: 'events:list',
+      key: createCacheKey([
+        eventType,
+        cityId,
+        startDate,
+        endDate,
+        isFreeEvent,
+        minPrice,
+        maxPrice,
+        search,
+        pageNum,
+        limitNum,
+        sortBy,
+        sortOrder,
+      ]),
+      ttlMs: CacheTTL.PUBLIC_LIST,
+      loader: async () => {
+        const [events, totalCount] = await Promise.all([
+          prisma.event.findMany({
+            where,
+            orderBy,
+            skip,
+            take: limitNum,
+            include: {
+              organizer: {
+                select: { id: true, name: true, email: true }
+              },
+              merchant: {
+                select: {
+                  id: true,
+                  businessName: true,
+                  logoUrl: true,
+                  address: true,
+                  latitude: true,
+                  longitude: true
+                }
+              },
+              city: {
+                select: { id: true, name: true, state: true }
+              },
+              ticketTiers: {
+                where: { isActive: true },
+                select: {
+                  id: true,
+                  name: true,
+                  tier: true,
+                  price: true,
+                  serviceFee: true,
+                  totalQuantity: true,
+                  soldQuantity: true,
+                  reservedQuantity: true
+                }
+              },
+              _count: {
+                select: {
+                  attendees: true,
+                  ticketTiers: true
+                }
+              }
             }
-          },
-          city: {
-            select: { id: true, name: true, state: true }
-          },
-          ticketTiers: {
-            where: { isActive: true },
-            select: {
-              id: true,
-              name: true,
-              tier: true,
-              price: true,
-              serviceFee: true,
-              totalQuantity: true,
-              soldQuantity: true,
-              reservedQuantity: true
-            }
-          },
-          _count: {
-            select: {
-              attendees: true,
-              ticketTiers: true
-            }
-          }
-        }
-      }),
-      prisma.event.count({ where })
-    ]);
+          }),
+          prisma.event.count({ where })
+        ]);
 
-    const formattedEvents = events.map(formatEventResponse);
+        return { events: events.map(formatEventResponse), totalCount };
+      },
+    });
 
+    const formattedEvents = value.events;
+    const totalCount = value.totalCount;
+
+    res.setHeader('X-Cache', hit ? 'HIT' : 'MISS');
     res.json({
       events: formattedEvents,
       pagination: {
         currentPage: pageNum,
         totalPages: Math.ceil(totalCount / limitNum),
         totalCount,
-        hasMore: skip + events.length < totalCount
+        hasMore: skip + formattedEvents.length < totalCount
       }
     });
   } catch (error) {
@@ -204,7 +244,7 @@ router.get('/events', async (req: AuthRequest, res: Response) => {
  * GET /api/events/:id
  * Get single event details (public)
  */
-router.get('/events/:id', optionalAuth, async (req: AuthRequest, res: Response) => {
+router.get('/events/:id', detailRateLimit, optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
     const eventId = parseInt(req.params.id as string);
 
@@ -212,40 +252,46 @@ router.get('/events/:id', optionalAuth, async (req: AuthRequest, res: Response) 
       return res.status(400).json({ error: 'Invalid event ID' });
     }
 
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      include: {
-        organizer: {
-          select: { id: true, name: true, avatarUrl: true }
-        },
-        merchant: {
-          select: {
-            id: true,
-            businessName: true,
-            logoUrl: true,
-            address: true,
-            latitude: true,
-            longitude: true,
-            phoneNumber: true
-          }
-        },
-        city: {
-          select: { id: true, name: true, state: true }
-        },
-        ticketTiers: {
-          where: { isActive: true },
-          orderBy: { price: 'asc' }
-        },
-        addOns: {
-          where: { isActive: true }
-        },
-        _count: {
-          select: {
-            attendees: true,
-            checkIns: true
+    const { value: event, hit } = await getOrSetCache({
+      namespace: 'events:detail',
+      key: `${eventId}:public`,
+      ttlMs: CacheTTL.DETAIL,
+      loader: () => prisma.event.findUnique({
+        where: { id: eventId },
+        include: {
+          organizer: {
+            select: { id: true, name: true, avatarUrl: true }
+          },
+          merchant: {
+            select: {
+              id: true,
+              businessName: true,
+              logoUrl: true,
+              address: true,
+              latitude: true,
+              longitude: true,
+              phoneNumber: true,
+              ownerId: true,
+            }
+          },
+          city: {
+            select: { id: true, name: true, state: true }
+          },
+          ticketTiers: {
+            where: { isActive: true },
+            orderBy: { price: 'asc' }
+          },
+          addOns: {
+            where: { isActive: true }
+          },
+          _count: {
+            select: {
+              attendees: true,
+              checkIns: true
+            }
           }
         }
-      }
+      }),
     });
 
     if (!event) {
@@ -263,14 +309,7 @@ router.get('/events/:id', optionalAuth, async (req: AuthRequest, res: Response) 
 
       // Allow organizer or merchant owner to always view their own private events
       const isOrganizer = event.organizerId === req.user.id;
-      let isMerchantOwner = false;
-      if (event.merchantId) {
-        const merchant = await prisma.merchant.findUnique({
-          where: { id: event.merchantId },
-          select: { ownerId: true }
-        });
-        isMerchantOwner = merchant?.ownerId === req.user.id;
-      }
+      const isMerchantOwner = event.merchant?.ownerId === req.user.id;
 
       // Check user role for admin access
       const userRecord = await prisma.user.findUnique({
@@ -313,6 +352,7 @@ router.get('/events/:id', optionalAuth, async (req: AuthRequest, res: Response) 
 
     const formattedEvent = formatEventResponse(event);
 
+    res.setHeader('X-Cache', hit ? 'HIT' : 'MISS');
     res.json({
       event: {
         ...formattedEvent,
@@ -341,6 +381,7 @@ router.post(
   protect,
   requireEventOrganizer,
   verifyEventOwnership,
+  organizerActionRateLimit,
   async (req: AuthRequest, res: Response) => {
     try {
       const eventId = parseInt(req.params.eventId as string, 10);
@@ -354,6 +395,7 @@ router.post(
         maxUsers: req.body.maxUsers !== undefined ? Number(req.body.maxUsers) : undefined,
       });
 
+      res.setHeader('X-Cache', preview.cacheHit ? 'HIT' : 'MISS');
       res.json(preview);
     } catch (error: any) {
       if (error.message?.includes('not found')) {
@@ -377,6 +419,7 @@ router.post(
   protect,
   requireEventOrganizer,
   verifyEventOwnership,
+  organizerActionRateLimit,
   async (req: AuthRequest, res: Response) => {
     try {
       const eventId = parseInt(req.params.eventId as string, 10);
@@ -412,7 +455,7 @@ router.post(
  * POST /api/events
  * Create new event (requires EVENT_ORGANIZER role)
  */
-router.post('/events', protect, requireEventOrganizer, async (req: AuthRequest, res: Response) => {
+router.post('/events', protect, requireEventOrganizer, organizerActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const {
@@ -546,6 +589,7 @@ router.post('/events', protect, requireEventOrganizer, async (req: AuthRequest, 
         city: true
       }
     });
+    await invalidateEventCaches(event.id);
 
     res.status(201).json({ 
       event: formatEventResponse(event),
@@ -561,7 +605,7 @@ router.post('/events', protect, requireEventOrganizer, async (req: AuthRequest, 
  * PUT /api/events/:id
  * Update event (owner only)
  */
-router.put('/events/:id', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
+router.put('/events/:id', protect, requireEventOrganizer, verifyEventOwnership, organizerActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const eventId = parseInt(req.params.id as string);
     const updates = req.body;
@@ -620,6 +664,7 @@ router.put('/events/:id', protect, requireEventOrganizer, verifyEventOwnership, 
         }
       }
     });
+    await invalidateEventCaches(eventId);
 
     res.json({ 
       event: formatEventResponse(event),
@@ -635,7 +680,7 @@ router.put('/events/:id', protect, requireEventOrganizer, verifyEventOwnership, 
  * DELETE /api/events/:id
  * Delete/Cancel event (owner only)
  */
-router.delete('/events/:id', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
+router.delete('/events/:id', protect, requireEventOrganizer, verifyEventOwnership, organizerActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const eventId = parseInt(req.params.id as string);
 
@@ -662,6 +707,7 @@ router.delete('/events/:id', protect, requireEventOrganizer, verifyEventOwnershi
           cancelledAt: new Date()
         }
       });
+      await invalidateEventCaches(eventId);
 
       // TODO: Trigger refund process and send notifications
 
@@ -675,6 +721,7 @@ router.delete('/events/:id', protect, requireEventOrganizer, verifyEventOwnershi
     await prisma.event.delete({
       where: { id: eventId }
     });
+    await invalidateEventCaches(eventId);
 
     res.json({ 
       message: 'Event deleted successfully',
@@ -690,7 +737,7 @@ router.delete('/events/:id', protect, requireEventOrganizer, verifyEventOwnershi
  * POST /api/events/:id/publish
  * Publish event (make it visible to public)
  */
-router.post('/events/:id/publish', protect, requireEventOrganizer, verifyEventOwnership, async (req: AuthRequest, res: Response) => {
+router.post('/events/:id/publish', protect, requireEventOrganizer, verifyEventOwnership, organizerActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const eventId = parseInt(req.params.id as string);
 
@@ -729,6 +776,7 @@ router.post('/events/:id/publish', protect, requireEventOrganizer, verifyEventOw
         publishedAt: new Date()
       }
     });
+    await invalidateEventCaches(eventId);
 
     res.json({ 
       event: formatEventResponse(publishedEvent),
@@ -1530,7 +1578,7 @@ router.put('/events/:eventId/add-ons/:addOnId', protect, requireEventOrganizer, 
  * GET /api/my-events
  * Get user's organized events
  */
-router.get('/my-events', protect, async (req: AuthRequest, res: Response) => {
+router.get('/my-events', protect, detailRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const { status } = req.query;
@@ -1582,7 +1630,7 @@ router.get('/my-events', protect, async (req: AuthRequest, res: Response) => {
  * GET /api/my-tickets
  * Get user's event tickets
  */
-router.get('/my-tickets', protect, async (req: AuthRequest, res: Response) => {
+router.get('/my-tickets', protect, detailRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const { status, upcoming } = req.query;
@@ -1632,7 +1680,7 @@ router.get('/my-tickets', protect, async (req: AuthRequest, res: Response) => {
  * GET /api/tickets/:ticketId/qr
  * Get ticket QR code
  */
-router.get('/tickets/:ticketId/qr', protect, verifyTicketOwnership, async (req: AuthRequest, res: Response) => {
+router.get('/tickets/:ticketId/qr', protect, verifyTicketOwnership, bookingActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const ticketId = parseInt(req.params.ticketId as string);
 
@@ -1676,7 +1724,7 @@ router.get('/tickets/:ticketId/qr', protect, verifyTicketOwnership, async (req: 
  * @desc    Search SeatGeek events
  * @access  Public
  */
-router.get('/seatgeek/search', async (req: AuthRequest, res: Response) => {
+router.get('/seatgeek/search', expensiveReadRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const {
       keyword,
@@ -1747,7 +1795,7 @@ router.get('/seatgeek/search', async (req: AuthRequest, res: Response) => {
  * @desc    Get SeatGeek event details
  * @access  Public
  */
-router.get('/seatgeek/:eventId', async (req: AuthRequest, res: Response) => {
+router.get('/seatgeek/:eventId', expensiveReadRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const eventId = req.params.eventId as string;
     const event = await seatGeekService.getEventById(eventId);
@@ -1774,7 +1822,7 @@ router.get('/seatgeek/:eventId', async (req: AuthRequest, res: Response) => {
  * @desc    Search Ticketmaster events
  * @access  Public
  */
-router.get('/ticketmaster/search', async (req: AuthRequest, res: Response) => {
+router.get('/ticketmaster/search', expensiveReadRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const {
       keyword,
@@ -1849,20 +1897,17 @@ router.get('/ticketmaster/search', async (req: AuthRequest, res: Response) => {
  * @desc    Get Ticketmaster event details
  * @access  Public
  */
-router.get('/ticketmaster/:eventId', async (req: AuthRequest, res: Response) => {
+router.get('/ticketmaster/:eventId', expensiveReadRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const eventId = req.params.eventId as string;
+    const event = await ticketmasterService.getEventById(eventId);
 
-    const events = await ticketmasterService.searchEvents({
-      keyword: eventId
-    });
-
-    if (!events._embedded?.events || events._embedded.events.length === 0) {
+    if (!event) {
       return res.status(404).json({ error: 'Ticketmaster event not found' });
     }
 
     res.json({
-      event: events._embedded.events[0],
+      event,
       source: 'ticketmaster'
     });
   } catch (error: any) {
@@ -1879,7 +1924,7 @@ router.get('/ticketmaster/:eventId', async (req: AuthRequest, res: Response) => 
  * @desc    Hybrid discovery - Search both local and Ticketmaster events
  * @access  Public
  */
-router.get('/discover', async (req: AuthRequest, res: Response) => {
+router.get('/discover', expensiveReadRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const {
       keyword,
@@ -1899,159 +1944,188 @@ router.get('/discover', async (req: AuthRequest, res: Response) => {
     const pageNum = parseInt(page as string) || 0;
     const pageSize = parseInt(size as string) || 20;
 
-    // Search local events
-    const localEventsPromise = prisma.event.findMany({
-      where: {
-        status: 'PUBLISHED',
-        ...(keyword && {
-          OR: [
-            { title: { contains: keyword as string, mode: 'insensitive' } },
-            { description: { contains: keyword as string, mode: 'insensitive' } }
-          ]
-        }),
-        ...(city && {
-          city: {
-            name: { contains: city as string, mode: 'insensitive' }
+    const { value, hit } = await getOrSetCache({
+      namespace: 'events:discover',
+      key: createCacheKey([
+        keyword,
+        city,
+        stateCode,
+        latitude,
+        longitude,
+        radius,
+        startDate,
+        endDate,
+        pageNum,
+        pageSize,
+        includeTicketmaster,
+        includeSeatGeek,
+      ]),
+      ttlMs: CacheTTL.PUBLIC_LIST,
+      loader: async () => {
+        const localEventsPromise = prisma.event.findMany({
+          where: {
+            status: 'PUBLISHED',
+            ...(keyword && {
+              OR: [
+                { title: { contains: keyword as string, mode: 'insensitive' } },
+                { description: { contains: keyword as string, mode: 'insensitive' } }
+              ]
+            }),
+            ...(city && {
+              city: {
+                name: { contains: city as string, mode: 'insensitive' }
+              }
+            }),
+            ...(startDate && {
+              startDate: { gte: new Date(startDate as string) }
+            }),
+            ...(endDate && {
+              endDate: { lte: new Date(endDate as string) }
+            })
+          },
+          include: {
+            organizer: {
+              select: { id: true, name: true, email: true }
+            },
+            city: true,
+            ticketTiers: {
+              where: { isActive: true },
+              select: {
+                id: true,
+                name: true,
+                tier: true,
+                price: true,
+                totalQuantity: true,
+                soldQuantity: true
+              }
+            }
+          },
+          orderBy: { startDate: 'asc' },
+          skip: pageNum * pageSize,
+          take: pageSize
+        });
+
+        const ticketmasterEventsPromise = (async () => {
+          if (includeTicketmaster !== 'true' || !process.env.TICKETMASTER_API_KEY) {
+            return [];
           }
-        }),
-        ...(startDate && {
-          startDate: { gte: new Date(startDate as string) }
-        }),
-        ...(endDate && {
-          endDate: { lte: new Date(endDate as string) }
-        })
-      },
-      include: {
-        organizer: {
-          select: { id: true, name: true, email: true }
-        },
-        city: true,
-        ticketTiers: {
-          where: { isActive: true },
-          select: {
-            id: true,
-            name: true,
-            tier: true,
-            price: true,
-            totalQuantity: true,
-            soldQuantity: true
+          try {
+            const tmParams: TicketmasterSearchParams = {
+              keyword: keyword as string,
+              city: city as string,
+              stateCode: stateCode as string,
+              size: Math.max(1, Math.floor(pageSize / 2)),
+              page: pageNum,
+              sort: 'date,asc'
+            };
+
+            if (latitude && longitude) {
+              tmParams.latlong = `${latitude},${longitude}`;
+              tmParams.radius = parseInt(radius as string) || 25;
+              tmParams.unit = 'miles';
+            }
+
+            if (startDate) {
+              tmParams.startDateTime = new Date(startDate as string).toISOString();
+            }
+            if (endDate) {
+              tmParams.endDateTime = new Date(endDate as string).toISOString();
+            }
+
+            const tmResults = await ticketmasterService.searchEvents(tmParams);
+            return (tmResults._embedded?.events || []).map((event: any) => ({
+              ...event,
+              source: 'ticketmaster',
+              isExternal: true
+            }));
+          } catch (tmError) {
+            console.error('Ticketmaster search failed, continuing with local only:', tmError);
+            return [];
           }
-        }
-      },
-      orderBy: { startDate: 'asc' },
-      skip: pageNum * pageSize,
-      take: pageSize
-    });
+        })();
 
-    // Search Ticketmaster events if enabled
-    let ticketmasterEvents: any[] = [];
-    if (includeTicketmaster === 'true' && process.env.TICKETMASTER_API_KEY) {
-      try {
-        const tmParams: TicketmasterSearchParams = {
-          keyword: keyword as string,
-          city: city as string,
-          stateCode: stateCode as string,
-          size: Math.floor(pageSize / 2), // Split results 50/50
-          page: pageNum,
-          sort: 'date,asc'
+        const seatGeekEventsPromise = (async () => {
+          if (includeSeatGeek !== 'true' || !process.env.SEATGEEK_CLIENT_ID) {
+            return [];
+          }
+          try {
+            const sgParams: SeatGeekSearchParams = {
+              q: keyword as string,
+              'venue.city': city as string,
+              'venue.state': stateCode as string,
+              per_page: Math.max(1, Math.floor(pageSize / 2)),
+              page: pageNum + 1,
+              sort: 'datetime_utc.asc',
+            };
+
+            if (latitude && longitude) {
+              sgParams.lat = parseFloat(latitude as string);
+              sgParams.lon = parseFloat(longitude as string);
+              sgParams.range = `${parseInt(radius as string) || 25}mi`;
+            }
+
+            if (startDate) {
+              sgParams['datetime_utc.gte'] = new Date(startDate as string).toISOString();
+            }
+            if (endDate) {
+              sgParams['datetime_utc.lte'] = new Date(endDate as string).toISOString();
+            }
+
+            const sgResults = await seatGeekService.searchEvents(sgParams);
+            return (sgResults.events || []).map((event: any) => ({
+              ...event,
+              source: 'seatgeek',
+              isExternal: true
+            }));
+          } catch (sgError) {
+            console.error('SeatGeek search failed, continuing with local only:', sgError);
+            return [];
+          }
+        })();
+
+        const [localEvents, ticketmasterEvents, seatGeekEvents] = await Promise.all([
+          localEventsPromise,
+          ticketmasterEventsPromise,
+          seatGeekEventsPromise,
+        ]);
+
+        const combinedEvents = [
+          ...localEvents.map(event => ({
+            ...event,
+            source: 'local',
+            isExternal: false,
+            availableTickets: event.ticketTiers?.reduce((sum, tier) => {
+              return sum + (tier.totalQuantity - tier.soldQuantity);
+            }, 0) || 0
+          })),
+          ...ticketmasterEvents,
+          ...seatGeekEvents
+        ];
+
+        combinedEvents.sort((a, b) => {
+          const dateA = new Date(a.startDate || a.datetime_utc || a.datetime_local || a.dates?.start?.dateTime || 0);
+          const dateB = new Date(b.startDate || b.datetime_utc || b.datetime_local || b.dates?.start?.dateTime || 0);
+          return dateA.getTime() - dateB.getTime();
+        });
+
+        return {
+          events: combinedEvents,
+          pagination: {
+            page: pageNum,
+            size: pageSize,
+            total: localEvents.length + ticketmasterEvents.length + seatGeekEvents.length
+          },
+          sources: {
+            local: localEvents.length,
+            ticketmaster: ticketmasterEvents.length,
+            seatgeek: seatGeekEvents.length
+          }
         };
-
-        if (latitude && longitude) {
-          tmParams.latlong = `${latitude},${longitude}`;
-          tmParams.radius = parseInt(radius as string) || 25;
-          tmParams.unit = 'miles';
-        }
-
-        if (startDate) {
-          tmParams.startDateTime = new Date(startDate as string).toISOString();
-        }
-        if (endDate) {
-          tmParams.endDateTime = new Date(endDate as string).toISOString();
-        }
-
-        const tmResults = await ticketmasterService.searchEvents(tmParams);
-        ticketmasterEvents = (tmResults._embedded?.events || []).map((event: any) => ({
-          ...event,
-          source: 'ticketmaster',
-          isExternal: true
-        }));
-      } catch (tmError) {
-        console.error('Ticketmaster search failed, continuing with local only:', tmError);
-      }
-    }
-
-    let seatGeekEvents: any[] = [];
-    if (includeSeatGeek === 'true' && process.env.SEATGEEK_CLIENT_ID) {
-      try {
-        const sgParams: SeatGeekSearchParams = {
-          q: keyword as string,
-          'venue.city': city as string,
-          'venue.state': stateCode as string,
-          per_page: Math.max(1, Math.floor(pageSize / 2)),
-          page: pageNum + 1,
-          sort: 'datetime_utc.asc',
-        };
-
-        if (latitude && longitude) {
-          sgParams.lat = parseFloat(latitude as string);
-          sgParams.lon = parseFloat(longitude as string);
-          sgParams.range = `${parseInt(radius as string) || 25}mi`;
-        }
-
-        if (startDate) {
-          sgParams['datetime_utc.gte'] = new Date(startDate as string).toISOString();
-        }
-        if (endDate) {
-          sgParams['datetime_utc.lte'] = new Date(endDate as string).toISOString();
-        }
-
-        const sgResults = await seatGeekService.searchEvents(sgParams);
-        seatGeekEvents = (sgResults.events || []).map((event: any) => ({
-          ...event,
-          source: 'seatgeek',
-          isExternal: true
-        }));
-      } catch (sgError) {
-        console.error('SeatGeek search failed, continuing with local only:', sgError);
-      }
-    }
-
-    const localEvents = await localEventsPromise;
-
-    // Combine and format results
-    const combinedEvents = [
-      ...localEvents.map(event => ({
-        ...event,
-        source: 'local',
-        isExternal: false,
-        availableTickets: event.ticketTiers?.reduce((sum, tier) => {
-          return sum + (tier.totalQuantity - tier.soldQuantity);
-        }, 0) || 0
-      })),
-      ...ticketmasterEvents,
-      ...seatGeekEvents
-    ];
-
-    // Sort by date
-    combinedEvents.sort((a, b) => {
-      const dateA = new Date(a.startDate || a.datetime_utc || a.datetime_local || a.dates?.start?.dateTime || 0);
-      const dateB = new Date(b.startDate || b.datetime_utc || b.datetime_local || b.dates?.start?.dateTime || 0);
-      return dateA.getTime() - dateB.getTime();
-    });
-
-    res.json({
-      events: combinedEvents,
-      pagination: {
-        page: pageNum,
-        size: pageSize,
-        total: localEvents.length + ticketmasterEvents.length + seatGeekEvents.length
       },
-      sources: {
-        local: localEvents.length,
-        ticketmaster: ticketmasterEvents.length,
-        seatgeek: seatGeekEvents.length
-      }
     });
+
+    res.setHeader('X-Cache', hit ? 'HIT' : 'MISS');
+    res.json(value);
   } catch (error) {
     console.error('Hybrid event discovery error:', error);
     res.status(500).json({ error: 'Failed to discover events' });

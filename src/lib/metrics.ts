@@ -23,6 +23,14 @@ class MetricsCollector {
     '300-1000ms': 0,
     '>1000ms': 0,
   };
+  private cacheStats = {
+    hits: 0,
+    misses: 0,
+    namespaces: {} as Record<string, { hits: number; misses: number }>,
+  };
+  private rateLimitHits: Record<string, number> = {};
+  private queueStats: Record<string, { added: number; failed: number }> = {};
+  private externalApiStats: Record<string, { count: number; totalDurationMs: number; failures: number }> = {};
 
   incrementRequest() {
     this.requestCount += 1;
@@ -52,9 +60,53 @@ class MetricsCollector {
       errorCount: this.errorCount,
       errorRate: this.requestCount ? this.errorCount / this.requestCount : 0,
       responseTimeBuckets: { ...this.responseTimeBuckets },
+      cache: {
+        ...this.cacheStats,
+      },
+      rateLimits: { ...this.rateLimitHits },
+      queues: { ...this.queueStats },
+      externalApis: { ...this.externalApiStats },
       recentRequests: [...this.recentRequests],
       timestamp: new Date().toISOString(),
     };
+  }
+
+  recordCacheEvent(type: 'hit' | 'miss', namespace: string) {
+    if (type === 'hit') {
+      this.cacheStats.hits += 1;
+    } else {
+      this.cacheStats.misses += 1;
+    }
+
+    if (!this.cacheStats.namespaces[namespace]) {
+      this.cacheStats.namespaces[namespace] = { hits: 0, misses: 0 };
+    }
+
+    this.cacheStats.namespaces[namespace][type === 'hit' ? 'hits' : 'misses'] += 1;
+  }
+
+  recordRateLimit(name: string) {
+    this.rateLimitHits[name] = (this.rateLimitHits[name] || 0) + 1;
+  }
+
+  recordQueueEvent(name: string, type: 'added' | 'failed', count: number = 1) {
+    if (!this.queueStats[name]) {
+      this.queueStats[name] = { added: 0, failed: 0 };
+    }
+
+    this.queueStats[name][type] += count;
+  }
+
+  recordExternalApi(name: string, durationMs: number, failed = false) {
+    if (!this.externalApiStats[name]) {
+      this.externalApiStats[name] = { count: 0, totalDurationMs: 0, failures: 0 };
+    }
+
+    this.externalApiStats[name].count += 1;
+    this.externalApiStats[name].totalDurationMs += durationMs;
+    if (failed) {
+      this.externalApiStats[name].failures += 1;
+    }
   }
 
   getHealthStatus() {
@@ -75,6 +127,10 @@ class MetricsCollector {
     this.errorCount = 0;
     this.recentRequests = [];
     this.responseTimeBuckets = { '<100ms': 0, '100-300ms': 0, '300-1000ms': 0, '>1000ms': 0 };
+    this.cacheStats = { hits: 0, misses: 0, namespaces: {} };
+    this.rateLimitHits = {};
+    this.queueStats = {};
+    this.externalApiStats = {};
     this.startTime = Date.now();
   }
 }

@@ -5,6 +5,8 @@ import { protect, isApprovedMerchant, isMerchant, AuthRequest } from '../middlew
 import { verifyServiceOwnership, verifyBookingOwnership } from '../middleware/service.middleware';
 import * as svc from '../services/service-catalog.service';
 import prisma from '../lib/prisma';
+import { bookingActionRateLimit, detailRateLimit, expensiveReadRateLimit } from '../middleware/production.middleware';
+import { CacheTTL, getOrSetCache } from '../lib/cache';
 
 const router = Router();
 
@@ -46,7 +48,7 @@ function handleServiceRouteError(
  * GET /api/services
  * Browse published services
  */
-router.get('/services', async (req: AuthRequest, res: Response) => {
+router.get('/services', expensiveReadRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const { serviceType, merchantId, search, page, limit } = req.query;
     const result = await svc.getPublicServices({
@@ -56,6 +58,7 @@ router.get('/services', async (req: AuthRequest, res: Response) => {
       page: page ? parseInt(page as string) : undefined,
       limit: limit ? parseInt(limit as string) : undefined,
     });
+    res.setHeader('X-Cache', 'BYPASS');
     res.json(result);
   } catch (error) {
     return handleServiceRouteError(res, error, {
@@ -69,25 +72,31 @@ router.get('/services', async (req: AuthRequest, res: Response) => {
  * GET /api/services/:id
  * Get single service details (public)
  */
-router.get('/services/:id', async (req: AuthRequest, res: Response) => {
+router.get('/services/:id', detailRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const serviceId = parseInt(req.params.id as string);
     if (isNaN(serviceId)) return res.status(400).json({ error: 'Invalid service ID' });
 
-    const service = await (prisma as any).service.findUnique({
-      where: { id: serviceId },
-      include: {
-        merchant: { select: { id: true, businessName: true, logoUrl: true, address: true, phoneNumber: true } },
-        pricingTiers: { where: { isActive: true }, orderBy: { price: 'asc' } },
-        addOns: { where: { isActive: true } },
-        _count: { select: { bookings: true } },
-      },
+    const { value: service, hit } = await getOrSetCache<any | null>({
+      namespace: 'services:detail',
+      key: `${serviceId}:public`,
+      ttlMs: CacheTTL.DETAIL,
+      loader: () => (prisma as any).service.findUnique({
+        where: { id: serviceId },
+        include: {
+          merchant: { select: { id: true, businessName: true, logoUrl: true, address: true, phoneNumber: true } },
+          pricingTiers: { where: { isActive: true }, orderBy: { price: 'asc' } },
+          addOns: { where: { isActive: true } },
+          _count: { select: { bookings: true } },
+        },
+      }),
     });
 
     if (!service || service.status !== 'PUBLISHED') {
       return res.status(404).json({ error: 'Service not found' });
     }
 
+    res.setHeader('X-Cache', hit ? 'HIT' : 'MISS');
     res.json({ service });
   } catch (error) {
     return handleServiceRouteError(res, error, {
@@ -101,11 +110,12 @@ router.get('/services/:id', async (req: AuthRequest, res: Response) => {
  * GET /api/merchants/:merchantId/services
  * Public: all published services for a specific merchant
  */
-router.get('/merchants/:merchantId/services', async (req: AuthRequest, res: Response) => {
+router.get('/merchants/:merchantId/services', expensiveReadRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = parseInt(req.params.merchantId as string);
     if (isNaN(merchantId)) return res.status(400).json({ error: 'Invalid merchant ID' });
     const result = await svc.getPublicServices({ merchantId });
+    res.setHeader('X-Cache', 'BYPASS');
     res.json(result);
   } catch (error) {
     return handleServiceRouteError(res, error, {
@@ -139,7 +149,7 @@ router.get('/services/me/list', protect, isMerchant, async (req: AuthRequest, re
  * POST /api/services
  * Create a new service (DRAFT)
  */
-router.post('/services', protect, isApprovedMerchant, async (req: AuthRequest, res: Response) => {
+router.post('/services', protect, isApprovedMerchant, bookingActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = req.merchant!.id;
     const service = await svc.createService(merchantId, req.body);
@@ -157,7 +167,7 @@ router.post('/services', protect, isApprovedMerchant, async (req: AuthRequest, r
  * PUT /api/services/:id
  * Update service
  */
-router.put('/services/:id', protect, isApprovedMerchant, verifyServiceOwnership, async (req: AuthRequest, res: Response) => {
+router.put('/services/:id', protect, isApprovedMerchant, verifyServiceOwnership, bookingActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = req.merchant!.id;
     const serviceId = parseInt(req.params.id as string);
@@ -176,7 +186,7 @@ router.put('/services/:id', protect, isApprovedMerchant, verifyServiceOwnership,
  * DELETE /api/services/:id
  * Delete or cancel service
  */
-router.delete('/services/:id', protect, isApprovedMerchant, verifyServiceOwnership, async (req: AuthRequest, res: Response) => {
+router.delete('/services/:id', protect, isApprovedMerchant, verifyServiceOwnership, bookingActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = req.merchant!.id;
     const serviceId = parseInt(req.params.id as string);
@@ -194,7 +204,7 @@ router.delete('/services/:id', protect, isApprovedMerchant, verifyServiceOwnersh
 /**
  * POST /api/services/:id/publish
  */
-router.post('/services/:id/publish', protect, isApprovedMerchant, verifyServiceOwnership, async (req: AuthRequest, res: Response) => {
+router.post('/services/:id/publish', protect, isApprovedMerchant, verifyServiceOwnership, bookingActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = req.merchant!.id;
     const serviceId = parseInt(req.params.id as string);
@@ -212,7 +222,7 @@ router.post('/services/:id/publish', protect, isApprovedMerchant, verifyServiceO
 /**
  * POST /api/services/:id/pause
  */
-router.post('/services/:id/pause', protect, isApprovedMerchant, verifyServiceOwnership, async (req: AuthRequest, res: Response) => {
+router.post('/services/:id/pause', protect, isApprovedMerchant, verifyServiceOwnership, bookingActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = req.merchant!.id;
     const serviceId = parseInt(req.params.id as string);
@@ -230,7 +240,7 @@ router.post('/services/:id/pause', protect, isApprovedMerchant, verifyServiceOwn
 /**
  * POST /api/services/:id/cancel
  */
-router.post('/services/:id/cancel', protect, isApprovedMerchant, verifyServiceOwnership, async (req: AuthRequest, res: Response) => {
+router.post('/services/:id/cancel', protect, isApprovedMerchant, verifyServiceOwnership, bookingActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = req.merchant!.id;
     const serviceId = parseInt(req.params.id as string);
@@ -367,7 +377,7 @@ router.delete('/services/:serviceId/add-ons/:addOnId', protect, isApprovedMercha
  * GET /api/services/me/bookings
  * Merchant: view all bookings across their services
  */
-router.get('/services/me/bookings', protect, isMerchant, async (req: AuthRequest, res: Response) => {
+router.get('/services/me/bookings', protect, isMerchant, detailRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const merchantId = req.merchant!.id;
     const { status, serviceId, date, page, limit } = req.query;
@@ -445,7 +455,7 @@ router.put('/services/bookings/:bookingId/no-show', protect, isMerchant, async (
  * POST /api/services/bookings/:bookingId/check-in
  * QR-based check-in when customer arrives (merchant/staff scans)
  */
-router.post('/services/bookings/:bookingId/check-in', protect, isMerchant, async (req: AuthRequest, res: Response) => {
+router.post('/services/bookings/:bookingId/check-in', protect, isMerchant, bookingActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const bookingId = parseInt(req.params.bookingId as string);
     const checkedInBy = req.user!.id;
@@ -468,7 +478,7 @@ router.post('/services/bookings/:bookingId/check-in', protect, isMerchant, async
  * POST /api/services/:serviceId/bookings
  * User: book an appointment
  */
-router.post('/services/:serviceId/bookings', protect, async (req: AuthRequest, res: Response) => {
+router.post('/services/:serviceId/bookings', protect, bookingActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const serviceId = parseInt(req.params.serviceId as string);
@@ -502,7 +512,7 @@ router.post('/services/:serviceId/bookings', protect, async (req: AuthRequest, r
  * DELETE /api/services/bookings/:bookingId
  * User: cancel their own booking
  */
-router.delete('/services/bookings/:bookingId', protect, verifyBookingOwnership, async (req: AuthRequest, res: Response) => {
+router.delete('/services/bookings/:bookingId', protect, verifyBookingOwnership, bookingActionRateLimit, async (req: AuthRequest, res: Response) => {
   try {
     const bookingId = parseInt(req.params.bookingId as string);
     const userId = req.user!.id;

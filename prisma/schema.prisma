@@ -924,6 +924,8 @@ model Event {
   @@index([startDate, status])
   @@index([cityId, startDate])
   @@index([status, publishedAt])
+  @@index([status, startDate, cityId])
+  @@index([merchantId, status, startDate])
   @@index([trendingScore])
   @@index([accessCode])
 }
@@ -1716,6 +1718,7 @@ model Service {
   @@index([serviceType, status])
   @@index([status])
   @@index([merchantId])
+  @@index([status, publishedAt])
 }
 
 model ServicePricingTier {
@@ -1769,6 +1772,7 @@ model ServiceBooking {
   @@index([userId, status])
   @@index([serviceId, bookingDate])
   @@index([merchantId, bookingDate])
+  @@index([merchantId, status, bookingDate])
   @@index([confirmationCode])
   @@index([qrCode])
   @@index([status])

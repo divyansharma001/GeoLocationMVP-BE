@@ -1,6 +1,8 @@
 // src/lib/ticketmaster.service.ts
 
 import axios, { AxiosInstance } from 'axios';
+import { CacheTTL, createCacheKey, getOrSetCache } from './cache';
+import { metricsCollector } from './metrics';
 
 /**
  * Ticketmaster Discovery API Integration Service
@@ -211,19 +213,30 @@ class TicketmasterService {
       throw new Error('Ticketmaster API is not configured');
     }
 
-    try {
-      const response = await this.client.get<TicketmasterResponse>('/events.json', {
-        params: {
-          apikey: TICKETMASTER_API_KEY,
-          ...params,
-        },
-      });
+    const { value } = await getOrSetCache({
+      namespace: 'external:ticketmaster',
+      key: createCacheKey(['search', JSON.stringify(params)]),
+      ttlMs: CacheTTL.EXTERNAL_API,
+      loader: async () => {
+        const startedAt = Date.now();
+        try {
+          const response = await this.client.get<TicketmasterResponse>('/events.json', {
+            params: {
+              apikey: TICKETMASTER_API_KEY,
+              ...params,
+            },
+          });
+          metricsCollector.recordExternalApi('ticketmaster.search', Date.now() - startedAt);
+          return response.data;
+        } catch (error) {
+          metricsCollector.recordExternalApi('ticketmaster.search', Date.now() - startedAt, true);
+          console.error('[Ticketmaster] Event search error:', error);
+          throw error;
+        }
+      },
+    });
 
-      return response.data;
-    } catch (error) {
-      console.error('[Ticketmaster] Event search error:', error);
-      throw error;
-    }
+    return value;
   }
 
   /**
@@ -234,21 +247,32 @@ class TicketmasterService {
       throw new Error('Ticketmaster API is not configured');
     }
 
-    try {
-      const response = await this.client.get<TicketmasterEvent>(`/events/${eventId}.json`, {
-        params: {
-          apikey: TICKETMASTER_API_KEY,
-        },
-      });
+    const { value } = await getOrSetCache({
+      namespace: 'external:ticketmaster',
+      key: createCacheKey(['detail', eventId]),
+      ttlMs: CacheTTL.EXTERNAL_API,
+      loader: async () => {
+        const startedAt = Date.now();
+        try {
+          const response = await this.client.get<TicketmasterEvent>(`/events/${eventId}.json`, {
+            params: {
+              apikey: TICKETMASTER_API_KEY,
+            },
+          });
+          metricsCollector.recordExternalApi('ticketmaster.detail', Date.now() - startedAt);
+          return response.data;
+        } catch (error) {
+          metricsCollector.recordExternalApi('ticketmaster.detail', Date.now() - startedAt, true);
+          if (axios.isAxiosError(error) && error.response?.status === 404) {
+            return null;
+          }
+          console.error('[Ticketmaster] Get event error:', error);
+          throw error;
+        }
+      },
+    });
 
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        return null;
-      }
-      console.error('[Ticketmaster] Get event error:', error);
-      throw error;
-    }
+    return value;
   }
 
   /**
@@ -259,19 +283,30 @@ class TicketmasterService {
       throw new Error('Ticketmaster API is not configured');
     }
 
-    try {
-      const response = await this.client.get<TicketmasterResponse>('/venues.json', {
-        params: {
-          apikey: TICKETMASTER_API_KEY,
-          ...params,
-        },
-      });
+    const { value } = await getOrSetCache({
+      namespace: 'external:ticketmaster',
+      key: createCacheKey(['venues', JSON.stringify(params)]),
+      ttlMs: CacheTTL.EXTERNAL_API,
+      loader: async () => {
+        const startedAt = Date.now();
+        try {
+          const response = await this.client.get<TicketmasterResponse>('/venues.json', {
+            params: {
+              apikey: TICKETMASTER_API_KEY,
+              ...params,
+            },
+          });
+          metricsCollector.recordExternalApi('ticketmaster.venues', Date.now() - startedAt);
+          return response.data;
+        } catch (error) {
+          metricsCollector.recordExternalApi('ticketmaster.venues', Date.now() - startedAt, true);
+          console.error('[Ticketmaster] Venue search error:', error);
+          throw error;
+        }
+      },
+    });
 
-      return response.data;
-    } catch (error) {
-      console.error('[Ticketmaster] Venue search error:', error);
-      throw error;
-    }
+    return value;
   }
 
   /**
@@ -307,19 +342,30 @@ class TicketmasterService {
       throw new Error('Ticketmaster API is not configured');
     }
 
-    try {
-      const response = await this.client.get<TicketmasterResponse>('/attractions.json', {
-        params: {
-          apikey: TICKETMASTER_API_KEY,
-          ...params,
-        },
-      });
+    const { value } = await getOrSetCache({
+      namespace: 'external:ticketmaster',
+      key: createCacheKey(['attractions', JSON.stringify(params)]),
+      ttlMs: CacheTTL.EXTERNAL_API,
+      loader: async () => {
+        const startedAt = Date.now();
+        try {
+          const response = await this.client.get<TicketmasterResponse>('/attractions.json', {
+            params: {
+              apikey: TICKETMASTER_API_KEY,
+              ...params,
+            },
+          });
+          metricsCollector.recordExternalApi('ticketmaster.attractions', Date.now() - startedAt);
+          return response.data;
+        } catch (error) {
+          metricsCollector.recordExternalApi('ticketmaster.attractions', Date.now() - startedAt, true);
+          console.error('[Ticketmaster] Attraction search error:', error);
+          throw error;
+        }
+      },
+    });
 
-      return response.data;
-    } catch (error) {
-      console.error('[Ticketmaster] Attraction search error:', error);
-      throw error;
-    }
+    return value;
   }
 
   /**

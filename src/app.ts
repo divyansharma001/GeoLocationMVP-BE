@@ -3,7 +3,16 @@ import prisma from './lib/prisma';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
-import { apiRateLimit, authRateLimit } from './middleware/production.middleware';
+import {
+  apiRateLimit,
+  authRateLimit,
+  compressionMiddleware,
+  requestLoggingMiddleware,
+  requestTimeoutMiddleware,
+  securityHeadersMiddleware,
+} from './middleware/production.middleware';
+import healthRoutes from './routes/health.routes';
+import { metricsMiddleware } from './lib/metrics';
 
 // Routes
 import authRoutes from './routes/auth.routes';
@@ -107,6 +116,11 @@ const corsOptions: cors.CorsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(helmet());
+app.use(compressionMiddleware);
+app.use(requestLoggingMiddleware);
+app.use(requestTimeoutMiddleware(parseInt(process.env.REQUEST_TIMEOUT_MS || '30000', 10)));
+app.use(securityHeadersMiddleware);
+app.use(metricsMiddleware);
 
 // Basic rate limiting (disabled in test for speed)
 if (process.env.NODE_ENV !== 'test') {
@@ -116,6 +130,7 @@ if (process.env.NODE_ENV !== 'test') {
 app.get('/', (req: Request, res: Response) => {
   res.send('YOHOP Server (TypeScript & Prisma Edition) is alive!');
 });
+app.use('/', healthRoutes);
 
 // Mount routes
 // Apply strict rate limiting to auth endpoints (5 req/15min) to prevent brute force attacks

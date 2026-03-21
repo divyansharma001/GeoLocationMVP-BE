@@ -20,9 +20,12 @@
 
 export { CacheProvider, CacheStats, CacheConfig } from './cache.interface';
 export { MemoryCache, getDefaultCache } from './memory.cache';
+export { RedisCache } from './redis.cache';
+export { getOrSetCache, invalidateCacheKey, invalidateCachePattern, createCacheKey } from './utils';
 
 import { CacheProvider } from './cache.interface';
 import { MemoryCache } from './memory.cache';
+import { RedisCache } from './redis.cache';
 
 // Cache instance singleton
 let cacheInstance: CacheProvider | null = null;
@@ -38,17 +41,14 @@ export function getCache(): CacheProvider {
     return cacheInstance;
   }
 
-  const redisUrl = process.env.REDIS_URL;
+  const redisUrl = process.env.REDIS_URL || process.env.REDIS_HOST;
 
   if (redisUrl) {
-    // TODO: Implement RedisCache when needed
-    // For now, log a warning and fall back to memory cache
-    console.warn(
-      '[Cache] REDIS_URL is set but RedisCache is not implemented. Falling back to MemoryCache.'
-    );
-    console.warn(
-      '[Cache] To implement Redis, create src/lib/cache/redis.cache.ts implementing CacheProvider'
-    );
+    cacheInstance = new RedisCache({
+      maxSize: parseInt(process.env.CACHE_MAX_SIZE || '1000', 10),
+      keyPrefix: process.env.CACHE_KEY_PREFIX || 'yohop',
+    });
+    return cacheInstance;
   }
 
   // Default to memory cache
@@ -76,4 +76,9 @@ export const CacheTTL = {
   HOUR: 3_600_000,
   /** 24 hours */
   DAY: 86_400_000,
+  PUBLIC_LIST: parseInt(process.env.CACHE_TTL_PUBLIC_LIST_MS || '60000', 10),
+  DETAIL: parseInt(process.env.CACHE_TTL_DETAIL_MS || '120000', 10),
+  EXTERNAL_API: parseInt(process.env.CACHE_TTL_EXTERNAL_API_MS || '180000', 10),
+  TARGETING_PREVIEW: parseInt(process.env.CACHE_TTL_TARGETING_PREVIEW_MS || '120000', 10),
+  MERCHANT_DASHBOARD: parseInt(process.env.CACHE_TTL_MERCHANT_DASHBOARD_MS || '45000', 10),
 } as const;

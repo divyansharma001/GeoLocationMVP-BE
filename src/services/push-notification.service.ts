@@ -3,6 +3,7 @@ import { getIO } from '../lib/websocket/socket.server';
 import redis from '../lib/redis';
 import logger from '../lib/logging/logger';
 import prisma from '../lib/prisma';
+import { metricsCollector } from '../lib/metrics';
 
 export interface PushNotificationData {
   userId: number;
@@ -18,6 +19,11 @@ interface PushNotificationEnvelope extends PushNotificationData {
 
 const PENDING_TTL_SECONDS = 60 * 60 * 24 * 3;
 const PENDING_MAX_PER_USER = 50;
+const DEDUPE_WINDOW_SECONDS = parseInt(process.env.PUSH_DEDUPE_WINDOW_SECONDS || '900', 10);
+const PER_USER_WINDOW_SECONDS = parseInt(process.env.PUSH_PER_USER_WINDOW_SECONDS || '60', 10);
+const PER_USER_MAX = parseInt(process.env.PUSH_PER_USER_MAX || '20', 10);
+const PER_EVENT_WINDOW_SECONDS = parseInt(process.env.PUSH_PER_EVENT_WINDOW_SECONDS || '300', 10);
+const PER_EVENT_MAX = parseInt(process.env.PUSH_PER_EVENT_MAX || '500', 10);
 
 export const pushNotificationQueue = new Queue<PushNotificationData>('push-notifications', {
   redis: {
@@ -79,6 +85,42 @@ async function enqueuePendingNotification(payload: PushNotificationEnvelope): Pr
   await redis.expire(key, PENDING_TTL_SECONDS);
 }
 
+function getNotificationDedupeKey(payload: PushNotificationData): string {
+  const eventId = payload.data?.eventId ? String(payload.data.eventId) : 'none';
+  return `push:dedupe:${payload.userId}:${payload.type}:${eventId}:${payload.title}:${payload.message}`;
+}
+
+async function shouldEnqueueNotification(payload: PushNotificationData): Promise<boolean> {
+  const dedupeKey = getNotificationDedupeKey(payload);
+  const deduped = await redis.set(dedupeKey, '1', 'EX', DEDUPE_WINDOW_SECONDS, 'NX');
+  if (!deduped) {
+    return false;
+  }
+
+  const perUserKey = `push:user:${payload.userId}`;
+  const userCount = await redis.incr(perUserKey);
+  if (userCount === 1) {
+    await redis.expire(perUserKey, PER_USER_WINDOW_SECONDS);
+  }
+  if (userCount > PER_USER_MAX) {
+    return false;
+  }
+
+  const eventId = payload.data?.eventId;
+  if (eventId !== undefined && eventId !== null) {
+    const perEventKey = `push:event:${eventId}`;
+    const eventCount = await redis.incr(perEventKey);
+    if (eventCount === 1) {
+      await redis.expire(perEventKey, PER_EVENT_WINDOW_SECONDS);
+    }
+    if (eventCount > PER_EVENT_MAX) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 pushNotificationQueue.process(async (job) => {
   const payload = job.data;
   const envelope: PushNotificationEnvelope = {
@@ -112,11 +154,17 @@ pushNotificationQueue.process(async (job) => {
 });
 
 pushNotificationQueue.on('failed', (job, err) => {
+  metricsCollector.recordQueueEvent('push-notifications', 'failed');
   logger.error(`Push notification job ${job.id} failed:`, err);
 });
 
 export class PushNotificationService {
   async send(notification: PushNotificationData): Promise<void> {
+    if (!(await shouldEnqueueNotification(notification).catch(() => true))) {
+      logger.info(`Skipped duplicate or throttled push notification for user ${notification.userId}`);
+      return;
+    }
+
     await pushNotificationQueue.add(notification, {
       attempts: 3,
       backoff: {
@@ -126,12 +174,37 @@ export class PushNotificationService {
       removeOnComplete: 100,
       removeOnFail: 200,
     });
+    metricsCollector.recordQueueEvent('push-notifications', 'added');
   }
 
   async sendMany(notifications: PushNotificationData[]): Promise<void> {
+    const accepted: PushNotificationData[] = [];
+
     for (const notification of notifications) {
-      await this.send(notification);
+      if (await shouldEnqueueNotification(notification).catch(() => true)) {
+        accepted.push(notification);
+      }
     }
+
+    if (!accepted.length) {
+      return;
+    }
+
+    await pushNotificationQueue.addBulk(
+      accepted.map((notification) => ({
+        data: notification,
+        opts: {
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 2000,
+          },
+          removeOnComplete: 100,
+          removeOnFail: 200,
+        },
+      }))
+    );
+    metricsCollector.recordQueueEvent('push-notifications', 'added', accepted.length);
   }
 
   async flushPendingForUser(userId: number): Promise<number> {

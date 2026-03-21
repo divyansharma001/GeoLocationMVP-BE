@@ -2,6 +2,7 @@
 
 import prisma from '../lib/prisma';
 import crypto from 'crypto';
+import { CacheTTL, createCacheKey, getOrSetCache, invalidateCachePattern } from '../lib/cache';
 
 const QR_SECRET = process.env.QR_CODE_SECRET || 'default-qr-secret-change-in-production';
 
@@ -34,6 +35,15 @@ function generateConfirmationCode(): string {
   return 'SVC-' + crypto.randomBytes(4).toString('hex').toUpperCase();
 }
 
+async function invalidateServiceCaches(serviceId?: number, merchantId?: number): Promise<void> {
+  await Promise.all([
+    invalidateCachePattern('*', 'services:public'),
+    invalidateCachePattern('*', 'services:merchant'),
+    serviceId ? invalidateCachePattern(`${serviceId}:*`, 'services:detail') : Promise.resolve(),
+    merchantId ? invalidateCachePattern(`${merchantId}:*`, 'services:merchant-public') : Promise.resolve(),
+  ]);
+}
+
 // ── Service CRUD ──
 
 export async function createService(merchantId: number, data: {
@@ -62,7 +72,7 @@ export async function createService(merchantId: number, data: {
   if (!data.serviceType?.trim()) throw new Error('serviceType is required');
   if (!data.durationMinutes || data.durationMinutes < 1) throw new Error('durationMinutes must be at least 1');
 
-  return (prisma as any).service.create({
+  const service = await (prisma as any).service.create({
     data: {
       merchantId,
       title: data.title.trim(),
@@ -82,6 +92,8 @@ export async function createService(merchantId: number, data: {
     },
     include: { merchant: { select: { id: true, businessName: true } } },
   });
+  await invalidateServiceCaches(service.id, merchantId);
+  return service;
 }
 
 export async function publishService(merchantId: number, serviceId: number) {
@@ -100,10 +112,12 @@ export async function publishService(merchantId: number, serviceId: number) {
   if (!service.coverImageUrl) {
     throw new Error('Add a cover image before publishing');
   }
-  return (prisma as any).service.update({
+  const publishedService = await (prisma as any).service.update({
     where: { id: serviceId },
     data: { status: 'PUBLISHED', publishedAt: new Date() },
   });
+  await invalidateServiceCaches(serviceId, merchantId);
+  return publishedService;
 }
 
 export async function pauseService(merchantId: number, serviceId: number) {
@@ -111,7 +125,9 @@ export async function pauseService(merchantId: number, serviceId: number) {
   if (!service) throw new Error('Service not found');
   if (service.merchantId !== merchantId) throw new Error('Service not found');
   if (service.status !== 'PUBLISHED') throw new Error('Only published services can be paused');
-  return (prisma as any).service.update({ where: { id: serviceId }, data: { status: 'PAUSED' } });
+  const pausedService = await (prisma as any).service.update({ where: { id: serviceId }, data: { status: 'PAUSED' } });
+  await invalidateServiceCaches(serviceId, merchantId);
+  return pausedService;
 }
 
 export async function cancelService(merchantId: number, serviceId: number) {
@@ -126,10 +142,12 @@ export async function cancelService(merchantId: number, serviceId: number) {
     where: { serviceId, status: { in: ['PENDING', 'CONFIRMED'] } },
     data: { status: 'CANCELLED', cancelledAt: new Date(), cancellationReason: 'Service cancelled by merchant' },
   });
-  return (prisma as any).service.update({
+  const updated = await (prisma as any).service.update({
     where: { id: serviceId },
     data: { status: 'CANCELLED', cancelledAt: new Date() },
   });
+  await invalidateServiceCaches(serviceId, merchantId);
+  return updated;
 }
 
 export async function updateService(merchantId: number, serviceId: number, data: Record<string, any>) {
@@ -144,7 +162,9 @@ export async function updateService(merchantId: number, serviceId: number, data:
   for (const key of allowed) {
     if (data[key] !== undefined) updateData[key] = data[key];
   }
-  return (prisma as any).service.update({ where: { id: serviceId }, data: updateData });
+  const updatedService = await (prisma as any).service.update({ where: { id: serviceId }, data: updateData });
+  await invalidateServiceCaches(serviceId, merchantId);
+  return updatedService;
 }
 
 export async function deleteService(merchantId: number, serviceId: number) {
@@ -162,21 +182,29 @@ export async function deleteService(merchantId: number, serviceId: number) {
     return cancelService(merchantId, serviceId);
   }
   await (prisma as any).service.delete({ where: { id: serviceId } });
+  await invalidateServiceCaches(serviceId, merchantId);
   return { deleted: true };
 }
 
 export async function getMerchantServices(merchantId: number, filters?: { status?: string }) {
   const where: any = { merchantId };
   if (filters?.status) where.status = filters.status;
-  return (prisma as any).service.findMany({
-    where,
-    include: {
-      pricingTiers: { where: { isActive: true } },
-      addOns: { where: { isActive: true } },
-      _count: { select: { bookings: true } },
-    },
-    orderBy: { createdAt: 'desc' },
+  const cacheKey = createCacheKey([merchantId, filters?.status || 'all']);
+  const { value } = await getOrSetCache({
+    namespace: 'services:merchant',
+    key: cacheKey,
+    ttlMs: CacheTTL.MERCHANT_DASHBOARD,
+    loader: () => (prisma as any).service.findMany({
+      where,
+      include: {
+        pricingTiers: { where: { isActive: true } },
+        addOns: { where: { isActive: true } },
+        _count: { select: { bookings: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
   });
+  return value;
 }
 
 export async function getPublicServices(filters?: {
@@ -198,25 +226,41 @@ export async function getPublicServices(filters?: {
       { tags: { has: filters.search } },
     ];
   }
-  const [services, total] = await Promise.all([
-    (prisma as any).service.findMany({
-      where,
-      include: {
-        merchant: { select: { id: true, businessName: true, logoUrl: true, address: true } },
-        pricingTiers: { where: { isActive: true }, orderBy: { price: 'asc' } },
-        addOns: { where: { isActive: true } },
-        _count: { select: { bookings: true } },
-      },
-      orderBy: { publishedAt: 'desc' },
-      skip: (page - 1) * limit,
-      take: limit,
-    }),
-    (prisma as any).service.count({ where }),
+  const cacheKey = createCacheKey([
+    filters?.serviceType || '',
+    filters?.merchantId || '',
+    filters?.search || '',
+    page,
+    limit,
   ]);
-  return {
-    services,
-    pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasMore: page * limit < total },
-  };
+  const namespace = filters?.merchantId ? 'services:merchant-public' : 'services:public';
+  const { value } = await getOrSetCache({
+    namespace,
+    key: filters?.merchantId ? `${filters.merchantId}:${cacheKey}` : cacheKey,
+    ttlMs: CacheTTL.PUBLIC_LIST,
+    loader: async () => {
+      const [services, total] = await Promise.all([
+        (prisma as any).service.findMany({
+          where,
+          include: {
+            merchant: { select: { id: true, businessName: true, logoUrl: true, address: true } },
+            pricingTiers: { where: { isActive: true }, orderBy: { price: 'asc' } },
+            addOns: { where: { isActive: true } },
+            _count: { select: { bookings: true } },
+          },
+          orderBy: { publishedAt: 'desc' },
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        (prisma as any).service.count({ where }),
+      ]);
+      return {
+        services,
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasMore: page * limit < total },
+      };
+    },
+  });
+  return value;
 }
 
 // ── Pricing Tiers ──

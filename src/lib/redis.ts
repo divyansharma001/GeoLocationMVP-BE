@@ -12,6 +12,7 @@ const redisConfig = {
 };
 
 export const redis = new Redis(redisConfig);
+let redisReady = false;
 
 let lastRedisErrorSignature = '';
 let lastRedisErrorAt = 0;
@@ -42,7 +43,20 @@ redis.on('error', (err) => {
 });
 
 redis.on('ready', () => {
+  redisReady = true;
   logger.info('Redis client ready');
 });
+
+redis.on('close', () => {
+  redisReady = false;
+});
+
+redis.on('end', () => {
+  redisReady = false;
+});
+
+export function isRedisReady(): boolean {
+  return redisReady;
+}
 
 export default redis;

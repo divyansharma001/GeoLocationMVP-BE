@@ -1,4 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
+import { CacheTTL, createCacheKey, getOrSetCache } from './cache';
+import { metricsCollector } from './metrics';
 
 const SEATGEEK_API_BASE = 'https://api.seatgeek.com/2';
 const SEATGEEK_CLIENT_ID = process.env.SEATGEEK_CLIENT_ID || '';
@@ -141,21 +143,32 @@ class SeatGeekService {
       throw new Error('SeatGeek API is not configured');
     }
 
-    try {
-      const response = await this.client.get<SeatGeekResponse>('/events', {
-        params: {
-          client_id: SEATGEEK_CLIENT_ID,
-          ...(SEATGEEK_CLIENT_SECRET ? { client_secret: SEATGEEK_CLIENT_SECRET } : {}),
-          ...(SEATGEEK_AID ? { aid: SEATGEEK_AID } : {}),
-          ...params,
-        },
-      });
+    const { value } = await getOrSetCache({
+      namespace: 'external:seatgeek',
+      key: createCacheKey(['search', JSON.stringify(params)]),
+      ttlMs: CacheTTL.EXTERNAL_API,
+      loader: async () => {
+        const startedAt = Date.now();
+        try {
+          const response = await this.client.get<SeatGeekResponse>('/events', {
+            params: {
+              client_id: SEATGEEK_CLIENT_ID,
+              ...(SEATGEEK_CLIENT_SECRET ? { client_secret: SEATGEEK_CLIENT_SECRET } : {}),
+              ...(SEATGEEK_AID ? { aid: SEATGEEK_AID } : {}),
+              ...params,
+            },
+          });
+          metricsCollector.recordExternalApi('seatgeek.search', Date.now() - startedAt);
+          return response.data;
+        } catch (error) {
+          metricsCollector.recordExternalApi('seatgeek.search', Date.now() - startedAt, true);
+          console.error('[SeatGeek] Event search error:', error);
+          throw error;
+        }
+      },
+    });
 
-      return response.data;
-    } catch (error) {
-      console.error('[SeatGeek] Event search error:', error);
-      throw error;
-    }
+    return value;
   }
 
   async getEventById(eventId: string): Promise<SeatGeekEvent | null> {
@@ -163,23 +176,34 @@ class SeatGeekService {
       throw new Error('SeatGeek API is not configured');
     }
 
-    try {
-      const response = await this.client.get<SeatGeekEvent>(`/events/${eventId}`, {
-        params: {
-          client_id: SEATGEEK_CLIENT_ID,
-          ...(SEATGEEK_CLIENT_SECRET ? { client_secret: SEATGEEK_CLIENT_SECRET } : {}),
-          ...(SEATGEEK_AID ? { aid: SEATGEEK_AID } : {}),
-        },
-      });
+    const { value } = await getOrSetCache({
+      namespace: 'external:seatgeek',
+      key: createCacheKey(['detail', eventId]),
+      ttlMs: CacheTTL.EXTERNAL_API,
+      loader: async () => {
+        const startedAt = Date.now();
+        try {
+          const response = await this.client.get<SeatGeekEvent>(`/events/${eventId}`, {
+            params: {
+              client_id: SEATGEEK_CLIENT_ID,
+              ...(SEATGEEK_CLIENT_SECRET ? { client_secret: SEATGEEK_CLIENT_SECRET } : {}),
+              ...(SEATGEEK_AID ? { aid: SEATGEEK_AID } : {}),
+            },
+          });
+          metricsCollector.recordExternalApi('seatgeek.detail', Date.now() - startedAt);
+          return response.data;
+        } catch (error) {
+          metricsCollector.recordExternalApi('seatgeek.detail', Date.now() - startedAt, true);
+          if (axios.isAxiosError(error) && error.response?.status === 404) {
+            return null;
+          }
+          console.error('[SeatGeek] Get event error:', error);
+          throw error;
+        }
+      },
+    });
 
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        return null;
-      }
-      console.error('[SeatGeek] Get event error:', error);
-      throw error;
-    }
+    return value;
   }
 
   normalizeEvent(event: SeatGeekEvent) {
