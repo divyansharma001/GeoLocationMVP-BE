@@ -6,6 +6,7 @@ import { DealAIService } from '../lib/ai/services/deal-ai.service';
 import { ChatbotService } from '../lib/ai/services/chatbot.service';
 import { NudgeAIService } from '../lib/ai/services/nudge-ai.service';
 import { MenuAIService } from '../lib/ai/services/menu-ai.service';
+import { AICityGuideService } from '../lib/ai/services/ai-city-guide.service';
 import prisma from '../lib/prisma';
 
 const router = Router();
@@ -15,6 +16,31 @@ const dealAI = new DealAIService();
 const chatbot = new ChatbotService();
 const nudgeAI = new NudgeAIService();
 const menuAI = new MenuAIService();
+const cityGuideAI = new AICityGuideService();
+
+const parseGuideLocation = (body: any): { lat: number; lng: number } | null => {
+  const lat = Number(body?.lat);
+  const lng = Number(body?.lng);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return null;
+  }
+
+  return { lat, lng };
+};
+
+const parsePreferences = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+};
 
 // Health check — tells client whether AI features are available
 router.get('/status', (_req, res) => {
@@ -148,6 +174,112 @@ router.post('/chat', protect, async (req: AuthRequest, res) => {
     }
     console.error('[AI] chat error:', error);
     res.status(500).json({ error: 'AI assistant is temporarily unavailable.' });
+  }
+});
+
+router.post('/city-guide/recommend', protect, async (req: AuthRequest, res) => {
+  try {
+    const location = parseGuideLocation(req.body);
+    if (!location) {
+      return res.status(400).json({ error: 'Valid lat and lng are required.' });
+    }
+
+    const recommendations = await cityGuideAI.recommend({
+      userId: req.user!.id,
+      lat: location.lat,
+      lng: location.lng,
+      radiusKm: req.body.radiusKm !== undefined ? Number(req.body.radiusKm) : undefined,
+      intent: typeof req.body.intent === 'string' ? req.body.intent.trim() : undefined,
+      timeOfDay: typeof req.body.timeOfDay === 'string' ? req.body.timeOfDay.trim() : undefined,
+      preferences: parsePreferences(req.body.preferences),
+    });
+
+    res.json(recommendations);
+  } catch (error: any) {
+    if (error.message?.includes('not configured')) {
+      return res.status(503).json({ error: 'AI features are not available right now.' });
+    }
+    if (error.message?.includes('No nearby')) {
+      return res.status(404).json({ error: error.message });
+    }
+    console.error('[AI] city-guide/recommend error:', error);
+    res.status(500).json({ error: 'Failed to generate city guide recommendations.' });
+  }
+});
+
+router.post('/city-guide/follow-up', protect, async (req: AuthRequest, res) => {
+  try {
+    const location = parseGuideLocation(req.body);
+    if (!location) {
+      return res.status(400).json({ error: 'Valid lat and lng are required.' });
+    }
+
+    const followUpQuestion =
+      typeof req.body.followUpQuestion === 'string' ? req.body.followUpQuestion.trim() : '';
+    if (!followUpQuestion) {
+      return res.status(400).json({ error: 'followUpQuestion is required.' });
+    }
+
+    const recommendations = await cityGuideAI.followUp({
+      userId: req.user!.id,
+      lat: location.lat,
+      lng: location.lng,
+      radiusKm: req.body.radiusKm !== undefined ? Number(req.body.radiusKm) : undefined,
+      intent: typeof req.body.intent === 'string' ? req.body.intent.trim() : undefined,
+      timeOfDay: typeof req.body.timeOfDay === 'string' ? req.body.timeOfDay.trim() : undefined,
+      preferences: parsePreferences(req.body.preferences),
+      followUpQuestion,
+      previousRecommendations: Array.isArray(req.body.previousRecommendations)
+        ? req.body.previousRecommendations
+            .filter((item: any) => item && typeof item.candidateId === 'string')
+            .map((item: any) => ({
+              candidateId: item.candidateId,
+              reason: typeof item.reason === 'string' ? item.reason : undefined,
+            }))
+        : [],
+    });
+
+    res.json(recommendations);
+  } catch (error: any) {
+    if (error.message?.includes('not configured')) {
+      return res.status(503).json({ error: 'AI features are not available right now.' });
+    }
+    if (error.message?.includes('No nearby')) {
+      return res.status(404).json({ error: error.message });
+    }
+    console.error('[AI] city-guide/follow-up error:', error);
+    res.status(500).json({ error: 'Failed to refine city guide recommendations.' });
+  }
+});
+
+router.post('/city-guide/itinerary', protect, async (req: AuthRequest, res) => {
+  try {
+    const location = parseGuideLocation(req.body);
+    if (!location) {
+      return res.status(400).json({ error: 'Valid lat and lng are required.' });
+    }
+
+    const itinerary = await cityGuideAI.itinerary({
+      userId: req.user!.id,
+      lat: location.lat,
+      lng: location.lng,
+      radiusKm: req.body.radiusKm !== undefined ? Number(req.body.radiusKm) : undefined,
+      intent: typeof req.body.intent === 'string' ? req.body.intent.trim() : undefined,
+      timeOfDay: typeof req.body.timeOfDay === 'string' ? req.body.timeOfDay.trim() : undefined,
+      preferences: parsePreferences(req.body.preferences),
+      maxStops: req.body.maxStops !== undefined ? Number(req.body.maxStops) : undefined,
+    });
+
+    res.json(itinerary);
+  } catch (error: any) {
+    if (error.message?.includes('not configured')) {
+      return res.status(503).json({ error: 'AI features are not available right now.' });
+    }
+    if (error.message?.includes('No nearby')) {
+      return res.status(404).json({ error: error.message });
+    }
+    console.error('[AI] city-guide/itinerary error:', error);
+    res.status(500).json({ error: 'Failed to generate itinerary.' });
   }
 });
 
