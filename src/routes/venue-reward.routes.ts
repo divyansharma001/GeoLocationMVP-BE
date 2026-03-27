@@ -50,7 +50,7 @@ const docUpload = multer({
 const createRewardSchema = z.object({
   title: z.string().min(3).max(200),
   description: z.string().optional(),
-  rewardType: z.enum(['COINS', 'DISCOUNT_PERCENTAGE', 'DISCOUNT_FIXED', 'BONUS_POINTS', 'FREE_ITEM']),
+  rewardType: z.enum(['COINS', 'DISCOUNT_PERCENTAGE', 'DISCOUNT_FIXED', 'BONUS_POINTS', 'FREE_ITEM', 'SPECIAL_OFFER']),
   rewardAmount: z.number().positive(),
   geoFenceRadiusMeters: z.number().int().min(10).max(5000).optional(),
   storeId: z.number().int().positive().optional(),
@@ -62,6 +62,7 @@ const createRewardSchema = z.object({
   maxClaimsPerUser: z.number().int().positive().optional(),
   cooldownHours: z.number().int().min(0).optional(),
   requiresCheckIn: z.boolean().optional(),
+  checkInCondition: z.enum(['ANY_CHECKIN', 'FIRST_VISIT', 'BIRTHDAY']).optional(),
   imageUrl: z.string().url().optional(),
 });
 
@@ -74,8 +75,11 @@ router.post(
     try {
       const data = createRewardSchema.parse(req.body);
       const merchantId = req.merchant!.id;
+      const dbRewardType = data.rewardType === 'SPECIAL_OFFER' ? 'FREE_ITEM' : data.rewardType;
       const reward = await createVenueReward({
         ...data,
+        rewardType: dbRewardType,
+        displayRewardType: data.rewardType === 'SPECIAL_OFFER' ? 'SPECIAL_OFFER' : undefined,
         merchantId,
         startDate: new Date(data.startDate),
         endDate: new Date(data.endDate),
@@ -133,7 +137,7 @@ router.get(
 const updateRewardSchema = z.object({
   title: z.string().min(3).max(200).optional(),
   description: z.string().optional(),
-  rewardType: z.enum(['COINS', 'DISCOUNT_PERCENTAGE', 'DISCOUNT_FIXED', 'BONUS_POINTS', 'FREE_ITEM']).optional(),
+  rewardType: z.enum(['COINS', 'DISCOUNT_PERCENTAGE', 'DISCOUNT_FIXED', 'BONUS_POINTS', 'FREE_ITEM', 'SPECIAL_OFFER']).optional(),
   rewardAmount: z.number().positive().optional(),
   geoFenceRadiusMeters: z.number().int().min(10).max(5000).optional(),
   latitude: z.number().min(-90).max(90).optional(),
@@ -144,6 +148,7 @@ const updateRewardSchema = z.object({
   maxClaimsPerUser: z.number().int().positive().optional(),
   cooldownHours: z.number().int().min(0).optional(),
   requiresCheckIn: z.boolean().optional(),
+  checkInCondition: z.enum(['ANY_CHECKIN', 'FIRST_VISIT', 'BIRTHDAY']).optional(),
   imageUrl: z.string().url().optional(),
 });
 
@@ -156,10 +161,13 @@ router.patch(
       const data = updateRewardSchema.parse(req.body);
       const rewardId = Number(req.params.id);
       const merchantId = req.merchant!.id;
+      const dbRewardType = data.rewardType === 'SPECIAL_OFFER' ? 'FREE_ITEM' : data.rewardType;
       const reward = await updateVenueReward({
         venueRewardId: rewardId,
         merchantId,
         ...data,
+        rewardType: dbRewardType,
+        displayRewardType: data.rewardType === 'SPECIAL_OFFER' ? 'SPECIAL_OFFER' : undefined,
         startDate: data.startDate ? new Date(data.startDate) : undefined,
         endDate: data.endDate ? new Date(data.endDate) : undefined,
       });

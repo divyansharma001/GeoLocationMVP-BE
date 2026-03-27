@@ -10,10 +10,101 @@ import {
   getGameDetails,
 } from '../services/kitty-game.service';
 import { refreshBountyQRCode } from '../services/bounty.service';
+import {
+  createCheckInLotteryGame,
+  getCurrentCheckInLotteryGame,
+  listCheckInLotteryGames,
+  resolveCheckInLotteryGame,
+  cancelCheckInLotteryGame,
+} from '../services/checkin-lottery.service';
 
 const router = express.Router();
 
 // ==================== ADMIN GAME MANAGEMENT ====================
+
+// Create a global check-in lottery game
+router.post('/checkin-lottery/create', protect, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const createdBy = req.user!.id;
+    const { title, startAt, cutoffAt, drawAt, rewardType, rewardValue, rewardLabel } = req.body;
+
+    if (!title || !startAt || !cutoffAt || !drawAt || !rewardType || !rewardValue) {
+      return res.status(400).json({
+        success: false,
+        message: 'title, startAt, cutoffAt, drawAt, rewardType, and rewardValue are required',
+      });
+    }
+
+    if (!['CASH', 'FREE_REWARD', 'COINS'].includes(String(rewardType))) {
+      return res.status(400).json({ success: false, message: 'rewardType must be CASH, FREE_REWARD, or COINS' });
+    }
+
+    const game = await createCheckInLotteryGame({
+      title: String(title),
+      startAt: new Date(startAt),
+      cutoffAt: new Date(cutoffAt),
+      drawAt: new Date(drawAt),
+      rewardType,
+      rewardValue: Number(rewardValue),
+      rewardLabel: rewardLabel ? String(rewardLabel) : undefined,
+      createdBy,
+    });
+
+    res.status(201).json({ success: true, data: game });
+  } catch (error: any) {
+    console.error('Error creating check-in lottery game:', error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// Get current check-in lottery game
+router.get('/checkin-lottery/current', protect, requireAdmin, async (_req: AuthRequest, res) => {
+  try {
+    const game = await getCurrentCheckInLotteryGame();
+    res.json({ success: true, data: game });
+  } catch (error: any) {
+    console.error('Error fetching current check-in lottery game:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch current game' });
+  }
+});
+
+// List recent check-in lottery games
+router.get('/checkin-lottery/list', protect, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 20;
+    const games = await listCheckInLotteryGames(limit);
+    res.json({ success: true, data: games });
+  } catch (error: any) {
+    console.error('Error listing check-in lottery games:', error);
+    res.status(500).json({ success: false, message: 'Failed to list games' });
+  }
+});
+
+// Resolve a check-in lottery game and pick winner
+router.patch('/checkin-lottery/:gameId/resolve', protect, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const gameId = String(req.params.gameId);
+    const result = await resolveCheckInLotteryGame(gameId);
+    res.json({ success: true, message: 'Check-in lottery resolved', data: result });
+  } catch (error: any) {
+    console.error('Error resolving check-in lottery game:', error);
+    const status = error.message?.includes('not found') ? 404 : 400;
+    res.status(status).json({ success: false, message: error.message });
+  }
+});
+
+// Cancel a check-in lottery game
+router.patch('/checkin-lottery/:gameId/cancel', protect, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const gameId = String(req.params.gameId);
+    const result = await cancelCheckInLotteryGame(gameId);
+    res.json({ success: true, message: 'Check-in lottery cancelled', data: result });
+  } catch (error: any) {
+    console.error('Error cancelling check-in lottery game:', error);
+    const status = error.message?.includes('not found') ? 404 : 400;
+    res.status(status).json({ success: false, message: error.message });
+  }
+});
 
 // Create a new Kitty Game (admin or merchant)
 router.post('/kitty/create', protect, isApprovedMerchant, async (req: AuthRequest, res) => {

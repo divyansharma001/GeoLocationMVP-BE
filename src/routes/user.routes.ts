@@ -8,8 +8,15 @@ import { invalidateLeaderboardCache } from '../lib/leaderboard/cache';
 import { updateStreakAfterCheckIn } from '../lib/streak';
 import { POINT_EVENT_TYPES } from '../constants/points';
 import { haversineMeters } from '../lib/geo';
+import { getEligibleCheckInRewardsForUser } from '../services/venue-reward.service';
+import { registerCheckInLotteryEntry } from '../services/checkin-lottery.service';
 
 const router = Router();
+
+const shouldBypassCheckInGeo = () => {
+  const raw = (process.env.CHECKIN_BYPASS_GEO || '').toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+};
 
 // Validation schema for saving a deal
 const saveDealSchema = z.object({
@@ -184,7 +191,8 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
     const { checkInRadiusMeters, checkInPoints, firstCheckInBonus } = getPointConfig();
 
     const thresholdMeters = checkInRadiusMeters;
-    const withinRange = distanceMeters <= thresholdMeters;
+    const bypassGeo = shouldBypassCheckInGeo();
+    const withinRange = bypassGeo ? true : distanceMeters <= thresholdMeters;
 
     if (!withinRange) {
       return res.status(200).json({
@@ -194,6 +202,7 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
         distanceMeters: Math.round(distanceMeters * 100) / 100,
         withinRange,
         thresholdMeters,
+        bypassGeo,
         dealActive,
         pointsAwarded: 0,
         pointEvents: []
@@ -261,6 +270,25 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
   // Update streak after successful check-in
   const streakUpdate = await updateStreakAfterCheckIn(userId, now);
 
+  // Get merchant-level rewards that become available as a result of this check-in.
+  const eligibleRewards = await getEligibleCheckInRewardsForUser({
+    userId,
+    merchantId: deal.merchant.id,
+    isFirstVisit: !result.prior,
+  });
+
+  // Register user into active global check-in lottery window, if one exists.
+  let lotteryEntry: any = null;
+  try {
+    lotteryEntry = await registerCheckInLotteryEntry({
+      userId,
+      checkInId: result.checkIn.id,
+      checkInAt: now,
+    });
+  } catch (lotteryError) {
+    console.error('Lottery eligibility registration failed:', lotteryError);
+  }
+
   // Invalidate relevant caches (current month/day/week)
   invalidateLeaderboardCache('day');
   invalidateLeaderboardCache('month');
@@ -273,10 +301,13 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
       distanceMeters: Math.round(distanceMeters * 100) / 100,
       withinRange: true,
       thresholdMeters,
+      bypassGeo,
       dealActive,
       pointsAwarded: result.totalAward,
       firstCheckIn: !result.prior,
       pointEvents: result.events.map(e => ({ id: e.id, type: e.type, points: e.points })),
+      eligibleRewards,
+      lotteryEntry,
       streak: {
         currentStreak: streakUpdate.streak.currentStreak,
         currentDiscountPercent: streakUpdate.discountPercent,

@@ -18,6 +18,30 @@ const REQUIRED_VERIFICATION_STEPS: VerificationStepType[] = [
   VerificationStepType.ADDRESS_PROOF,
 ];
 
+const CHECKIN_REWARD_CONDITIONS = ['ANY_CHECKIN', 'FIRST_VISIT', 'BIRTHDAY'] as const;
+type CheckInRewardCondition = typeof CHECKIN_REWARD_CONDITIONS[number];
+
+function parseCheckInCondition(metadata: unknown): CheckInRewardCondition {
+  const raw = (metadata as any)?.checkInCondition;
+  if (CHECKIN_REWARD_CONDITIONS.includes(raw)) {
+    return raw;
+  }
+  return 'ANY_CHECKIN';
+}
+
+function parseDisplayRewardType(metadata: unknown, fallbackType: string): string {
+  const displayRewardType = (metadata as any)?.displayRewardType;
+  if (typeof displayRewardType === 'string' && displayRewardType.trim().length > 0) {
+    return displayRewardType;
+  }
+  return fallbackType;
+}
+
+function birthdayMatches(today: Date, birthday?: Date | null): boolean {
+  if (!birthday) return false;
+  return birthday.getUTCMonth() === today.getUTCMonth() && birthday.getUTCDate() === today.getUTCDate();
+}
+
 // ── Venue Reward CRUD ──
 
 export async function createVenueReward(params: {
@@ -26,6 +50,7 @@ export async function createVenueReward(params: {
   title: string;
   description?: string;
   rewardType: 'COINS' | 'DISCOUNT_PERCENTAGE' | 'DISCOUNT_FIXED' | 'BONUS_POINTS' | 'FREE_ITEM';
+  displayRewardType?: 'SPECIAL_OFFER';
   rewardAmount: number;
   geoFenceRadiusMeters?: number;
   latitude?: number;
@@ -36,6 +61,7 @@ export async function createVenueReward(params: {
   maxClaimsPerUser?: number;
   cooldownHours?: number;
   requiresCheckIn?: boolean;
+  checkInCondition?: CheckInRewardCondition;
   imageUrl?: string;
 }) {
   const merchant = await prisma.merchant.findUnique({
@@ -96,6 +122,10 @@ export async function createVenueReward(params: {
       cooldownHours: params.cooldownHours ?? 24,
       requiresCheckIn: params.requiresCheckIn ?? true,
       imageUrl: params.imageUrl,
+      metadata: {
+        displayRewardType: params.displayRewardType ?? null,
+        checkInCondition: params.checkInCondition ?? 'ANY_CHECKIN',
+      },
     },
     include: { merchant: { select: { id: true, businessName: true } } },
   });
@@ -166,6 +196,27 @@ export async function claimVenueReward(params: {
       select: { id: true },
     });
     if (!recentCheckIn) throw new Error('You must check in at this venue before claiming the reward');
+  }
+
+  const [merchantCheckInCount, userProfile] = await Promise.all([
+    prisma.checkIn.count({
+      where: {
+        userId: params.userId,
+        merchantId: reward.merchantId,
+      },
+    }),
+    prisma.user.findUnique({
+      where: { id: params.userId },
+      select: { birthday: true },
+    }),
+  ]);
+
+  const checkInCondition = parseCheckInCondition(reward.metadata);
+  if (checkInCondition === 'FIRST_VISIT' && merchantCheckInCount > 1) {
+    throw new Error('This reward is only available on your first visit');
+  }
+  if (checkInCondition === 'BIRTHDAY' && !birthdayMatches(now, userProfile?.birthday)) {
+    throw new Error('This reward is only available on your birthday');
   }
 
   // Cooldown check
@@ -338,6 +389,8 @@ export async function getAvailableVenueRewards(params: {
       const claimInfo = claimMap.get(r.id);
       return {
         ...r,
+        displayRewardType: parseDisplayRewardType(r.metadata, r.rewardType),
+        checkInCondition: parseCheckInCondition(r.metadata),
         userClaimCount: claimInfo?.count ?? 0,
         lastClaimedAt: claimInfo?.lastClaimedAt ?? null,
         canClaim: !claimInfo || (
@@ -346,6 +399,12 @@ export async function getAvailableVenueRewards(params: {
         ),
       };
     });
+  } else {
+    enriched = paginated.map((r) => ({
+      ...r,
+      displayRewardType: parseDisplayRewardType(r.metadata, r.rewardType),
+      checkInCondition: parseCheckInCondition(r.metadata),
+    }));
   }
 
   return {
@@ -394,7 +453,11 @@ export async function getMerchantVenueRewards(params: {
   });
 
   return {
-    rewards,
+    rewards: rewards.map((reward) => ({
+      ...reward,
+      displayRewardType: parseDisplayRewardType(reward.metadata, reward.rewardType),
+      checkInCondition: parseCheckInCondition(reward.metadata),
+    })),
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasMore: page * limit < total },
     stats: { totalRewards: stats._count, activeRewards: activeCount, totalClaims },
   };
@@ -422,10 +485,21 @@ export async function getVenueRewardById(venueRewardId: number, requestingUserId
     const userClaimCount = userClaims.length;
     const canClaim = userClaimCount < reward.maxClaimsPerUser &&
       (!lastClaimedAt || (Date.now() - lastClaimedAt.getTime()) > reward.cooldownHours * 3600000);
-    return { ...reward, userClaimCount, lastClaimedAt, canClaim };
+    return {
+      ...reward,
+      displayRewardType: parseDisplayRewardType(reward.metadata, reward.rewardType),
+      checkInCondition: parseCheckInCondition(reward.metadata),
+      userClaimCount,
+      lastClaimedAt,
+      canClaim,
+    };
   }
 
-  return reward;
+  return {
+    ...reward,
+    displayRewardType: parseDisplayRewardType(reward.metadata, reward.rewardType),
+    checkInCondition: parseCheckInCondition(reward.metadata),
+  };
 }
 
 export async function updateVenueReward(params: {
@@ -434,6 +508,7 @@ export async function updateVenueReward(params: {
   title?: string;
   description?: string;
   rewardType?: 'COINS' | 'DISCOUNT_PERCENTAGE' | 'DISCOUNT_FIXED' | 'BONUS_POINTS' | 'FREE_ITEM';
+  displayRewardType?: 'SPECIAL_OFFER';
   rewardAmount?: number;
   geoFenceRadiusMeters?: number;
   latitude?: number;
@@ -444,6 +519,7 @@ export async function updateVenueReward(params: {
   maxClaimsPerUser?: number;
   cooldownHours?: number;
   requiresCheckIn?: boolean;
+  checkInCondition?: CheckInRewardCondition;
   imageUrl?: string;
 }) {
   const reward = await prisma.venueReward.findUnique({ where: { id: params.venueRewardId } });
@@ -460,10 +536,19 @@ export async function updateVenueReward(params: {
     throw new Error('endDate must be after startDate');
   }
 
-  const { venueRewardId, merchantId, ...updateFields } = params;
+  const { venueRewardId, merchantId, checkInCondition, displayRewardType, ...updateFields } = params;
   const data: any = {};
   for (const [key, value] of Object.entries(updateFields)) {
     if (value !== undefined) data[key] = value;
+  }
+
+  if (checkInCondition !== undefined || displayRewardType !== undefined) {
+    const currentMetadata = (reward.metadata && typeof reward.metadata === 'object') ? (reward.metadata as any) : {};
+    data.metadata = {
+      ...currentMetadata,
+      ...(checkInCondition !== undefined ? { checkInCondition } : {}),
+      ...(displayRewardType !== undefined ? { displayRewardType } : {}),
+    };
   }
 
   return prisma.venueReward.update({
@@ -471,6 +556,98 @@ export async function updateVenueReward(params: {
     data,
     include: { merchant: { select: { id: true, businessName: true } } },
   });
+}
+
+export async function getEligibleCheckInRewardsForUser(params: {
+  userId: number;
+  merchantId: number;
+  isFirstVisit: boolean;
+}) {
+  const now = new Date();
+
+  const [rewards, userProfile, merchantCheckInCount] = await Promise.all([
+    prisma.venueReward.findMany({
+      where: {
+        merchantId: params.merchantId,
+        status: 'ACTIVE',
+        requiresCheckIn: true,
+        startDate: { lte: now },
+        endDate: { gte: now },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.user.findUnique({ where: { id: params.userId }, select: { birthday: true } }),
+    prisma.checkIn.count({
+      where: {
+        userId: params.userId,
+        merchantId: params.merchantId,
+      },
+    }),
+  ]);
+
+  if (rewards.length === 0) return [];
+
+  const claimRows = await prisma.venueRewardClaim.findMany({
+    where: {
+      userId: params.userId,
+      venueRewardId: { in: rewards.map((r) => r.id) },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      venueRewardId: true,
+      createdAt: true,
+    },
+  });
+
+  const claimMap = new Map<number, { count: number; lastClaimAt: Date | null }>();
+  for (const row of claimRows) {
+    const existing = claimMap.get(row.venueRewardId);
+    if (!existing) {
+      claimMap.set(row.venueRewardId, { count: 1, lastClaimAt: row.createdAt });
+      continue;
+    }
+    existing.count += 1;
+  }
+
+  return rewards
+    .filter((reward) => {
+      if (reward.maxTotalClaims !== null && reward.currentClaims >= reward.maxTotalClaims) {
+        return false;
+      }
+
+      const claimInfo = claimMap.get(reward.id);
+      if (claimInfo && claimInfo.count >= reward.maxClaimsPerUser) {
+        return false;
+      }
+
+      if (claimInfo?.lastClaimAt) {
+        const cooldownUntil = new Date(claimInfo.lastClaimAt.getTime() + reward.cooldownHours * 3600000);
+        if (cooldownUntil > now) {
+          return false;
+        }
+      }
+
+      const condition = parseCheckInCondition(reward.metadata);
+      if (condition === 'FIRST_VISIT' && (merchantCheckInCount > 1 || !params.isFirstVisit)) {
+        return false;
+      }
+      if (condition === 'BIRTHDAY' && !birthdayMatches(now, userProfile?.birthday)) {
+        return false;
+      }
+
+      return true;
+    })
+    .map((reward) => ({
+      id: reward.id,
+      title: reward.title,
+      description: reward.description,
+      rewardType: parseDisplayRewardType(reward.metadata, reward.rewardType),
+      rewardAmount: reward.rewardAmount,
+      checkInCondition: parseCheckInCondition(reward.metadata),
+      expiresAt: reward.endDate,
+      merchantId: reward.merchantId,
+      cooldownHours: reward.cooldownHours,
+    }));
 }
 
 export async function deleteVenueReward(venueRewardId: number, merchantId: number) {
