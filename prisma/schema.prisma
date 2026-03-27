@@ -104,6 +104,8 @@ model User {
   pointEvents          UserPointEvent[]
   streak               UserStreak?
   venueRewardClaims    VenueRewardClaim[]
+  checkInGameSessions  CheckInGameSession[]
+  checkInGameRewards   CheckInGameIssuedReward[]
   serviceBookings       ServiceBooking[]
   serviceAddOnPurchases ServiceAddOnPurchase[]
   surpriseReveals       UserSurpriseReveal[]
@@ -176,6 +178,9 @@ model Merchant {
   timeSlots           TimeSlot[]
   userLoyaltyBalances UserMerchantLoyalty[]
   venueRewards        VenueReward[]
+  checkInGameConfig   CheckInGameConfig?
+  checkInGameSessions CheckInGameSession[]
+  checkInGameRewards  CheckInGameIssuedReward[]
   services            Service[]
 }
 
@@ -223,6 +228,7 @@ model Deal {
   kickbackEvents         KickbackEvent[]
   savedByUsers           UserDeal[]
   pointEvents            UserPointEvent[]
+  checkInGameRewards     CheckInGameIssuedReward[]
 
   @@index([accessCode])
   @@index([merchantId, dealTypeId])
@@ -287,10 +293,108 @@ model CheckIn {
   createdAt      DateTime @default(now())
   deal           Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  miniGameSession CheckInGameSession?
 
   @@index([userId, dealId])
   @@index([merchantId])
   @@index([userId, createdAt])
+}
+
+model CheckInGameConfig {
+  id                   Int                   @id @default(autoincrement())
+  merchantId           Int                   @unique
+  isEnabled            Boolean               @default(false)
+  gameType             CheckInGameType       @default(SCRATCH_CARD)
+  title                String                @default("Tap to win")
+  subtitle             String?
+  accentColor          String?
+  cooldownMinutes      Int                   @default(0)
+  maxPlaysPerCheckIn   Int                   @default(1)
+  sessionExpiryMinutes Int                   @default(15)
+  rewardExpiryHours    Int                   @default(24)
+  settings             Json?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  merchant             Merchant              @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  rewards              CheckInGameReward[]
+  sessions             CheckInGameSession[]
+
+  @@index([isEnabled])
+}
+
+model CheckInGameReward {
+  id                Int                     @id @default(autoincrement())
+  configId          Int
+  label             String
+  description       String?
+  rewardType        CheckInGameRewardType
+  rewardValue       Float
+  rewardLabel       String?
+  probabilityWeight Int                     @default(1)
+  isActive          Boolean                 @default(true)
+  maxWins           Int?
+  currentWins       Int                     @default(0)
+  metadata          Json?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  config            CheckInGameConfig       @relation(fields: [configId], references: [id], onDelete: Cascade)
+  sessions          CheckInGameSession[]
+  issuedRewards     CheckInGameIssuedReward[]
+
+  @@index([configId, isActive])
+}
+
+model CheckInGameSession {
+  id               Int                      @id @default(autoincrement())
+  sessionToken     String                   @unique
+  configId         Int
+  merchantId       Int
+  userId           Int
+  checkInId        Int                      @unique
+  gameType         CheckInGameType
+  status           CheckInGameSessionStatus @default(ELIGIBLE)
+  expiresAt        DateTime
+  playedAt         DateTime?
+  resultSlot       Int?
+  selectedRewardId Int?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  checkIn          CheckIn                  @relation(fields: [checkInId], references: [id], onDelete: Cascade)
+  config           CheckInGameConfig        @relation(fields: [configId], references: [id], onDelete: Cascade)
+  merchant         Merchant                 @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  selectedReward   CheckInGameReward?       @relation(fields: [selectedRewardId], references: [id])
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  issuedReward     CheckInGameIssuedReward?
+
+  @@index([userId, createdAt])
+  @@index([merchantId, createdAt])
+  @@index([status, expiresAt])
+}
+
+model CheckInGameIssuedReward {
+  id            Int                       @id @default(autoincrement())
+  sessionId     Int                       @unique
+  rewardId      Int
+  merchantId    Int
+  userId        Int
+  dealId        Int?
+  rewardType    CheckInGameRewardType
+  rewardValue   Float
+  rewardLabel   String?
+  claimCode     String                    @unique
+  status        CheckInGameRewardStatus   @default(AVAILABLE)
+  expiresAt     DateTime?
+  redeemedAt    DateTime?
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  deal          Deal?                     @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  merchant      Merchant                  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  reward        CheckInGameReward         @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+  session       CheckInGameSession        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, createdAt])
+  @@index([userId, status, createdAt])
 }
 
 model UserStreak {
@@ -1670,6 +1774,32 @@ enum VerificationStepType {
 enum ClaimVerificationMethod {
   GPS
   QR_CODE
+}
+
+enum CheckInGameType {
+  SCRATCH_CARD
+  SPIN_WHEEL
+  PICK_A_CARD
+}
+
+enum CheckInGameRewardType {
+  DISCOUNT_PERCENTAGE
+  DISCOUNT_FIXED
+  FREE_ITEM
+  COINS
+  BONUS_POINTS
+}
+
+enum CheckInGameSessionStatus {
+  ELIGIBLE
+  PLAYED
+  EXPIRED
+}
+
+enum CheckInGameRewardStatus {
+  AVAILABLE
+  REDEEMED
+  EXPIRED
 }
 
 enum ServiceStatus {

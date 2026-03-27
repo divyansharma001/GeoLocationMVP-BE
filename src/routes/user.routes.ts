@@ -10,6 +10,7 @@ import { POINT_EVENT_TYPES } from '../constants/points';
 import { haversineMeters } from '../lib/geo';
 import { getEligibleCheckInRewardsForUser } from '../services/venue-reward.service';
 import { registerCheckInLotteryEntry } from '../services/checkin-lottery.service';
+import { createCheckInGameSessionForCheckIn } from '../services/checkin-game.service';
 
 const router = Router();
 
@@ -289,6 +290,18 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
     console.error('Lottery eligibility registration failed:', lotteryError);
   }
 
+  let gameSession: any = null;
+  try {
+    gameSession = await createCheckInGameSessionForCheckIn({
+      userId,
+      merchantId: deal.merchant.id,
+      checkInId: result.checkIn.id,
+      checkInAt: now,
+    });
+  } catch (gameError) {
+    console.error('Check-in mini game session creation failed:', gameError);
+  }
+
   // Invalidate relevant caches (current month/day/week)
   invalidateLeaderboardCache('day');
   invalidateLeaderboardCache('month');
@@ -308,6 +321,7 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
       pointEvents: result.events.map(e => ({ id: e.id, type: e.type, points: e.points })),
       eligibleRewards,
       lotteryEntry,
+      gameSession,
       streak: {
         currentStreak: streakUpdate.streak.currentStreak,
         currentDiscountPercent: streakUpdate.discountPercent,
