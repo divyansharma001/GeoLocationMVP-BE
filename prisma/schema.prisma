@@ -463,6 +463,11 @@ model MenuItem {
   category           String
   imageUrl           String?
   imageUrls          String[]             @default([])
+  isAvailable        Boolean              @default(true)
+  inventoryTrackingEnabled Boolean        @default(false)
+  inventoryQuantity  Int?
+  lowStockThreshold  Int?
+  allowBackorder     Boolean              @default(false)
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
   happyHourPrice     Float?

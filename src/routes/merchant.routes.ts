@@ -12,6 +12,121 @@ import * as XLSX from 'xlsx';
 
 const router = Router();
 
+type InventoryPayload = {
+  isAvailable?: unknown;
+  inventoryTrackingEnabled?: unknown;
+  inventoryQuantity?: unknown;
+  lowStockThreshold?: unknown;
+  allowBackorder?: unknown;
+};
+
+function getInventoryStatus(item: {
+  isAvailable?: boolean | null;
+  inventoryTrackingEnabled?: boolean | null;
+  inventoryQuantity?: number | null;
+  lowStockThreshold?: number | null;
+  allowBackorder?: boolean | null;
+}) {
+  if (!item.isAvailable) return 'OUT_OF_STOCK';
+  if (!item.inventoryTrackingEnabled) return 'UNTRACKED';
+  if ((item.inventoryQuantity ?? 0) <= 0 && !item.allowBackorder) return 'OUT_OF_STOCK';
+  if (
+    item.lowStockThreshold != null &&
+    item.inventoryQuantity != null &&
+    item.inventoryQuantity <= item.lowStockThreshold
+  ) {
+    return 'LOW_STOCK';
+  }
+  return 'IN_STOCK';
+}
+
+function normalizeMenuItemResponse<T extends {
+  isAvailable?: boolean | null;
+  inventoryTrackingEnabled?: boolean | null;
+  inventoryQuantity?: number | null;
+  lowStockThreshold?: number | null;
+  allowBackorder?: boolean | null;
+}>(item: T) {
+  return {
+    ...item,
+    inventoryStatus: getInventoryStatus(item),
+  };
+}
+
+function buildInventoryUpdateData(payload: InventoryPayload, isCreate = false) {
+  const data: Record<string, any> = {};
+
+  if (payload.isAvailable !== undefined) {
+    if (typeof payload.isAvailable !== 'boolean') {
+      throw new Error('isAvailable must be a boolean');
+    }
+    data.isAvailable = payload.isAvailable;
+  } else if (isCreate) {
+    data.isAvailable = true;
+  }
+
+  if (payload.inventoryTrackingEnabled !== undefined) {
+    if (typeof payload.inventoryTrackingEnabled !== 'boolean') {
+      throw new Error('inventoryTrackingEnabled must be a boolean');
+    }
+    data.inventoryTrackingEnabled = payload.inventoryTrackingEnabled;
+  } else if (isCreate) {
+    data.inventoryTrackingEnabled = false;
+  }
+
+  if (payload.allowBackorder !== undefined) {
+    if (typeof payload.allowBackorder !== 'boolean') {
+      throw new Error('allowBackorder must be a boolean');
+    }
+    data.allowBackorder = payload.allowBackorder;
+  } else if (isCreate) {
+    data.allowBackorder = false;
+  }
+
+  if (payload.inventoryQuantity !== undefined) {
+    if (payload.inventoryQuantity === null || payload.inventoryQuantity === '') {
+      data.inventoryQuantity = null;
+    } else if (!Number.isInteger(Number(payload.inventoryQuantity)) || Number(payload.inventoryQuantity) < 0) {
+      throw new Error('inventoryQuantity must be a non-negative integer or null');
+    } else {
+      data.inventoryQuantity = Number(payload.inventoryQuantity);
+    }
+  }
+
+  if (payload.lowStockThreshold !== undefined) {
+    if (payload.lowStockThreshold === null || payload.lowStockThreshold === '') {
+      data.lowStockThreshold = null;
+    } else if (!Number.isInteger(Number(payload.lowStockThreshold)) || Number(payload.lowStockThreshold) < 0) {
+      throw new Error('lowStockThreshold must be a non-negative integer or null');
+    } else {
+      data.lowStockThreshold = Number(payload.lowStockThreshold);
+    }
+  }
+
+  const trackingEnabled =
+    data.inventoryTrackingEnabled ??
+    (isCreate ? false : undefined);
+
+  if (trackingEnabled === true && data.inventoryQuantity === undefined && isCreate) {
+    throw new Error('inventoryQuantity is required when inventoryTrackingEnabled is true');
+  }
+
+  if (data.lowStockThreshold != null && data.inventoryQuantity != null && data.lowStockThreshold > data.inventoryQuantity) {
+    throw new Error('lowStockThreshold cannot be greater than inventoryQuantity');
+  }
+
+  if (trackingEnabled === false) {
+    if (payload.inventoryQuantity === undefined && isCreate) {
+      data.inventoryQuantity = null;
+    }
+    if (payload.lowStockThreshold === undefined && isCreate) {
+      data.lowStockThreshold = null;
+    }
+  }
+
+  return data;
+}
+
 // Configure multer for image uploads
 const storage = multer.memoryStorage();
 const upload = multer({
@@ -3357,7 +3472,7 @@ export default router;
 // - dealType: Filter by deal type (HAPPY_HOUR_BOUNTY, HAPPY_HOUR_SURPRISE, etc.)
 // - category: Filter by menu category
 // - isHappyHour: Filter by Happy Hour items (true/false)
-// Response: { menuItems: [ { id, name, price, category, imageUrl, isHappyHour, happyHourPrice, dealType, validStartTime, validEndTime, validDays, isSurprise, surpriseRevealTime } ] }
+// Response: { menuItems: [ { id, name, price, category, imageUrl, isHappyHour, happyHourPrice, dealType, validStartTime, validEndTime, validDays, isSurprise, surpriseRevealTime, inventory... } ] }
 router.get('/merchants/me/menu', protect, isMerchant, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
@@ -3400,10 +3515,18 @@ router.get('/merchants/me/menu', protect, isMerchant, async (req: AuthRequest, r
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
+        merchantId: true,
         name: true,
+        description: true,
         price: true,
         category: true,
         imageUrl: true,
+        imageUrls: true,
+        isAvailable: true,
+        inventoryTrackingEnabled: true,
+        inventoryQuantity: true,
+        lowStockThreshold: true,
+        allowBackorder: true,
         isHappyHour: true,
         happyHourPrice: true,
         dealType: true,
@@ -3412,9 +3535,11 @@ router.get('/merchants/me/menu', protect, isMerchant, async (req: AuthRequest, r
         validDays: true,
         isSurprise: true,
         surpriseRevealTime: true,
+        createdAt: true,
+        updatedAt: true,
       }
     });
-    res.status(200).json({ menuItems });
+    res.status(200).json({ menuItems: menuItems.map(normalizeMenuItemResponse) });
   } catch (e) {
     console.error('Fetch menu items failed', e);
     res.status(500).json({ error: 'Failed to fetch menu items' });
@@ -3676,7 +3801,12 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
       validEndTime,
       validDays,
       isSurprise,
-      surpriseRevealTime
+      surpriseRevealTime,
+      isAvailable,
+      inventoryTrackingEnabled,
+      inventoryQuantity,
+      lowStockThreshold,
+      allowBackorder
     } = req.body || {};
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -3731,6 +3861,22 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
       return res.status(400).json({ error: 'isSurprise must be a boolean' });
     }
 
+    let inventoryData: Record<string, any> = {};
+    try {
+      inventoryData = buildInventoryUpdateData(
+        {
+          isAvailable,
+          inventoryTrackingEnabled,
+          inventoryQuantity,
+          lowStockThreshold,
+          allowBackorder,
+        },
+        true,
+      );
+    } catch (inventoryError: any) {
+      return res.status(400).json({ error: inventoryError.message || 'Invalid inventory data' });
+    }
+
     // @ts-ignore
     const created = await prisma.menuItem.create({
       data: {
@@ -3748,14 +3894,22 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
         validDays: validDays ? String(validDays).trim() : null,
         isSurprise: Boolean(isSurprise) || false,
         surpriseRevealTime: surpriseRevealTime ? String(surpriseRevealTime).trim() : null,
+        ...inventoryData,
       },
       select: { 
         id: true, 
+        merchantId: true,
         name: true, 
         price: true, 
         category: true, 
         imageUrl: true, 
+        imageUrls: true,
         description: true,
+        isAvailable: true,
+        inventoryTrackingEnabled: true,
+        inventoryQuantity: true,
+        lowStockThreshold: true,
+        allowBackorder: true,
         isHappyHour: true,
         happyHourPrice: true,
         dealType: true,
@@ -3763,10 +3917,12 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
         validEndTime: true,
         validDays: true,
         isSurprise: true,
-        surpriseRevealTime: true
+        surpriseRevealTime: true,
+        createdAt: true,
+        updatedAt: true,
       }
     });
-    res.status(201).json({ menuItem: created });
+    res.status(201).json({ menuItem: normalizeMenuItemResponse(created) });
   } catch (e) {
     console.error('Create menu item failed', e);
     res.status(500).json({ error: 'Failed to create menu item' });
@@ -3840,6 +3996,73 @@ router.post('/merchants/me/menu/bulk-upload', protect, isMerchant, excelUpload.s
 
       if (row.imageUrl) {
         item.imageUrl = String(row.imageUrl).trim();
+      }
+
+      if (row.isAvailable !== undefined && row.isAvailable !== null && row.isAvailable !== '') {
+        const available = String(row.isAvailable).toLowerCase();
+        if (['true', '1', 'yes'].includes(available)) {
+          item.isAvailable = true;
+        } else if (['false', '0', 'no'].includes(available)) {
+          item.isAvailable = false;
+        } else {
+          errors.push({ row: rowNumber, field: 'isAvailable', message: 'isAvailable must be true/false, yes/no, or 1/0' });
+        }
+      } else {
+        item.isAvailable = true;
+      }
+
+      if (row.inventoryTrackingEnabled !== undefined && row.inventoryTrackingEnabled !== null && row.inventoryTrackingEnabled !== '') {
+        const tracking = String(row.inventoryTrackingEnabled).toLowerCase();
+        if (['true', '1', 'yes'].includes(tracking)) {
+          item.inventoryTrackingEnabled = true;
+        } else if (['false', '0', 'no'].includes(tracking)) {
+          item.inventoryTrackingEnabled = false;
+        } else {
+          errors.push({ row: rowNumber, field: 'inventoryTrackingEnabled', message: 'inventoryTrackingEnabled must be true/false, yes/no, or 1/0' });
+        }
+      } else {
+        item.inventoryTrackingEnabled = false;
+      }
+
+      if (row.inventoryQuantity !== undefined && row.inventoryQuantity !== null && row.inventoryQuantity !== '') {
+        if (!Number.isInteger(Number(row.inventoryQuantity)) || Number(row.inventoryQuantity) < 0) {
+          errors.push({ row: rowNumber, field: 'inventoryQuantity', message: 'inventoryQuantity must be a non-negative integer' });
+        } else {
+          item.inventoryQuantity = Number(row.inventoryQuantity);
+        }
+      }
+
+      if (row.lowStockThreshold !== undefined && row.lowStockThreshold !== null && row.lowStockThreshold !== '') {
+        if (!Number.isInteger(Number(row.lowStockThreshold)) || Number(row.lowStockThreshold) < 0) {
+          errors.push({ row: rowNumber, field: 'lowStockThreshold', message: 'lowStockThreshold must be a non-negative integer' });
+        } else {
+          item.lowStockThreshold = Number(row.lowStockThreshold);
+        }
+      }
+
+      if (row.allowBackorder !== undefined && row.allowBackorder !== null && row.allowBackorder !== '') {
+        const backorder = String(row.allowBackorder).toLowerCase();
+        if (['true', '1', 'yes'].includes(backorder)) {
+          item.allowBackorder = true;
+        } else if (['false', '0', 'no'].includes(backorder)) {
+          item.allowBackorder = false;
+        } else {
+          errors.push({ row: rowNumber, field: 'allowBackorder', message: 'allowBackorder must be true/false, yes/no, or 1/0' });
+        }
+      } else {
+        item.allowBackorder = false;
+      }
+
+      if (item.inventoryTrackingEnabled === true && item.inventoryQuantity === undefined) {
+        errors.push({ row: rowNumber, field: 'inventoryQuantity', message: 'inventoryQuantity is required when inventoryTrackingEnabled is true' });
+      }
+
+      if (
+        item.lowStockThreshold !== undefined &&
+        item.inventoryQuantity !== undefined &&
+        item.lowStockThreshold > item.inventoryQuantity
+      ) {
+        errors.push({ row: rowNumber, field: 'lowStockThreshold', message: 'lowStockThreshold cannot be greater than inventoryQuantity' });
       }
 
       // Happy Hour fields
@@ -3997,7 +4220,12 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
       validEndTime,
       validDays,
       isSurprise,
-      surpriseRevealTime
+      surpriseRevealTime,
+      isAvailable,
+      inventoryTrackingEnabled,
+      inventoryQuantity,
+      lowStockThreshold,
+      allowBackorder
     } = req.body || {};
     const data: any = {};
     if (name !== undefined) {
@@ -4065,6 +4293,21 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
       data.surpriseRevealTime = surpriseRevealTime ? String(surpriseRevealTime).trim() : null;
     }
 
+    try {
+      Object.assign(
+        data,
+        buildInventoryUpdateData({
+          isAvailable,
+          inventoryTrackingEnabled,
+          inventoryQuantity,
+          lowStockThreshold,
+          allowBackorder,
+        }),
+      );
+    } catch (inventoryError: any) {
+      return res.status(400).json({ error: inventoryError.message || 'Invalid inventory data' });
+    }
+
     if (Object.keys(data).length === 0) {
       return res.status(400).json({ error: 'No valid fields provided for update' });
     }
@@ -4075,11 +4318,18 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
       data,
       select: { 
         id: true, 
+        merchantId: true,
         name: true, 
         price: true, 
         category: true, 
         imageUrl: true, 
+        imageUrls: true,
         description: true,
+        isAvailable: true,
+        inventoryTrackingEnabled: true,
+        inventoryQuantity: true,
+        lowStockThreshold: true,
+        allowBackorder: true,
         isHappyHour: true,
         happyHourPrice: true,
         dealType: true,
@@ -4087,13 +4337,94 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
         validEndTime: true,
         validDays: true,
         isSurprise: true,
-        surpriseRevealTime: true
+        surpriseRevealTime: true,
+        createdAt: true,
+        updatedAt: true,
       }
     });
-    res.status(200).json({ menuItem: updated });
+    res.status(200).json({ menuItem: normalizeMenuItemResponse(updated) });
   } catch (e) {
     console.error('Update menu item failed', e);
     res.status(500).json({ error: 'Failed to update menu item' });
+  }
+});
+
+router.patch('/merchants/me/menu/item/:itemId/inventory', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const itemId = Number(req.params.itemId);
+    if (!Number.isFinite(itemId)) return res.status(400).json({ error: 'Invalid itemId' });
+
+    // @ts-ignore
+    const existing = await prisma.menuItem.findUnique({
+      where: { id: itemId },
+      select: {
+        id: true,
+        merchantId: true,
+        isAvailable: true,
+        inventoryTrackingEnabled: true,
+        inventoryQuantity: true,
+        lowStockThreshold: true,
+        allowBackorder: true,
+      },
+    });
+
+    if (!existing || existing.merchantId !== merchantId) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    const mergedPayload = {
+      isAvailable: req.body?.isAvailable ?? existing.isAvailable,
+      inventoryTrackingEnabled: req.body?.inventoryTrackingEnabled ?? existing.inventoryTrackingEnabled,
+      inventoryQuantity: req.body?.inventoryQuantity ?? existing.inventoryQuantity,
+      lowStockThreshold: req.body?.lowStockThreshold ?? existing.lowStockThreshold,
+      allowBackorder: req.body?.allowBackorder ?? existing.allowBackorder,
+    };
+
+    let inventoryData: Record<string, any> = {};
+    try {
+      inventoryData = buildInventoryUpdateData(mergedPayload);
+    } catch (inventoryError: any) {
+      return res.status(400).json({ error: inventoryError.message || 'Invalid inventory data' });
+    }
+
+    // @ts-ignore
+    const updated = await prisma.menuItem.update({
+      where: { id: itemId },
+      data: inventoryData,
+      select: {
+        id: true,
+        merchantId: true,
+        name: true,
+        price: true,
+        category: true,
+        imageUrl: true,
+        imageUrls: true,
+        description: true,
+        isAvailable: true,
+        inventoryTrackingEnabled: true,
+        inventoryQuantity: true,
+        lowStockThreshold: true,
+        allowBackorder: true,
+        isHappyHour: true,
+        happyHourPrice: true,
+        dealType: true,
+        validStartTime: true,
+        validEndTime: true,
+        validDays: true,
+        isSurprise: true,
+        surpriseRevealTime: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    res.status(200).json({ menuItem: normalizeMenuItemResponse(updated) });
+  } catch (error) {
+    console.error('Update menu item inventory failed', error);
+    res.status(500).json({ error: 'Failed to update menu item inventory' });
   }
 });
 

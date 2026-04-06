@@ -5,6 +5,38 @@ import prisma from '../lib/prisma';
 
 const router = Router();
 
+function isMenuItemPubliclyAvailable(item: {
+  isAvailable?: boolean | null;
+  inventoryTrackingEnabled?: boolean | null;
+  inventoryQuantity?: number | null;
+  allowBackorder?: boolean | null;
+}) {
+  if (!item.isAvailable) return false;
+  if (!item.inventoryTrackingEnabled) return true;
+  if ((item.inventoryQuantity ?? 0) > 0) return true;
+  return Boolean(item.allowBackorder);
+}
+
+function getPublicInventoryStatus(item: {
+  isAvailable?: boolean | null;
+  inventoryTrackingEnabled?: boolean | null;
+  inventoryQuantity?: number | null;
+  lowStockThreshold?: number | null;
+  allowBackorder?: boolean | null;
+}) {
+  if (!item.isAvailable) return 'OUT_OF_STOCK';
+  if (!item.inventoryTrackingEnabled) return 'UNTRACKED';
+  if ((item.inventoryQuantity ?? 0) <= 0 && !item.allowBackorder) return 'OUT_OF_STOCK';
+  if (
+    item.lowStockThreshold != null &&
+    item.inventoryQuantity != null &&
+    item.inventoryQuantity <= item.lowStockThreshold
+  ) {
+    return 'LOW_STOCK';
+  }
+  return 'IN_STOCK';
+}
+
 // Utility function to calculate distance between two points using Haversine formula
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371; // Earth's radius in kilometers
@@ -586,7 +618,12 @@ router.get('/deals/:id', async (req, res) => {
                 description: true,
                 price: true,
                 imageUrl: true,
-                category: true
+                category: true,
+                isAvailable: true,
+                inventoryTrackingEnabled: true,
+                inventoryQuantity: true,
+                lowStockThreshold: true,
+                allowBackorder: true,
               }
             }
           }
@@ -656,7 +693,9 @@ router.get('/deals/:id', async (req, res) => {
       (deal.discountAmount ? `$${deal.discountAmount} OFF` : 'Special Offer');
 
     // Format menu items from DealMenuItem join records
-    let formattedMenuItems = deal.menuItems.map(item => ({
+    let formattedMenuItems = deal.menuItems
+      .filter(item => isMenuItemPubliclyAvailable(item.menuItem))
+      .map(item => ({
       id: item.menuItem.id,
       name: item.menuItem.name,
       description: item.menuItem.description,
@@ -665,13 +704,22 @@ router.get('/deals/:id', async (req, res) => {
         item.menuItem.price * (1 - deal.discountPercentage / 100) : 
         (deal.discountAmount ? Math.max(0, item.menuItem.price - deal.discountAmount) : item.menuItem.price),
       imageUrl: item.menuItem.imageUrl,
-      category: item.menuItem.category
+      category: item.menuItem.category,
+      inventoryStatus: getPublicInventoryStatus(item.menuItem),
     }));
 
     // Fallback: if no DealMenuItem records, show all merchant menu items
     if (formattedMenuItems.length === 0 && deal.merchantId) {
       const merchantMenuItems = await prisma.menuItem.findMany({
-        where: { merchantId: deal.merchantId },
+        where: {
+          merchantId: deal.merchantId,
+          isAvailable: true,
+          OR: [
+            { inventoryTrackingEnabled: false },
+            { inventoryQuantity: { gt: 0 } },
+            { allowBackorder: true },
+          ],
+        },
         select: {
           id: true,
           name: true,
@@ -679,6 +727,11 @@ router.get('/deals/:id', async (req, res) => {
           price: true,
           imageUrl: true,
           category: true,
+          isAvailable: true,
+          inventoryTrackingEnabled: true,
+          inventoryQuantity: true,
+          lowStockThreshold: true,
+          allowBackorder: true,
           isHappyHour: true,
           happyHourPrice: true,
           dealType: true,
@@ -697,6 +750,7 @@ router.get('/deals/:id', async (req, res) => {
           : item.price,
         imageUrl: item.imageUrl,
         category: item.category,
+        inventoryStatus: getPublicInventoryStatus(item),
       }));
     }
 
@@ -1018,7 +1072,13 @@ router.get('/menu/items', async (req, res) => {
       // Only show menu items from approved merchants
       merchant: {
         status: 'APPROVED'
-      }
+      },
+      isAvailable: true,
+      OR: [
+        { inventoryTrackingEnabled: false },
+        { inventoryQuantity: { gt: 0 } },
+        { allowBackorder: true },
+      ],
     };
 
     // Filter by specific merchant
@@ -1073,7 +1133,7 @@ router.get('/menu/items', async (req, res) => {
       if (searchTerm.length === 0) {
         return res.status(400).json({ error: 'Search term cannot be empty' });
       }
-      whereClause.OR = [
+      const searchConditions = [
         {
           name: {
             contains: searchTerm,
@@ -1087,6 +1147,7 @@ router.get('/menu/items', async (req, res) => {
           }
         }
       ];
+      whereClause.AND = [...(whereClause.AND || []), { OR: searchConditions }];
     }
 
     // Happy Hour filtering
@@ -1219,6 +1280,7 @@ router.get('/menu/items', async (req, res) => {
         return distance <= rad;
       });
     }
+    filteredMenuItems = filteredMenuItems.filter(isMenuItemPubliclyAvailable);
 
     // Format the response
     const formattedMenuItems = filteredMenuItems.map(item => ({
@@ -1228,6 +1290,12 @@ router.get('/menu/items', async (req, res) => {
       price: item.price,
       category: item.category,
       imageUrl: item.imageUrl,
+      isAvailable: item.isAvailable,
+      inventoryTrackingEnabled: item.inventoryTrackingEnabled,
+      inventoryQuantity: item.inventoryQuantity,
+      lowStockThreshold: item.lowStockThreshold,
+      allowBackorder: item.allowBackorder,
+      inventoryStatus: getPublicInventoryStatus(item),
       isHappyHour: item.isHappyHour,
       happyHourPrice: item.happyHourPrice,
       dealType: item.dealType,
@@ -1400,6 +1468,12 @@ router.get('/menu/happy-hour', async (req, res) => {
     // Build the where clause for filtering - only Happy Hour items
     const whereClause: any = {
       isHappyHour: true, // Only Happy Hour items
+      isAvailable: true,
+      OR: [
+        { inventoryTrackingEnabled: false },
+        { inventoryQuantity: { gt: 0 } },
+        { allowBackorder: true },
+      ],
       merchant: {
         status: 'APPROVED'
       }
@@ -1449,7 +1523,7 @@ router.get('/menu/happy-hour', async (req, res) => {
       if (searchTerm.length === 0) {
         return res.status(400).json({ error: 'Search term cannot be empty' });
       }
-      whereClause.OR = [
+      const searchConditions = [
         {
           name: {
             contains: searchTerm,
@@ -1463,6 +1537,7 @@ router.get('/menu/happy-hour', async (req, res) => {
           }
         }
       ];
+      whereClause.AND = [...(whereClause.AND || []), { OR: searchConditions }];
     }
 
     // Location-based filtering
@@ -1569,6 +1644,12 @@ router.get('/menu/happy-hour', async (req, res) => {
       price: item.price,
       category: item.category,
       imageUrl: item.imageUrl,
+      isAvailable: item.isAvailable,
+      inventoryTrackingEnabled: item.inventoryTrackingEnabled,
+      inventoryQuantity: item.inventoryQuantity,
+      lowStockThreshold: item.lowStockThreshold,
+      allowBackorder: item.allowBackorder,
+      inventoryStatus: getPublicInventoryStatus(item),
       isHappyHour: item.isHappyHour,
       happyHourPrice: item.happyHourPrice,
       dealType: item.dealType,
@@ -1730,6 +1811,11 @@ router.get('/menu-collections/:merchantId', async (req, res) => {
                 imageUrl: true,
                 imageUrls: true,
                 description: true,
+                isAvailable: true,
+                inventoryTrackingEnabled: true,
+                inventoryQuantity: true,
+                lowStockThreshold: true,
+                allowBackorder: true,
                 dealType: true,
                 isHappyHour: true,
                 happyHourPrice: true
