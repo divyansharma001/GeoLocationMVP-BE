@@ -11,6 +11,7 @@ import prisma from '../lib/prisma';
 type UpsertRewardInput = {
   label: string;
   description?: string;
+  imageUrl?: string | null;
   rewardType: CheckInGameRewardType;
   rewardValue: number;
   rewardLabel?: string;
@@ -42,14 +43,14 @@ const toNullableJsonInput = (value?: Record<string, unknown> | null): Prisma.Inp
 };
 
 const DEFAULT_REWARDS: UpsertRewardInput[] = [
-  { label: '5% OFF', rewardType: CheckInGameRewardType.DISCOUNT_PERCENTAGE, rewardValue: 5, rewardLabel: '5% OFF', probabilityWeight: 40 },
-  { label: '10% OFF', rewardType: CheckInGameRewardType.DISCOUNT_PERCENTAGE, rewardValue: 10, rewardLabel: '10% OFF', probabilityWeight: 30 },
-  { label: '15 Coins', rewardType: CheckInGameRewardType.COINS, rewardValue: 15, rewardLabel: '15 Coins', probabilityWeight: 20 },
-  { label: 'Free Treat', rewardType: CheckInGameRewardType.FREE_ITEM, rewardValue: 1, rewardLabel: 'Free Treat', probabilityWeight: 10 },
+  { label: '5% OFF', rewardType: CheckInGameRewardType.DISCOUNT_PERCENTAGE, rewardValue: 5, rewardLabel: '5% OFF', probabilityWeight: 40, imageUrl: null },
+  { label: '10% OFF', rewardType: CheckInGameRewardType.DISCOUNT_PERCENTAGE, rewardValue: 10, rewardLabel: '10% OFF', probabilityWeight: 30, imageUrl: null },
+  { label: '15 Coins', rewardType: CheckInGameRewardType.COINS, rewardValue: 15, rewardLabel: '15 Coins', probabilityWeight: 20, imageUrl: null },
+  { label: 'Free Treat', rewardType: CheckInGameRewardType.FREE_ITEM, rewardValue: 1, rewardLabel: 'Free Treat', probabilityWeight: 10, imageUrl: null },
 ];
 
 const buildBoard = (
-  rewards: Array<{ id: number; label: string; rewardType: CheckInGameRewardType }>,
+  rewards: Array<{ id: number; label: string; rewardType: CheckInGameRewardType; imageUrl?: string | null }>,
   gameType: CheckInGameType,
 ) => {
   const slotCount = gameType === CheckInGameType.PICK_A_CARD ? 3 : 6;
@@ -60,6 +61,7 @@ const buildBoard = (
       rewardId: reward.id,
       label: reward.label,
       rewardType: reward.rewardType,
+      imageUrl: reward.imageUrl || null,
     };
   });
 };
@@ -139,6 +141,7 @@ export async function upsertMerchantCheckInGameConfig(merchantId: number, input:
         configId: config.id,
         label: reward.label,
         description: reward.description,
+        imageUrl: reward.imageUrl || null,
         rewardType: reward.rewardType,
         rewardValue: reward.rewardValue,
         rewardLabel: reward.rewardLabel,
@@ -269,6 +272,7 @@ export async function getUserCheckInGameSession(userId: number, sessionToken: st
       id: reward.id,
       label: reward.rewardLabel || reward.label,
       rewardType: reward.rewardType,
+      imageUrl: reward.imageUrl,
     })),
     session.gameType,
   );
@@ -334,6 +338,7 @@ export async function playUserCheckInGameSession(userId: number, sessionToken: s
         id: reward.id,
         label: reward.rewardLabel || reward.label,
         rewardType: reward.rewardType,
+        imageUrl: reward.imageUrl,
       })),
       session.gameType,
     );
@@ -366,6 +371,7 @@ export async function playUserCheckInGameSession(userId: number, sessionToken: s
         rewardType: selectedReward.rewardType,
         rewardValue: selectedReward.rewardValue,
         rewardLabel: selectedReward.rewardLabel || selectedReward.label,
+        imageUrl: selectedReward.imageUrl,
         claimCode: formatClaimCode(),
         expiresAt,
       },

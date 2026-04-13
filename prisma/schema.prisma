@@ -182,6 +182,8 @@ model Merchant {
   checkInGameSessions CheckInGameSession[]
   checkInGameRewards  CheckInGameIssuedReward[]
   services            Service[]
+  blogPosts           BlogPost[]
+  blogCategories      BlogCategory[]
 }
 
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
@@ -327,6 +329,7 @@ model CheckInGameReward {
   configId          Int
   label             String
   description       String?
+  imageUrl          String?
   rewardType        CheckInGameRewardType
   rewardValue       Float
   rewardLabel       String?
@@ -381,6 +384,7 @@ model CheckInGameIssuedReward {
   rewardType    CheckInGameRewardType
   rewardValue   Float
   rewardLabel   String?
+  imageUrl      String?
   claimCode     String                    @unique
   status        CheckInGameRewardStatus   @default(AVAILABLE)
   expiresAt     DateTime?
@@ -478,14 +482,33 @@ model MenuItem {
   validDays          String?
   validEndTime       String?
   validStartTime     String?
+  hasVariants         Boolean              @default(false)
   dealLinks          DealMenuItem[]
   collectionItems    MenuCollectionItem[]
+  variants           MenuItemVariant[]
   merchant           Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   @@index([merchantId])
   @@index([merchantId, dealType])
   @@index([merchantId, isHappyHour])
   @@index([dealType])
+}
+
+model MenuItemVariant {
+  id                Int      @id @default(autoincrement())
+  menuItemId        Int
+  sku               String   @unique
+  label             String
+  price             Float
+  inventoryQuantity Int?
+  lowStockThreshold Int?
+  isAvailable       Boolean  @default(true)
+  sortOrder         Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  menuItem          MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@index([menuItemId])
 }
 
 model DealMenuItem {
@@ -1470,6 +1493,52 @@ model BusinessInterestLog {
 
   @@index([merchantId, eventType, createdAt])
   @@index([merchantId, createdAt])
+}
+
+model BlogCategory {
+  id          Int        @id @default(autoincrement())
+  merchantId  Int
+  name        String     @db.VarChar(100)
+  slug        String     @db.VarChar(120)
+  description String?
+  sortOrder   Int        @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  merchant    Merchant   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  posts       BlogPost[]
+
+  @@unique([merchantId, slug])
+  @@index([merchantId])
+}
+
+model BlogPost {
+  id            Int            @id @default(autoincrement())
+  merchantId    Int
+  title         String         @db.VarChar(200)
+  slug          String         @db.VarChar(220)
+  excerpt       String?        @db.VarChar(500)
+  content       String
+  coverImageUrl String?
+  imageUrls     String[]       @default([])
+  tags          String[]       @default([])
+  status        BlogPostStatus @default(DRAFT)
+  categoryId    Int?
+  publishedAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  merchant      Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  category      BlogCategory?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@unique([merchantId, slug])
+  @@index([merchantId, status])
+  @@index([merchantId, publishedAt])
+  @@index([categoryId])
+}
+
+enum BlogPostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
 }
 
 enum UserRole {

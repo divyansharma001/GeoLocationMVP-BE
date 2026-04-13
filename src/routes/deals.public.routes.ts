@@ -37,6 +37,121 @@ function getPublicInventoryStatus(item: {
   return 'IN_STOCK';
 }
 
+/**
+ * POST /menu/validate-cart
+ *
+ * Public cart-availability check. Accepts a list of `{ menuItemId, quantity }`
+ * pairs and reports whether each line can be fulfilled given current inventory.
+ *
+ * Used by the customer cart/checkout to fail fast before payment, and is the
+ * same source of truth that the (future) order-creation endpoint will use to
+ * decrement stock atomically.
+ */
+router.post('/menu/validate-cart', async (req, res) => {
+  try {
+    const rawItems = Array.isArray(req.body?.items) ? req.body.items : null;
+    if (!rawItems || rawItems.length === 0) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+
+    const requested = rawItems
+      .map((it: any) => ({
+        menuItemId: Number(it?.menuItemId ?? it?.itemId),
+        quantity: Number(it?.quantity ?? 0),
+      }))
+      .filter((it: any) => Number.isFinite(it.menuItemId) && it.menuItemId > 0 && it.quantity > 0);
+
+    if (requested.length === 0) {
+      return res.status(400).json({ error: 'No valid line items provided' });
+    }
+
+    const ids: number[] = requested.map((it: { menuItemId: number; quantity: number }) => it.menuItemId);
+
+    // @ts-ignore - schema fields exist at runtime
+    const items = await prisma.menuItem.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        name: true,
+        isAvailable: true,
+        inventoryTrackingEnabled: true,
+        inventoryQuantity: true,
+        lowStockThreshold: true,
+        allowBackorder: true,
+      },
+    });
+
+    const itemMap = new Map<number, typeof items[number]>(items.map((i) => [i.id, i]));
+
+    const results = requested.map((line: { menuItemId: number; quantity: number }) => {
+      const item = itemMap.get(line.menuItemId);
+      if (!item) {
+        return {
+          menuItemId: line.menuItemId,
+          requested: line.quantity,
+          ok: false,
+          reason: 'NOT_FOUND' as const,
+        };
+      }
+      if (!item.isAvailable) {
+        return {
+          menuItemId: line.menuItemId,
+          name: item.name,
+          requested: line.quantity,
+          ok: false,
+          reason: 'UNAVAILABLE' as const,
+        };
+      }
+      if (!item.inventoryTrackingEnabled) {
+        return {
+          menuItemId: line.menuItemId,
+          name: item.name,
+          requested: line.quantity,
+          ok: true,
+          status: getPublicInventoryStatus(item),
+        };
+      }
+      const remaining = item.inventoryQuantity ?? 0;
+      if (line.quantity > remaining) {
+        if (item.allowBackorder) {
+          return {
+            menuItemId: line.menuItemId,
+            name: item.name,
+            requested: line.quantity,
+            remaining,
+            ok: true,
+            backorder: true,
+            status: getPublicInventoryStatus(item),
+          };
+        }
+        return {
+          menuItemId: line.menuItemId,
+          name: item.name,
+          requested: line.quantity,
+          remaining,
+          ok: false,
+          reason: 'INSUFFICIENT_STOCK' as const,
+          status: getPublicInventoryStatus(item),
+        };
+      }
+      return {
+        menuItemId: line.menuItemId,
+        name: item.name,
+        requested: line.quantity,
+        remaining,
+        ok: true,
+        status: getPublicInventoryStatus(item),
+      };
+    });
+
+    const allOk = results.every((r: { ok: boolean }) => r.ok);
+    return res.status(200).json({ ok: allOk, items: results });
+  } catch (error) {
+    console.error('validate-cart failed', error);
+    return res.status(500).json({ error: 'Failed to validate cart' });
+  }
+});
+
 // Utility function to calculate distance between two points using Haversine formula
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371; // Earth's radius in kilometers

@@ -7,6 +7,8 @@ import { ChatbotService } from '../lib/ai/services/chatbot.service';
 import { NudgeAIService } from '../lib/ai/services/nudge-ai.service';
 import { MenuAIService } from '../lib/ai/services/menu-ai.service';
 import { AICityGuideService } from '../lib/ai/services/ai-city-guide.service';
+import { InventoryAIService } from '../lib/ai/services/inventory-ai.service';
+import { BlogAIService } from '../lib/ai/services/blog-ai.service';
 import prisma from '../lib/prisma';
 
 const router = Router();
@@ -17,6 +19,8 @@ const chatbot = new ChatbotService();
 const nudgeAI = new NudgeAIService();
 const menuAI = new MenuAIService();
 const cityGuideAI = new AICityGuideService();
+const inventoryAI = new InventoryAIService();
+const blogAI = new BlogAIService();
 
 const parseGuideLocation = (body: any): { lat: number; lng: number } | null => {
   const lat = Number(body?.lat);
@@ -379,6 +383,86 @@ router.post('/nudge/personalize', protect, requireAdmin, async (req: AuthRequest
     }
     console.error('[AI] nudge/personalize error:', error);
     res.status(500).json({ error: 'Failed to personalize nudge.' });
+  }
+});
+
+// ─────────────────────────────────────────────
+// INVENTORY — AI Inventory Analyzer
+// GET /api/ai/inventory/analyze
+// Requires: approved merchant
+// Returns AI analysis of inventory health with restock suggestions
+// ─────────────────────────────────────────────
+router.get('/inventory/analyze', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant!.id;
+    const analysis = await inventoryAI.analyzeInventory(merchantId);
+    res.json({ analysis });
+  } catch (error: any) {
+    if (error.message?.includes('not configured')) {
+      return res.status(503).json({ error: 'AI features are not available right now.' });
+    }
+    console.error('[AI] inventory/analyze error:', error);
+    res.status(500).json({ error: 'Failed to analyze inventory.' });
+  }
+});
+
+// ─────────────────────────────────────────────
+// INVENTORY — AI Bulk Setup
+// GET /api/ai/inventory/bulk-setup
+// Requires: approved merchant
+// Returns AI-suggested inventory settings for all untracked items
+// ─────────────────────────────────────────────
+router.get('/inventory/bulk-setup', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant!.id;
+    const suggestions = await inventoryAI.suggestBulkSetup(merchantId);
+    res.json({ suggestions });
+  } catch (error: any) {
+    if (error.message?.includes('not configured')) {
+      return res.status(503).json({ error: 'AI features are not available right now.' });
+    }
+    console.error('[AI] inventory/bulk-setup error:', error);
+    res.status(500).json({ error: 'Failed to generate bulk setup suggestions.' });
+  }
+});
+
+// ─────────────────────────────────────────────
+// BLOG — AI Blog Draft Generator
+// POST /api/ai/blog/generate
+// Body: { topic: string, tone?: string }
+// Requires: merchant
+// Returns AI-generated blog post draft
+// ─────────────────────────────────────────────
+router.post('/blog/generate', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const { topic, tone } = req.body;
+
+    if (!topic || typeof topic !== 'string' || topic.trim().length < 5) {
+      return res.status(400).json({ error: 'Please provide a topic (at least 5 characters).' });
+    }
+
+    const merchantId = req.merchant!.id;
+    const merchant = await prisma.merchant.findUnique({
+      where: { id: merchantId },
+      select: { businessName: true, businessType: true },
+    });
+
+    if (!merchant) return res.status(404).json({ error: 'Merchant not found' });
+
+    const suggestion = await blogAI.generateDraft(
+      topic.trim(),
+      merchant.businessName,
+      merchant.businessType || 'LOCAL',
+      tone?.trim() || undefined,
+    );
+
+    res.json({ suggestion });
+  } catch (error: any) {
+    if (error.message?.includes('not configured')) {
+      return res.status(503).json({ error: 'AI features are not available right now.' });
+    }
+    console.error('[AI] blog/generate error:', error);
+    res.status(500).json({ error: 'Failed to generate blog draft.' });
   }
 });
 

@@ -57,6 +57,9 @@ router.put('/merchants/check-in-games/config', protect, isApprovedMerchant, asyn
       if (!reward.label || typeof reward.rewardValue !== 'number') {
         return res.status(400).json({ error: 'Each reward must have a label and numeric rewardValue' });
       }
+      if (reward.imageUrl != null && typeof reward.imageUrl !== 'string') {
+        return res.status(400).json({ error: 'Reward imageUrl must be a string when provided' });
+      }
     }
 
     const config = await upsertMerchantCheckInGameConfig(req.merchant!.id, {

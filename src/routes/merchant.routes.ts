@@ -20,6 +20,52 @@ type InventoryPayload = {
   allowBackorder?: unknown;
 };
 
+// --- SKU Generation Helper ---
+function generateSku(itemName: string, variantLabel: string, merchantId: number): string {
+  const slugify = (s: string) =>
+    s.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 20);
+  const base = slugify(itemName);
+  const variant = slugify(variantLabel);
+  const suffix = String(merchantId).slice(-4).padStart(4, '0');
+  return `${base}-${variant}-${suffix}`;
+}
+
+const variantSelect = {
+  id: true,
+  sku: true,
+  label: true,
+  price: true,
+  inventoryQuantity: true,
+  lowStockThreshold: true,
+  isAvailable: true,
+  sortOrder: true,
+} as const;
+
+function getVariantInventoryStatus(variant: {
+  isAvailable?: boolean | null;
+  inventoryQuantity?: number | null;
+  lowStockThreshold?: number | null;
+}) {
+  if (variant.isAvailable === false) return 'OUT_OF_STOCK';
+  if (variant.inventoryQuantity == null) return 'UNTRACKED';
+  if (variant.inventoryQuantity <= 0) return 'OUT_OF_STOCK';
+  if (
+    variant.lowStockThreshold != null &&
+    variant.inventoryQuantity <= variant.lowStockThreshold
+  ) {
+    return 'LOW_STOCK';
+  }
+  return 'IN_STOCK';
+}
+
+function normalizeVariants(variants: any[] | undefined) {
+  if (!variants || variants.length === 0) return [];
+  return variants.map((v: any) => ({
+    ...v,
+    inventoryStatus: getVariantInventoryStatus(v),
+  }));
+}
+
 function getInventoryStatus(item: {
   isAvailable?: boolean | null;
   inventoryTrackingEnabled?: boolean | null;
@@ -46,10 +92,13 @@ function normalizeMenuItemResponse<T extends {
   inventoryQuantity?: number | null;
   lowStockThreshold?: number | null;
   allowBackorder?: boolean | null;
+  hasVariants?: boolean | null;
+  variants?: any[];
 }>(item: T) {
   return {
     ...item,
     inventoryStatus: getInventoryStatus(item),
+    variants: normalizeVariants(item.variants),
   };
 }
 
@@ -109,10 +158,6 @@ function buildInventoryUpdateData(payload: InventoryPayload, isCreate = false) {
 
   if (trackingEnabled === true && data.inventoryQuantity === undefined && isCreate) {
     throw new Error('inventoryQuantity is required when inventoryTrackingEnabled is true');
-  }
-
-  if (data.lowStockThreshold != null && data.inventoryQuantity != null && data.lowStockThreshold > data.inventoryQuantity) {
-    throw new Error('lowStockThreshold cannot be greater than inventoryQuantity');
   }
 
   if (trackingEnabled === false) {
@@ -3535,8 +3580,13 @@ router.get('/merchants/me/menu', protect, isMerchant, async (req: AuthRequest, r
         validDays: true,
         isSurprise: true,
         surpriseRevealTime: true,
+        hasVariants: true,
         createdAt: true,
         updatedAt: true,
+        variants: {
+          select: variantSelect,
+          orderBy: { sortOrder: 'asc' as const },
+        },
       }
     });
     res.status(200).json({ menuItems: menuItems.map(normalizeMenuItemResponse) });
@@ -3806,7 +3856,9 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
       inventoryTrackingEnabled,
       inventoryQuantity,
       lowStockThreshold,
-      allowBackorder
+      allowBackorder,
+      hasVariants,
+      variants,
     } = req.body || {};
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -3877,6 +3929,26 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
       return res.status(400).json({ error: inventoryError.message || 'Invalid inventory data' });
     }
 
+    // Build variant create data if provided
+    const shouldHaveVariants = hasVariants === true && Array.isArray(variants) && variants.length > 0;
+    const variantCreateData = shouldHaveVariants
+      ? variants.map((v: any, i: number) => ({
+          sku: v.sku?.trim() || generateSku(name.trim(), v.label?.trim() || `V${i + 1}`, merchantId),
+          label: String(v.label || '').trim(),
+          price: Number(v.price),
+          inventoryQuantity: v.inventoryQuantity != null ? Number(v.inventoryQuantity) : null,
+          lowStockThreshold: v.lowStockThreshold != null ? Number(v.lowStockThreshold) : null,
+          isAvailable: v.isAvailable !== false,
+          sortOrder: v.sortOrder ?? i,
+        }))
+      : [];
+
+    // Validate variant data
+    for (const v of variantCreateData) {
+      if (!v.label) return res.status(400).json({ error: 'Each variant must have a label' });
+      if (isNaN(v.price) || v.price <= 0) return res.status(400).json({ error: `Variant "${v.label}" must have a positive price` });
+    }
+
     // @ts-ignore
     const created = await prisma.menuItem.create({
       data: {
@@ -3894,15 +3966,17 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
         validDays: validDays ? String(validDays).trim() : null,
         isSurprise: Boolean(isSurprise) || false,
         surpriseRevealTime: surpriseRevealTime ? String(surpriseRevealTime).trim() : null,
+        hasVariants: shouldHaveVariants,
         ...inventoryData,
+        ...(shouldHaveVariants ? { variants: { create: variantCreateData } } : {}),
       },
-      select: { 
-        id: true, 
+      select: {
+        id: true,
         merchantId: true,
-        name: true, 
-        price: true, 
-        category: true, 
-        imageUrl: true, 
+        name: true,
+        price: true,
+        category: true,
+        imageUrl: true,
         imageUrls: true,
         description: true,
         isAvailable: true,
@@ -3918,8 +3992,13 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
         validDays: true,
         isSurprise: true,
         surpriseRevealTime: true,
+        hasVariants: true,
         createdAt: true,
         updatedAt: true,
+        variants: {
+          select: variantSelect,
+          orderBy: { sortOrder: 'asc' as const },
+        },
       }
     });
     res.status(201).json({ menuItem: normalizeMenuItemResponse(created) });
@@ -4055,14 +4134,6 @@ router.post('/merchants/me/menu/bulk-upload', protect, isMerchant, excelUpload.s
 
       if (item.inventoryTrackingEnabled === true && item.inventoryQuantity === undefined) {
         errors.push({ row: rowNumber, field: 'inventoryQuantity', message: 'inventoryQuantity is required when inventoryTrackingEnabled is true' });
-      }
-
-      if (
-        item.lowStockThreshold !== undefined &&
-        item.inventoryQuantity !== undefined &&
-        item.lowStockThreshold > item.inventoryQuantity
-      ) {
-        errors.push({ row: rowNumber, field: 'lowStockThreshold', message: 'lowStockThreshold cannot be greater than inventoryQuantity' });
       }
 
       // Happy Hour fields
@@ -4225,7 +4296,9 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
       inventoryTrackingEnabled,
       inventoryQuantity,
       lowStockThreshold,
-      allowBackorder
+      allowBackorder,
+      hasVariants: hasVariantsInput,
+      variants: variantsInput,
     } = req.body || {};
     const data: any = {};
     if (name !== undefined) {
@@ -4308,39 +4381,136 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
       return res.status(400).json({ error: inventoryError.message || 'Invalid inventory data' });
     }
 
-    if (Object.keys(data).length === 0) {
+    // Handle variants
+    const shouldHaveVariants = hasVariantsInput === true && Array.isArray(variantsInput) && variantsInput.length > 0;
+    if (hasVariantsInput !== undefined) {
+      data.hasVariants = shouldHaveVariants;
+    }
+
+    if (Object.keys(data).length === 0 && !shouldHaveVariants) {
       return res.status(400).json({ error: 'No valid fields provided for update' });
+    }
+
+    const updateSelect = {
+      id: true,
+      merchantId: true,
+      name: true,
+      price: true,
+      category: true,
+      imageUrl: true,
+      imageUrls: true,
+      description: true,
+      isAvailable: true,
+      inventoryTrackingEnabled: true,
+      inventoryQuantity: true,
+      lowStockThreshold: true,
+      allowBackorder: true,
+      isHappyHour: true,
+      happyHourPrice: true,
+      dealType: true,
+      validStartTime: true,
+      validEndTime: true,
+      validDays: true,
+      isSurprise: true,
+      surpriseRevealTime: true,
+      hasVariants: true,
+      createdAt: true,
+      updatedAt: true,
+      variants: {
+        select: variantSelect,
+        orderBy: { sortOrder: 'asc' as const },
+      },
+    };
+
+    if (shouldHaveVariants) {
+      // Validate incoming variants
+      for (const v of variantsInput) {
+        if (!v.label || String(v.label).trim().length === 0) {
+          return res.status(400).json({ error: 'Each variant must have a label' });
+        }
+        if (v.price === undefined || isNaN(Number(v.price)) || Number(v.price) <= 0) {
+          return res.status(400).json({ error: `Variant "${v.label}" must have a positive price` });
+        }
+      }
+
+      // Get the item name for SKU generation (use incoming or fetch existing)
+      const itemName = data.name || (await prisma.menuItem.findUnique({ where: { id: itemId }, select: { name: true } }))?.name || 'ITEM';
+
+      // Diff: figure out which to create, update, delete
+      // @ts-ignore
+      const existingVariants = await prisma.menuItemVariant.findMany({
+        where: { menuItemId: itemId },
+        select: { id: true },
+      });
+      const existingIds = new Set(existingVariants.map((v: any) => v.id));
+      const incomingIds = new Set(variantsInput.filter((v: any) => v.id).map((v: any) => v.id));
+      const toDelete = [...existingIds].filter((id) => !incomingIds.has(id));
+
+      // Use transaction for atomicity
+      // @ts-ignore
+      const updated = await prisma.$transaction(async (tx: any) => {
+        // Delete removed variants
+        if (toDelete.length > 0) {
+          await tx.menuItemVariant.deleteMany({
+            where: { id: { in: toDelete }, menuItemId: itemId },
+          });
+        }
+
+        // Upsert each variant
+        for (let i = 0; i < variantsInput.length; i++) {
+          const v = variantsInput[i];
+          const variantData = {
+            label: String(v.label).trim(),
+            price: Number(v.price),
+            inventoryQuantity: v.inventoryQuantity != null ? Number(v.inventoryQuantity) : null,
+            lowStockThreshold: v.lowStockThreshold != null ? Number(v.lowStockThreshold) : null,
+            isAvailable: v.isAvailable !== false,
+            sortOrder: v.sortOrder ?? i,
+          };
+
+          if (v.id && existingIds.has(v.id)) {
+            // Update existing
+            await tx.menuItemVariant.update({
+              where: { id: v.id },
+              data: {
+                ...variantData,
+                ...(v.sku ? { sku: v.sku.trim() } : {}),
+              },
+            });
+          } else {
+            // Create new
+            await tx.menuItemVariant.create({
+              data: {
+                menuItemId: itemId,
+                sku: v.sku?.trim() || generateSku(itemName, variantData.label, merchantId),
+                ...variantData,
+              },
+            });
+          }
+        }
+
+        // Update the menu item itself
+        return tx.menuItem.update({
+          where: { id: itemId },
+          data,
+          select: updateSelect,
+        });
+      });
+
+      return res.status(200).json({ menuItem: normalizeMenuItemResponse(updated) });
+    }
+
+    // No variants path — if turning off variants, delete all existing ones
+    if (hasVariantsInput === false) {
+      // @ts-ignore
+      await prisma.menuItemVariant.deleteMany({ where: { menuItemId: itemId } });
     }
 
     // @ts-ignore
     const updated = await prisma.menuItem.update({
       where: { id: itemId },
       data,
-      select: { 
-        id: true, 
-        merchantId: true,
-        name: true, 
-        price: true, 
-        category: true, 
-        imageUrl: true, 
-        imageUrls: true,
-        description: true,
-        isAvailable: true,
-        inventoryTrackingEnabled: true,
-        inventoryQuantity: true,
-        lowStockThreshold: true,
-        allowBackorder: true,
-        isHappyHour: true,
-        happyHourPrice: true,
-        dealType: true,
-        validStartTime: true,
-        validEndTime: true,
-        validDays: true,
-        isSurprise: true,
-        surpriseRevealTime: true,
-        createdAt: true,
-        updatedAt: true,
-      }
+      select: updateSelect,
     });
     res.status(200).json({ menuItem: normalizeMenuItemResponse(updated) });
   } catch (e) {
@@ -4416,8 +4586,13 @@ router.patch('/merchants/me/menu/item/:itemId/inventory', protect, isMerchant, a
         validDays: true,
         isSurprise: true,
         surpriseRevealTime: true,
+        hasVariants: true,
         createdAt: true,
         updatedAt: true,
+        variants: {
+          select: variantSelect,
+          orderBy: { sortOrder: 'asc' as const },
+        },
       },
     });
 
@@ -4425,6 +4600,82 @@ router.patch('/merchants/me/menu/item/:itemId/inventory', protect, isMerchant, a
   } catch (error) {
     console.error('Update menu item inventory failed', error);
     res.status(500).json({ error: 'Failed to update menu item inventory' });
+  }
+});
+
+// --- Endpoint: PATCH /api/merchants/me/menu/item/:itemId/variant/:variantId/inventory ---
+// Update inventory for a specific variant
+router.patch('/merchants/me/menu/item/:itemId/variant/:variantId/inventory', protect, isMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
+
+    const itemId = Number(req.params.itemId);
+    const variantId = Number(req.params.variantId);
+    if (!Number.isFinite(itemId) || !Number.isFinite(variantId)) {
+      return res.status(400).json({ error: 'Invalid itemId or variantId' });
+    }
+
+    // Verify menu item belongs to merchant
+    // @ts-ignore
+    const menuItem = await prisma.menuItem.findUnique({
+      where: { id: itemId },
+      select: { id: true, merchantId: true },
+    });
+    if (!menuItem || menuItem.merchantId !== merchantId) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    // Verify variant belongs to menu item
+    // @ts-ignore
+    const existingVariant = await prisma.menuItemVariant.findFirst({
+      where: { id: variantId, menuItemId: itemId },
+    });
+    if (!existingVariant) {
+      return res.status(404).json({ error: 'Variant not found' });
+    }
+
+    const { inventoryQuantity, lowStockThreshold, isAvailable } = req.body || {};
+    const updateData: Record<string, any> = {};
+
+    if (inventoryQuantity !== undefined) {
+      if (inventoryQuantity === null) {
+        updateData.inventoryQuantity = null;
+      } else if (!Number.isInteger(Number(inventoryQuantity)) || Number(inventoryQuantity) < 0) {
+        return res.status(400).json({ error: 'inventoryQuantity must be a non-negative integer or null' });
+      } else {
+        updateData.inventoryQuantity = Number(inventoryQuantity);
+      }
+    }
+
+    if (lowStockThreshold !== undefined) {
+      if (lowStockThreshold === null) {
+        updateData.lowStockThreshold = null;
+      } else if (!Number.isInteger(Number(lowStockThreshold)) || Number(lowStockThreshold) < 0) {
+        return res.status(400).json({ error: 'lowStockThreshold must be a non-negative integer or null' });
+      } else {
+        updateData.lowStockThreshold = Number(lowStockThreshold);
+      }
+    }
+
+    if (isAvailable !== undefined) {
+      if (typeof isAvailable !== 'boolean') {
+        return res.status(400).json({ error: 'isAvailable must be a boolean' });
+      }
+      updateData.isAvailable = isAvailable;
+    }
+
+    // @ts-ignore
+    const updated = await prisma.menuItemVariant.update({
+      where: { id: variantId },
+      data: updateData,
+      select: variantSelect,
+    });
+
+    res.status(200).json({ variant: { ...updated, inventoryStatus: getVariantInventoryStatus(updated) } });
+  } catch (error) {
+    console.error('Update variant inventory failed', error);
+    res.status(500).json({ error: 'Failed to update variant inventory' });
   }
 });
 
