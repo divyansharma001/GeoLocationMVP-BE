@@ -2,8 +2,168 @@
 
 import { Router } from 'express';
 import prisma from '../lib/prisma';
+import { protect, AuthRequest } from '../middleware/auth.middleware';
 
 const router = Router();
+
+type BulkLineItemInput = {
+  menuItemId: number;
+  variantId: number | null;
+  quantity: number;
+};
+
+const BULK_ORDER_NUMBER_PREFIX = 'BULK';
+
+function normalizeBulkLineItems(rawItems: any[]): BulkLineItemInput[] {
+  return rawItems
+    .map((it: any) => ({
+      menuItemId: Number(it?.menuItemId ?? it?.itemId),
+      variantId:
+        it?.variantId === undefined || it?.variantId === null || it?.variantId === ''
+          ? null
+          : Number(it.variantId),
+      quantity: Number(it?.quantity ?? 0),
+    }))
+    .filter((it) => Number.isFinite(it.menuItemId) && it.menuItemId > 0 && Number.isFinite(it.quantity) && it.quantity > 0)
+    .map((it) => ({
+      ...it,
+      quantity: Math.floor(it.quantity),
+      variantId: it.variantId != null && Number.isFinite(it.variantId) && it.variantId > 0 ? Math.floor(it.variantId) : null,
+    }));
+}
+
+async function computeBulkQuote(rawItems: any[], peopleCount: number) {
+  const requested = normalizeBulkLineItems(rawItems);
+  if (requested.length === 0) {
+    throw new Error('No valid line items provided');
+  }
+
+  const itemIds = [...new Set(requested.map((it) => it.menuItemId))];
+  // @ts-ignore - prisma runtime fields are present
+  const menuItems = await prisma.menuItem.findMany({
+    where: { id: { in: itemIds } },
+    select: {
+      id: true,
+      merchantId: true,
+      name: true,
+      price: true,
+      isAvailable: true,
+      inventoryTrackingEnabled: true,
+      inventoryQuantity: true,
+      allowBackorder: true,
+      hasVariants: true,
+      variants: {
+        select: {
+          id: true,
+          label: true,
+          price: true,
+          servesCount: true,
+          isAvailable: true,
+          inventoryQuantity: true,
+        },
+      },
+    },
+  });
+
+  const menuItemMap = new Map<number, (typeof menuItems)[number]>(menuItems.map((item) => [item.id, item]));
+  const merchantIds = [...new Set(menuItems.map((item) => item.merchantId))];
+  if (merchantIds.length !== 1) {
+    throw new Error('All items in a bulk order must belong to the same merchant');
+  }
+
+  const lines = requested.map((line) => {
+    const item = menuItemMap.get(line.menuItemId);
+    if (!item) {
+      return { ...line, ok: false, reason: 'NOT_FOUND' as const };
+    }
+    if (!item.isAvailable) {
+      return { ...line, ok: false, reason: 'UNAVAILABLE' as const, name: item.name };
+    }
+
+    const variant = line.variantId != null ? item.variants.find((v) => v.id === line.variantId) : null;
+    if (line.variantId != null && !variant) {
+      return { ...line, ok: false, reason: 'INVALID_VARIANT' as const, name: item.name };
+    }
+    if (line.variantId == null && item.hasVariants) {
+      return { ...line, ok: false, reason: 'VARIANT_REQUIRED' as const, name: item.name };
+    }
+    if (variant && !variant.isAvailable) {
+      return { ...line, ok: false, reason: 'VARIANT_UNAVAILABLE' as const, name: item.name };
+    }
+
+    const unitPrice = variant ? Number(variant.price) : Number(item.price);
+    const servesCount = variant?.servesCount ?? null;
+    const availableQty = item.inventoryTrackingEnabled
+      ? variant?.inventoryQuantity ?? item.inventoryQuantity ?? 0
+      : null;
+    const backorderAllowed = !item.inventoryTrackingEnabled || item.allowBackorder;
+
+    if (availableQty != null && line.quantity > availableQty && !backorderAllowed) {
+      return {
+        ...line,
+        ok: false,
+        reason: 'INSUFFICIENT_STOCK' as const,
+        name: item.name,
+        availableQty,
+      };
+    }
+
+    const servesTotal = servesCount != null ? servesCount * line.quantity : null;
+    const recommendedQty = servesCount != null ? Math.ceil(peopleCount / servesCount) : null;
+
+    return {
+      ok: true as const,
+      menuItemId: line.menuItemId,
+      variantId: line.variantId,
+      name: item.name,
+      variantLabel: variant?.label ?? null,
+      quantity: line.quantity,
+      unitPrice,
+      lineTotal: Number((unitPrice * line.quantity).toFixed(2)),
+      servesCount,
+      servesTotal,
+      recommendedQty,
+      coverageDelta:
+        servesTotal != null
+          ? servesTotal - peopleCount
+          : null,
+      backorder: availableQty != null && line.quantity > availableQty ? true : false,
+      availableQty,
+    };
+  });
+
+  const invalidLines = lines.filter((line) => !line.ok);
+  if (invalidLines.length > 0) {
+    return { ok: false as const, lines, invalidLines };
+  }
+
+  const subtotal = Number(lines.reduce((sum, line: any) => sum + line.lineTotal, 0).toFixed(2));
+  const effectivePerPerson = Number((subtotal / peopleCount).toFixed(2));
+  const coverageSummary = lines
+    .filter((line: any) => line.ok && line.servesTotal != null)
+    .reduce(
+      (acc: any, line: any) => {
+        acc.servedPeople += line.servesTotal;
+        return acc;
+      },
+      { servedPeople: 0 },
+    );
+
+  return {
+    ok: true as const,
+    merchantId: merchantIds[0]!,
+    peopleCount,
+    lines,
+    subtotal,
+    effectivePerPerson,
+    coverageSummary: {
+      servedPeople: coverageSummary.servedPeople,
+      peopleCount,
+      shortBy: Math.max(0, peopleCount - coverageSummary.servedPeople),
+      overBy: Math.max(0, coverageSummary.servedPeople - peopleCount),
+    },
+  };
+}
 
 function isMenuItemPubliclyAvailable(item: {
   isAvailable?: boolean | null;
@@ -149,6 +309,115 @@ router.post('/menu/validate-cart', async (req, res) => {
   } catch (error) {
     console.error('validate-cart failed', error);
     return res.status(500).json({ error: 'Failed to validate cart' });
+  }
+});
+
+router.post('/menu/bulk-quote', async (req, res) => {
+  try {
+    const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
+    const peopleCount = Number(req.body?.peopleCount);
+    if (!Number.isInteger(peopleCount) || peopleCount < 1) {
+      return res.status(400).json({ error: 'peopleCount must be a positive integer' });
+    }
+    if (rawItems.length === 0) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+
+    const quote = await computeBulkQuote(rawItems, peopleCount);
+    if (!quote.ok) {
+      return res.status(400).json({
+        ok: false,
+        error: 'One or more items are invalid for bulk ordering',
+        lines: quote.lines,
+        invalidLines: quote.invalidLines,
+      });
+    }
+
+    return res.status(200).json(quote);
+  } catch (error: any) {
+    if (error?.message) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('bulk-quote failed', error);
+    return res.status(500).json({ error: 'Failed to compute bulk quote' });
+  }
+});
+
+router.post('/menu/orders', protect, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const peopleCount = Number(req.body?.peopleCount);
+    const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
+    const notes = req.body?.notes ? String(req.body.notes).trim() : null;
+    const paymentMethod = req.body?.paymentMethod ? String(req.body.paymentMethod).trim() : null;
+
+    if (!Number.isInteger(peopleCount) || peopleCount < 1) {
+      return res.status(400).json({ error: 'peopleCount must be a positive integer' });
+    }
+    if (rawItems.length === 0) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+
+    const quote = await computeBulkQuote(rawItems, peopleCount);
+    if (!quote.ok) {
+      return res.status(400).json({
+        error: 'Cart validation failed',
+        lines: quote.lines,
+        invalidLines: quote.invalidLines,
+      });
+    }
+
+    const orderNumber = `${BULK_ORDER_NUMBER_PREFIX}-${Date.now()}-${Math.floor(Math.random() * 900 + 100)}`;
+    const createdOrder = await prisma.order.create({
+      data: {
+        userId,
+        merchantId: quote.merchantId,
+        orderNumber,
+        subtotal: quote.subtotal,
+        discountAmount: 0,
+        loyaltyDiscount: 0,
+        finalAmount: quote.subtotal,
+        status: 'PENDING',
+        paymentMethod,
+        notes,
+        orderItems: quote.lines,
+        metadata: {
+          orderType: 'BULK_CATERING_V1',
+          peopleCount: quote.peopleCount,
+          effectivePerPerson: quote.effectivePerPerson,
+          coverageSummary: quote.coverageSummary,
+        },
+      },
+      select: {
+        id: true,
+        orderNumber: true,
+        merchantId: true,
+        subtotal: true,
+        finalAmount: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+
+    return res.status(201).json({
+      ok: true,
+      order: createdOrder,
+      quote: {
+        peopleCount: quote.peopleCount,
+        effectivePerPerson: quote.effectivePerPerson,
+        coverageSummary: quote.coverageSummary,
+      },
+    });
+  } catch (error: any) {
+    if (error?.message) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('create bulk order failed', error);
+    return res.status(500).json({ error: 'Failed to create bulk order' });
   }
 });
 

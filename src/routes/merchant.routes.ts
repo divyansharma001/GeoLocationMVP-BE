@@ -20,6 +20,18 @@ type InventoryPayload = {
   allowBackorder?: unknown;
 };
 
+type BulkOrderPayload = {
+  isBulkOrderEnabled?: unknown;
+  defaultPeopleCount?: unknown;
+  minPeopleCount?: unknown;
+};
+
+type InventoryAlert = {
+  level: 'LOW_STOCK' | 'OUT_OF_STOCK';
+  title: string;
+  message: string;
+};
+
 // --- SKU Generation Helper ---
 function generateSku(itemName: string, variantLabel: string, merchantId: number): string {
   const slugify = (s: string) =>
@@ -35,6 +47,7 @@ const variantSelect = {
   sku: true,
   label: true,
   price: true,
+  servesCount: true,
   inventoryQuantity: true,
   lowStockThreshold: true,
   isAvailable: true,
@@ -84,6 +97,80 @@ function getInventoryStatus(item: {
     return 'LOW_STOCK';
   }
   return 'IN_STOCK';
+}
+
+function buildMenuItemInventoryAlert(
+  previous: {
+    isAvailable?: boolean | null;
+    inventoryTrackingEnabled?: boolean | null;
+    inventoryQuantity?: number | null;
+    lowStockThreshold?: number | null;
+    allowBackorder?: boolean | null;
+  },
+  next: {
+    isAvailable?: boolean | null;
+    inventoryTrackingEnabled?: boolean | null;
+    inventoryQuantity?: number | null;
+    lowStockThreshold?: number | null;
+    allowBackorder?: boolean | null;
+  },
+  itemName: string,
+): InventoryAlert | null {
+  const previousStatus = getInventoryStatus(previous);
+  const nextStatus = getInventoryStatus(next);
+  if (previousStatus === nextStatus) return null;
+  if (nextStatus !== 'LOW_STOCK' && nextStatus !== 'OUT_OF_STOCK') return null;
+
+  const quantity = next.inventoryQuantity ?? 0;
+  const threshold = next.lowStockThreshold ?? 0;
+  if (nextStatus === 'OUT_OF_STOCK') {
+    return {
+      level: 'OUT_OF_STOCK',
+      title: `Out of stock: ${itemName}`,
+      message: `${itemName} is now out of stock. Restock soon to avoid missed orders.`,
+    };
+  }
+  return {
+    level: 'LOW_STOCK',
+    title: `Low stock: ${itemName}`,
+    message: `${itemName} is running low (${quantity} left, threshold ${threshold}).`,
+  };
+}
+
+function buildVariantInventoryAlert(
+  previous: {
+    isAvailable?: boolean | null;
+    inventoryQuantity?: number | null;
+    lowStockThreshold?: number | null;
+  },
+  next: {
+    isAvailable?: boolean | null;
+    inventoryQuantity?: number | null;
+    lowStockThreshold?: number | null;
+  },
+  itemName: string,
+  variantLabel: string,
+): InventoryAlert | null {
+  const previousStatus = getVariantInventoryStatus(previous);
+  const nextStatus = getVariantInventoryStatus(next);
+  if (previousStatus === nextStatus) return null;
+  if (nextStatus !== 'LOW_STOCK' && nextStatus !== 'OUT_OF_STOCK') return null;
+
+  const quantity = next.inventoryQuantity ?? 0;
+  const threshold = next.lowStockThreshold ?? 0;
+  const label = `${itemName} (${variantLabel})`;
+  if (nextStatus === 'OUT_OF_STOCK') {
+    return {
+      level: 'OUT_OF_STOCK',
+      title: `Out of stock: ${label}`,
+      message: `${label} is now out of stock. Restock this variant to keep it sellable.`,
+    };
+  }
+  return {
+    level: 'LOW_STOCK',
+    title: `Low stock: ${label}`,
+    message: `${label} is running low (${quantity} left, threshold ${threshold}).`,
+  };
 }
 
 function normalizeMenuItemResponse<T extends {
@@ -167,6 +254,59 @@ function buildInventoryUpdateData(payload: InventoryPayload, isCreate = false) {
     if (payload.lowStockThreshold === undefined && isCreate) {
       data.lowStockThreshold = null;
     }
+  }
+
+  return data;
+}
+
+function buildBulkOrderUpdateData(payload: BulkOrderPayload, isCreate = false) {
+  const data: Record<string, any> = {};
+
+  if (payload.isBulkOrderEnabled !== undefined) {
+    if (typeof payload.isBulkOrderEnabled !== 'boolean') {
+      throw new Error('isBulkOrderEnabled must be a boolean');
+    }
+    data.isBulkOrderEnabled = payload.isBulkOrderEnabled;
+  } else if (isCreate) {
+    data.isBulkOrderEnabled = false;
+  }
+
+  if (payload.defaultPeopleCount !== undefined) {
+    if (payload.defaultPeopleCount === null || payload.defaultPeopleCount === '') {
+      data.defaultPeopleCount = null;
+    } else if (!Number.isInteger(Number(payload.defaultPeopleCount)) || Number(payload.defaultPeopleCount) < 1) {
+      throw new Error('defaultPeopleCount must be a positive integer or null');
+    } else {
+      data.defaultPeopleCount = Number(payload.defaultPeopleCount);
+    }
+  }
+
+  if (payload.minPeopleCount !== undefined) {
+    if (payload.minPeopleCount === null || payload.minPeopleCount === '') {
+      data.minPeopleCount = null;
+    } else if (!Number.isInteger(Number(payload.minPeopleCount)) || Number(payload.minPeopleCount) < 1) {
+      throw new Error('minPeopleCount must be a positive integer or null');
+    } else {
+      data.minPeopleCount = Number(payload.minPeopleCount);
+    }
+  }
+
+  const effectiveBulkEnabled = data.isBulkOrderEnabled ?? (isCreate ? false : undefined);
+  if (effectiveBulkEnabled === false) {
+    if (payload.defaultPeopleCount === undefined && isCreate) {
+      data.defaultPeopleCount = null;
+    }
+    if (payload.minPeopleCount === undefined && isCreate) {
+      data.minPeopleCount = null;
+    }
+  }
+
+  if (
+    data.defaultPeopleCount != null &&
+    data.minPeopleCount != null &&
+    data.defaultPeopleCount < data.minPeopleCount
+  ) {
+    throw new Error('defaultPeopleCount must be greater than or equal to minPeopleCount');
   }
 
   return data;
@@ -3859,6 +3999,9 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
       allowBackorder,
       hasVariants,
       variants,
+      isBulkOrderEnabled,
+      defaultPeopleCount,
+      minPeopleCount,
     } = req.body || {};
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -3929,6 +4072,16 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
       return res.status(400).json({ error: inventoryError.message || 'Invalid inventory data' });
     }
 
+    let bulkOrderData: Record<string, any> = {};
+    try {
+      bulkOrderData = buildBulkOrderUpdateData(
+        { isBulkOrderEnabled, defaultPeopleCount, minPeopleCount },
+        true,
+      );
+    } catch (bulkOrderError: any) {
+      return res.status(400).json({ error: bulkOrderError.message || 'Invalid bulk order data' });
+    }
+
     // Build variant create data if provided
     const shouldHaveVariants = hasVariants === true && Array.isArray(variants) && variants.length > 0;
     const variantCreateData = shouldHaveVariants
@@ -3936,6 +4089,7 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
           sku: v.sku?.trim() || generateSku(name.trim(), v.label?.trim() || `V${i + 1}`, merchantId),
           label: String(v.label || '').trim(),
           price: Number(v.price),
+          servesCount: v.servesCount != null && v.servesCount !== '' ? Number(v.servesCount) : null,
           inventoryQuantity: v.inventoryQuantity != null ? Number(v.inventoryQuantity) : null,
           lowStockThreshold: v.lowStockThreshold != null ? Number(v.lowStockThreshold) : null,
           isAvailable: v.isAvailable !== false,
@@ -3947,6 +4101,9 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
     for (const v of variantCreateData) {
       if (!v.label) return res.status(400).json({ error: 'Each variant must have a label' });
       if (isNaN(v.price) || v.price <= 0) return res.status(400).json({ error: `Variant "${v.label}" must have a positive price` });
+      if (v.servesCount != null && (!Number.isInteger(v.servesCount) || v.servesCount < 1)) {
+        return res.status(400).json({ error: `Variant "${v.label}" servesCount must be a positive integer` });
+      }
     }
 
     // @ts-ignore
@@ -3968,6 +4125,7 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
         surpriseRevealTime: surpriseRevealTime ? String(surpriseRevealTime).trim() : null,
         hasVariants: shouldHaveVariants,
         ...inventoryData,
+        ...bulkOrderData,
         ...(shouldHaveVariants ? { variants: { create: variantCreateData } } : {}),
       },
       select: {
@@ -3984,6 +4142,9 @@ router.post('/merchants/me/menu/item', protect, isMerchant, async (req: AuthRequ
         inventoryQuantity: true,
         lowStockThreshold: true,
         allowBackorder: true,
+        isBulkOrderEnabled: true,
+        defaultPeopleCount: true,
+        minPeopleCount: true,
         isHappyHour: true,
         happyHourPrice: true,
         dealType: true,
@@ -4299,6 +4460,9 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
       allowBackorder,
       hasVariants: hasVariantsInput,
       variants: variantsInput,
+      isBulkOrderEnabled,
+      defaultPeopleCount,
+      minPeopleCount,
     } = req.body || {};
     const data: any = {};
     if (name !== undefined) {
@@ -4381,6 +4545,19 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
       return res.status(400).json({ error: inventoryError.message || 'Invalid inventory data' });
     }
 
+    try {
+      Object.assign(
+        data,
+        buildBulkOrderUpdateData({
+          isBulkOrderEnabled,
+          defaultPeopleCount,
+          minPeopleCount,
+        }),
+      );
+    } catch (bulkOrderError: any) {
+      return res.status(400).json({ error: bulkOrderError.message || 'Invalid bulk order data' });
+    }
+
     // Handle variants
     const shouldHaveVariants = hasVariantsInput === true && Array.isArray(variantsInput) && variantsInput.length > 0;
     if (hasVariantsInput !== undefined) {
@@ -4405,6 +4582,9 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
       inventoryQuantity: true,
       lowStockThreshold: true,
       allowBackorder: true,
+      isBulkOrderEnabled: true,
+      defaultPeopleCount: true,
+      minPeopleCount: true,
       isHappyHour: true,
       happyHourPrice: true,
       dealType: true,
@@ -4462,11 +4642,16 @@ router.put('/merchants/me/menu/item/:itemId', protect, isMerchant, async (req: A
           const variantData = {
             label: String(v.label).trim(),
             price: Number(v.price),
+            servesCount: v.servesCount != null && v.servesCount !== '' ? Number(v.servesCount) : null,
             inventoryQuantity: v.inventoryQuantity != null ? Number(v.inventoryQuantity) : null,
             lowStockThreshold: v.lowStockThreshold != null ? Number(v.lowStockThreshold) : null,
             isAvailable: v.isAvailable !== false,
             sortOrder: v.sortOrder ?? i,
           };
+
+          if (variantData.servesCount != null && (!Number.isInteger(variantData.servesCount) || variantData.servesCount < 1)) {
+            return res.status(400).json({ error: `Variant "${variantData.label}" servesCount must be a positive integer` });
+          }
 
           if (v.id && existingIds.has(v.id)) {
             // Update existing
@@ -4533,6 +4718,7 @@ router.patch('/merchants/me/menu/item/:itemId/inventory', protect, isMerchant, a
       select: {
         id: true,
         merchantId: true,
+        name: true,
         isAvailable: true,
         inventoryTrackingEnabled: true,
         inventoryQuantity: true,
@@ -4587,6 +4773,9 @@ router.patch('/merchants/me/menu/item/:itemId/inventory', protect, isMerchant, a
         isSurprise: true,
         surpriseRevealTime: true,
         hasVariants: true,
+        isBulkOrderEnabled: true,
+        defaultPeopleCount: true,
+        minPeopleCount: true,
         createdAt: true,
         updatedAt: true,
         variants: {
@@ -4596,7 +4785,8 @@ router.patch('/merchants/me/menu/item/:itemId/inventory', protect, isMerchant, a
       },
     });
 
-    res.status(200).json({ menuItem: normalizeMenuItemResponse(updated) });
+    const inventoryAlert = buildMenuItemInventoryAlert(existing, updated, updated.name);
+    res.status(200).json({ menuItem: normalizeMenuItemResponse(updated), inventoryAlert });
   } catch (error) {
     console.error('Update menu item inventory failed', error);
     res.status(500).json({ error: 'Failed to update menu item inventory' });
@@ -4620,7 +4810,7 @@ router.patch('/merchants/me/menu/item/:itemId/variant/:variantId/inventory', pro
     // @ts-ignore
     const menuItem = await prisma.menuItem.findUnique({
       where: { id: itemId },
-      select: { id: true, merchantId: true },
+      select: { id: true, merchantId: true, name: true },
     });
     if (!menuItem || menuItem.merchantId !== merchantId) {
       return res.status(404).json({ error: 'Menu item not found' });
@@ -4672,7 +4862,15 @@ router.patch('/merchants/me/menu/item/:itemId/variant/:variantId/inventory', pro
       select: variantSelect,
     });
 
-    res.status(200).json({ variant: { ...updated, inventoryStatus: getVariantInventoryStatus(updated) } });
+    const inventoryAlert = buildVariantInventoryAlert(
+      existingVariant,
+      updated,
+      menuItem.name,
+      updated.label,
+    );
+    res
+      .status(200)
+      .json({ variant: { ...updated, inventoryStatus: getVariantInventoryStatus(updated) }, inventoryAlert });
   } catch (error) {
     console.error('Update variant inventory failed', error);
     res.status(500).json({ error: 'Failed to update variant inventory' });

@@ -571,6 +571,83 @@ async function seedDeals(
   console.log(`  ✅ ${count} deals ready`);
 }
 
+// ─── 7a. Check-ins ──────────────────────────────────────────────
+
+async function seedCheckIns(
+  users: { id: number; email: string; role: UserRole }[],
+  merchants: { id: number; businessName: string; latitude: number | null; longitude: number | null }[],
+) {
+  console.log('\n📍 Seeding check-ins...');
+
+  const targetCount = 30;
+  const merchantIds = merchants.map((m) => m.id);
+  if (merchantIds.length === 0) {
+    console.log('  ⏭  No merchants found — skipping check-ins');
+    return;
+  }
+
+  const existingCount = await prisma.checkIn.count({
+    where: { merchantId: { in: merchantIds } },
+  });
+
+  if (existingCount >= targetCount) {
+    console.log(`  ✅ ${existingCount} check-ins already present (target: ${targetCount})`);
+    return;
+  }
+
+  const consumerUsers = users.filter((u) => u.role === UserRole.USER);
+  if (consumerUsers.length === 0) {
+    console.log('  ⏭  No consumer users found — skipping check-ins');
+    return;
+  }
+
+  const deals = await prisma.deal.findMany({
+    where: { merchantId: { in: merchantIds } },
+    select: {
+      id: true,
+      merchantId: true,
+      merchant: {
+        select: {
+          latitude: true,
+          longitude: true,
+        },
+      },
+    },
+    orderBy: { id: 'asc' },
+    take: 30,
+  });
+
+  if (deals.length === 0) {
+    console.log('  ⏭  No deals found — skipping check-ins');
+    return;
+  }
+
+  const seedRows = Array.from({ length: targetCount - existingCount }, (_, index) => {
+    const deal = deals[index % deals.length];
+    const user = consumerUsers[index % consumerUsers.length];
+    const latitudeBase = deal.merchant.latitude ?? 25.7907;
+    const longitudeBase = deal.merchant.longitude ?? -80.13;
+    const distanceMeters = 12 + ((index % 5) * 9);
+    const offset = 0.00009 * (index + 1);
+
+    return {
+      userId: user.id,
+      dealId: deal.id,
+      merchantId: deal.merchantId,
+      latitude: latitudeBase + offset,
+      longitude: longitudeBase - offset,
+      distanceMeters,
+      createdAt: new Date(Date.now() - (index + 1) * 15 * 60 * 1000),
+    };
+  });
+
+  if (seedRows.length > 0) {
+    await prisma.checkIn.createMany({ data: seedRows });
+  }
+
+  console.log(`  ✅ Added ${seedRows.length} check-ins (${existingCount + seedRows.length} total)`);
+}
+
 // ─── 7b. Services ───────────────────────────────────────────────
 
 async function seedServices(
@@ -1905,6 +1982,9 @@ async function main() {
     // 7: Deals
     await seedDeals(merchants);
 
+    // 7a: Check-ins
+    await seedCheckIns(users, merchants);
+
     // 7b: Services
     await seedServices(merchants);
 
@@ -1968,6 +2048,7 @@ async function main() {
       dealCategories: await prisma.dealCategoryMaster.count(),
       dealTypes: await prisma.dealTypeMaster.count(),
       deals: await prisma.deal.count(),
+      checkIns: await prisma.checkIn.count(),
       services: await prisma.service.count(),
       servicePricingTiers: await prisma.servicePricingTier.count(),
       serviceAddOns: await prisma.serviceAddOn.count(),

@@ -482,7 +482,10 @@ model MenuItem {
   validDays          String?
   validEndTime       String?
   validStartTime     String?
-  hasVariants         Boolean              @default(false)
+  hasVariants        Boolean              @default(false)
+  isBulkOrderEnabled Boolean              @default(false)
+  defaultPeopleCount Int?
+  minPeopleCount     Int?
   dealLinks          DealMenuItem[]
   collectionItems    MenuCollectionItem[]
   variants           MenuItemVariant[]
@@ -500,6 +503,7 @@ model MenuItemVariant {
   sku               String   @unique
   label             String
   price             Float
+  servesCount       Int?
   inventoryQuantity Int?
   lowStockThreshold Int?
   isAvailable       Boolean  @default(true)
