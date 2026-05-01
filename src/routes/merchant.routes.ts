@@ -189,6 +189,42 @@ function normalizeMenuItemResponse<T extends {
   };
 }
 
+const menuCollectionMenuItemSelect = {
+  id: true,
+  name: true,
+  price: true,
+  category: true,
+  imageUrl: true,
+  imageUrls: true,
+  description: true,
+  dealType: true,
+  isHappyHour: true,
+  happyHourPrice: true,
+  inventoryTrackingEnabled: true,
+  inventoryQuantity: true,
+  lowStockThreshold: true,
+  allowBackorder: true,
+  isAvailable: true,
+  hasVariants: true,
+  isBulkOrderEnabled: true,
+  defaultPeopleCount: true,
+  minPeopleCount: true,
+  variants: {
+    select: variantSelect,
+    orderBy: { sortOrder: 'asc' as const },
+  },
+} as const;
+
+function normalizeCollectionResponse<T extends { items?: Array<{ menuItem?: any }> }>(collection: T) {
+  return {
+    ...collection,
+    items: (collection.items || []).map((item) => ({
+      ...item,
+      menuItem: item.menuItem ? normalizeMenuItemResponse(item.menuItem) : item.menuItem,
+    })),
+  };
+}
+
 function buildInventoryUpdateData(payload: InventoryPayload, isCreate = false) {
   const data: Record<string, any> = {};
 
@@ -3938,17 +3974,7 @@ router.post('/merchants/me/menu-collections/from-deal-type', protect, isMerchant
         items: {
           include: {
             menuItem: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                category: true,
-                imageUrl: true,
-                description: true,
-                dealType: true,
-                isHappyHour: true,
-                happyHourPrice: true
-              }
+              select: menuCollectionMenuItemSelect
             }
           },
           orderBy: { sortOrder: 'asc' }
@@ -5302,7 +5328,7 @@ router.get('/merchants/me/menu-collections', protect, isMerchant, async (req: Au
       orderBy: { createdAt: 'desc' }
     });
 
-    res.status(200).json({ collections });
+    res.status(200).json({ collections: collections.map((collection) => normalizeCollectionResponse(collection)) });
   } catch (error) {
     console.error('Get menu collections error:', error);
     res.status(500).json({ error: 'Failed to fetch menu collections' });
@@ -5401,17 +5427,7 @@ router.post('/merchants/me/menu-collections', protect, isMerchant, async (req: A
         items: {
           include: {
             menuItem: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                category: true,
-                imageUrl: true,
-                description: true,
-                dealType: true,
-                isHappyHour: true,
-                happyHourPrice: true
-              }
+              select: menuCollectionMenuItemSelect
             }
           },
           orderBy: { sortOrder: 'asc' }
@@ -5422,7 +5438,7 @@ router.post('/merchants/me/menu-collections', protect, isMerchant, async (req: A
       }
     });
 
-    res.status(201).json({ collection: createdCollection });
+    res.status(201).json({ collection: createdCollection ? normalizeCollectionResponse(createdCollection) : createdCollection });
   } catch (error) {
     console.error('Create menu collection error:', error);
     res.status(500).json({ error: 'Failed to create menu collection' });
@@ -5450,17 +5466,7 @@ router.get('/merchants/me/menu-collections/:collectionId', protect, isMerchant, 
         items: {
           include: {
             menuItem: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                category: true,
-                imageUrl: true,
-                description: true,
-                dealType: true,
-                isHappyHour: true,
-                happyHourPrice: true
-              }
+              select: menuCollectionMenuItemSelect
             }
           },
           orderBy: { sortOrder: 'asc' }
@@ -5475,7 +5481,7 @@ router.get('/merchants/me/menu-collections/:collectionId', protect, isMerchant, 
       return res.status(404).json({ error: 'Menu collection not found' });
     }
 
-    res.status(200).json({ collection });
+    res.status(200).json({ collection: normalizeCollectionResponse(collection) });
   } catch (error) {
     console.error('Get menu collection error:', error);
     res.status(500).json({ error: 'Failed to fetch menu collection' });
@@ -5570,17 +5576,7 @@ router.put('/merchants/me/menu-collections/:collectionId', protect, isMerchant, 
         items: {
           include: {
             menuItem: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                category: true,
-                imageUrl: true,
-                description: true,
-                dealType: true,
-                isHappyHour: true,
-                happyHourPrice: true
-              }
+              select: menuCollectionMenuItemSelect
             }
           },
           orderBy: { sortOrder: 'asc' }
@@ -5591,7 +5587,7 @@ router.put('/merchants/me/menu-collections/:collectionId', protect, isMerchant, 
       }
     });
 
-    res.status(200).json({ collection: updatedCollection });
+    res.status(200).json({ collection: normalizeCollectionResponse(updatedCollection) });
   } catch (error) {
     console.error('Update menu collection error:', error);
     res.status(500).json({ error: 'Failed to update menu collection' });
@@ -5722,18 +5718,7 @@ router.post('/merchants/me/menu-collections/:collectionId/items', protect, isMer
         items: {
           include: {
             menuItem: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                category: true,
-                imageUrl: true,
-                imageUrls: true,
-                description: true,
-                dealType: true,
-                isHappyHour: true,
-                happyHourPrice: true
-              }
+              select: menuCollectionMenuItemSelect
             }
           },
           orderBy: { sortOrder: 'asc' }
@@ -5744,7 +5729,7 @@ router.post('/merchants/me/menu-collections/:collectionId/items', protect, isMer
       }
     });
 
-    res.status(201).json({ collection: updatedCollection });
+    res.status(201).json({ collection: updatedCollection ? normalizeCollectionResponse(updatedCollection) : updatedCollection });
   } catch (error) {
     console.error('Add items to collection error:', error);
     res.status(500).json({ error: 'Failed to add items to collection' });
@@ -5805,18 +5790,7 @@ router.put('/merchants/me/menu-collections/:collectionId/items/reorder', protect
         items: {
           include: {
             menuItem: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                category: true,
-                imageUrl: true,
-                imageUrls: true,
-                description: true,
-                dealType: true,
-                isHappyHour: true,
-                happyHourPrice: true
-              }
+              select: menuCollectionMenuItemSelect
             }
           },
           orderBy: { sortOrder: 'asc' }
@@ -5827,7 +5801,7 @@ router.put('/merchants/me/menu-collections/:collectionId/items/reorder', protect
       }
     });
 
-    res.status(200).json({ collection: updatedCollection });
+    res.status(200).json({ collection: updatedCollection ? normalizeCollectionResponse(updatedCollection) : updatedCollection });
   } catch (error) {
     console.error('Reorder collection items error:', error);
     res.status(500).json({ error: 'Failed to reorder collection items' });
@@ -5866,6 +5840,25 @@ router.put('/merchants/me/menu-collections/:collectionId/items/bulk', protect, i
       if (item.price === undefined || item.price === null || typeof item.price !== 'number' || item.price < 0) {
         return res.status(400).json({ error: `Item at index ${i} requires a valid price` });
       }
+      if (item.inventoryTrackingEnabled === true) {
+        const quantityValue = Number(item.inventoryQuantity);
+        if (!Number.isInteger(quantityValue) || quantityValue < 0) {
+          return res.status(400).json({ error: `Item at index ${i} requires a non-negative inventoryQuantity when tracking is enabled` });
+        }
+      }
+      if (item.isBulkOrderEnabled === true) {
+        const defaultPeopleCount = Number(item.defaultPeopleCount);
+        const minPeopleCount = Number(item.minPeopleCount);
+        if (!Number.isInteger(defaultPeopleCount) || defaultPeopleCount < 1) {
+          return res.status(400).json({ error: `Item at index ${i} requires a defaultPeopleCount >= 1 when bulk ordering is enabled` });
+        }
+        if (!Number.isInteger(minPeopleCount) || minPeopleCount < 1) {
+          return res.status(400).json({ error: `Item at index ${i} requires a minPeopleCount >= 1 when bulk ordering is enabled` });
+        }
+        if (defaultPeopleCount < minPeopleCount) {
+          return res.status(400).json({ error: `Item at index ${i} requires defaultPeopleCount to be greater than or equal to minPeopleCount` });
+        }
+      }
     }
 
     // Check collection belongs to merchant
@@ -5890,6 +5883,13 @@ router.put('/merchants/me/menu-collections/:collectionId/items/bulk', protect, i
           });
 
           if (existingItem) {
+            const inventoryData = buildInventoryUpdateData({
+              inventoryTrackingEnabled: item.inventoryTrackingEnabled,
+              inventoryQuantity: item.inventoryQuantity,
+              lowStockThreshold: item.lowStockThreshold,
+              allowBackorder: item.allowBackorder,
+              isAvailable: item.isAvailable,
+            });
             const updated = await tx.menuItem.update({
               where: { id: item.id },
               data: {
@@ -5900,7 +5900,28 @@ router.put('/merchants/me/menu-collections/:collectionId/items/bulk', protect, i
                 imageUrl: item.imageUrls && item.imageUrls.length > 0 ? item.imageUrls[0] : (item.imageUrl || existingItem.imageUrl),
                 imageUrls: item.imageUrls || [],
                 isHappyHour: item.isHappyHour !== undefined ? item.isHappyHour : existingItem.isHappyHour,
-                happyHourPrice: item.happyHourPrice !== undefined ? item.happyHourPrice : existingItem.happyHourPrice
+                happyHourPrice: item.happyHourPrice !== undefined ? item.happyHourPrice : existingItem.happyHourPrice,
+                isBulkOrderEnabled:
+                  item.isBulkOrderEnabled !== undefined
+                    ? Boolean(item.isBulkOrderEnabled)
+                    : existingItem.isBulkOrderEnabled,
+                defaultPeopleCount:
+                  item.isBulkOrderEnabled === true
+                    ? Number(item.defaultPeopleCount)
+                    : item.isBulkOrderEnabled === false
+                      ? null
+                      : item.defaultPeopleCount !== undefined
+                        ? item.defaultPeopleCount
+                        : existingItem.defaultPeopleCount,
+                minPeopleCount:
+                  item.isBulkOrderEnabled === true
+                    ? Number(item.minPeopleCount)
+                    : item.isBulkOrderEnabled === false
+                      ? null
+                      : item.minPeopleCount !== undefined
+                        ? item.minPeopleCount
+                        : existingItem.minPeopleCount,
+                ...inventoryData
               }
             });
             createdOrUpdatedItems.push(updated);
@@ -5917,6 +5938,13 @@ router.put('/merchants/me/menu-collections/:collectionId/items/bulk', protect, i
           }
         } else {
           // Create new menu item and link to collection
+          const inventoryData = buildInventoryUpdateData({
+            inventoryTrackingEnabled: item.inventoryTrackingEnabled ?? true,
+            inventoryQuantity: item.inventoryQuantity ?? 0,
+            lowStockThreshold: item.lowStockThreshold ?? 5,
+            allowBackorder: item.allowBackorder ?? false,
+            isAvailable: item.isAvailable ?? true,
+          }, true);
           const newItem = await tx.menuItem.create({
             data: {
               merchantId,
@@ -5927,7 +5955,11 @@ router.put('/merchants/me/menu-collections/:collectionId/items/bulk', protect, i
               imageUrl: item.imageUrls && item.imageUrls.length > 0 ? item.imageUrls[0] : (item.imageUrl || null),
               imageUrls: item.imageUrls || [],
               isHappyHour: item.isHappyHour || false,
-              happyHourPrice: item.happyHourPrice || null
+              happyHourPrice: item.happyHourPrice || null,
+              isBulkOrderEnabled: item.isBulkOrderEnabled === true,
+              defaultPeopleCount: item.isBulkOrderEnabled === true ? Number(item.defaultPeopleCount) : null,
+              minPeopleCount: item.isBulkOrderEnabled === true ? Number(item.minPeopleCount) : null,
+              ...inventoryData
             }
           });
 
@@ -5949,18 +5981,7 @@ router.put('/merchants/me/menu-collections/:collectionId/items/bulk', protect, i
         items: {
           include: {
             menuItem: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                category: true,
-                imageUrl: true,
-                imageUrls: true,
-                description: true,
-                dealType: true,
-                isHappyHour: true,
-                happyHourPrice: true
-              }
+              select: menuCollectionMenuItemSelect
             }
           },
           orderBy: { sortOrder: 'asc' }
@@ -5969,7 +5990,10 @@ router.put('/merchants/me/menu-collections/:collectionId/items/bulk', protect, i
       }
     });
 
-    res.status(200).json({ collection: updatedCollection, itemsProcessed: result.length });
+    res.status(200).json({
+      collection: updatedCollection ? normalizeCollectionResponse(updatedCollection) : updatedCollection,
+      itemsProcessed: result.length,
+    });
   } catch (error) {
     console.error('Bulk items error:', error);
     res.status(500).json({ error: 'Failed to bulk update collection items' });

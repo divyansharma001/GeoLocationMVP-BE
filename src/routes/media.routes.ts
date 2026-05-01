@@ -40,7 +40,11 @@ router.post('/upload', protect, upload.single('file'), async (req: AuthRequest, 
         const timestamp = Date.now();
         const publicId = `${context}/${userSlug}/${timestamp}`;
 
-        const result = await uploadToCloudinary(req.file.buffer, { publicId, folder: context });
+        const result = await uploadToCloudinary(req.file.buffer, {
+            publicId,
+            folder: context,
+            mimeType: req.file.mimetype,
+        });
 
         if (!result || !result.secure_url) {
             return res.status(500).json({ error: 'Cloudinary upload failed.' });

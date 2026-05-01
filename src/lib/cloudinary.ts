@@ -31,10 +31,14 @@ export const uploadImage = async (file: Express.Multer.File, folder: string = 'u
 };
 
 // Helper function to upload image to Cloudinary from buffer (for merchant routes)
-export const uploadToCloudinary = async (buffer: Buffer, options: { publicId?: string; folder?: string } = {}): Promise<{ secure_url: string; public_id: string }> => {
+export const uploadToCloudinary = async (
+  buffer: Buffer,
+  options: { publicId?: string; folder?: string; mimeType?: string } = {},
+): Promise<{ secure_url: string; public_id: string }> => {
   try {
+    const mimeType = options.mimeType || 'image/jpeg';
     const result = await cloudinary.uploader.upload(
-      `data:image/jpeg;base64,${buffer.toString('base64')}`,
+      `data:${mimeType};base64,${buffer.toString('base64')}`,
       {
         public_id: options.publicId,
         folder: options.folder || 'merchant-images',
