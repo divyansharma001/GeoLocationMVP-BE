@@ -5306,17 +5306,7 @@ router.get('/merchants/me/menu-collections', protect, isMerchant, async (req: Au
         items: {
           include: {
             menuItem: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                category: true,
-                imageUrl: true,
-                description: true,
-                dealType: true,
-                isHappyHour: true,
-                happyHourPrice: true
-              }
+              select: menuCollectionMenuItemSelect
             }
           },
           orderBy: { sortOrder: 'asc' }
