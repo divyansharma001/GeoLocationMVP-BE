@@ -537,6 +537,10 @@ model MenuCollection {
   merchantId  Int
   name        String
   description String?
+  coverImageUrl String?
+  servesCount Int?
+  packagePrice Float?
+  displayOrder Int                @default(0)
   isActive    Boolean              @default(true)
   menuType    MenuCollectionType   @default(STANDARD)
   subType     String?              // e.g. DAILY, KIDS, DRINKS, DESSERTS, EARLY_MORNING, EVENING, LATE_NIGHT
@@ -556,6 +560,7 @@ model MenuCollection {
   @@index([storeId])
   @@index([merchantId, isActive])
   @@index([merchantId, menuType])
+  @@index([merchantId, displayOrder])
   @@index([name])
 }
 

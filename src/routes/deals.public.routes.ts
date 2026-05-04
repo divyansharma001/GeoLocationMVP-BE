@@ -2212,7 +2212,10 @@ router.get('/menu-collections/:merchantId', async (req, res) => {
           select: { items: true }
         }
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: [
+        { displayOrder: 'asc' },
+        { createdAt: 'desc' }
+      ]
     });
 
     res.status(200).json({ collections });

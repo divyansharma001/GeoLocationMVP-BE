@@ -225,6 +225,58 @@ function normalizeCollectionResponse<T extends { items?: Array<{ menuItem?: any 
   };
 }
 
+function normalizeOptionalTrimmedString(value: unknown, maxLength?: number) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (typeof value !== 'string') {
+    throw new Error('Invalid string value');
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  if (maxLength && trimmed.length > maxLength) {
+    throw new Error(`String value must be ${maxLength} characters or less`);
+  }
+
+  return trimmed;
+}
+
+function normalizeOptionalPositiveInteger(value: unknown, fieldName: string) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+
+  const numericValue = Number(value);
+  if (!Number.isInteger(numericValue) || numericValue < 1) {
+    throw new Error(`${fieldName} must be a positive integer`);
+  }
+
+  return numericValue;
+}
+
+function normalizeOptionalNonNegativeInteger(value: unknown, fieldName: string) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+
+  const numericValue = Number(value);
+  if (!Number.isInteger(numericValue) || numericValue < 0) {
+    throw new Error(`${fieldName} must be a non-negative integer`);
+  }
+
+  return numericValue;
+}
+
+function normalizeOptionalNonNegativeFloat(value: unknown, fieldName: string) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue < 0) {
+    throw new Error(`${fieldName} must be a non-negative number`);
+  }
+
+  return numericValue;
+}
+
 function buildInventoryUpdateData(payload: InventoryPayload, isCreate = false) {
   const data: Record<string, any> = {};
 
@@ -1196,6 +1248,8 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
         bountyQRCodeValue = qrCode;
       }
 
+      const attachedMenuItemIds = new Set<number>();
+
       // Handle menu items with enhanced discount support
       if (menuItems && Array.isArray(menuItems) && menuItems.length > 0) {
         const dealMenuItemsData = menuItems
@@ -1230,6 +1284,10 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
 
             return itemData;
           });
+
+        dealMenuItemsData.forEach((item) => {
+          attachedMenuItemIds.add(item.menuItemId);
+        });
         
         if (dealMenuItemsData.length) {
           // @ts-ignore - DealMenuItem model available after generate
@@ -1259,16 +1317,18 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
         if (collection) {
           // Add all active items from collection to deal
           // Items from collection use global discount by default unless they have custom pricing
-          const collectionDealItems = collection.items.map(item => ({
-            dealId: createdDeal.id,
-            menuItemId: item.menuItemId,
-            isHidden: false, // Default to visible
-            customPrice: item.customPrice || null,
-            customDiscount: item.customDiscount || null,
-            discountAmount: null,
-            // If collection item has custom pricing, don't use global discount
-            useGlobalDiscount: !item.customPrice && !item.customDiscount
-          }));
+          const collectionDealItems = collection.items
+            .filter((item) => !attachedMenuItemIds.has(item.menuItemId))
+            .map(item => ({
+              dealId: createdDeal.id,
+              menuItemId: item.menuItemId,
+              isHidden: false, // Default to visible
+              customPrice: item.customPrice || null,
+              customDiscount: item.customDiscount || null,
+              discountAmount: null,
+              // If collection item has custom pricing, don't use global discount
+              useGlobalDiscount: !item.customPrice && !item.customDiscount
+            }));
 
           if (collectionDealItems.length > 0) {
             // @ts-ignore - DealMenuItem model available after generate
@@ -5332,7 +5392,23 @@ router.post('/merchants/me/menu-collections', protect, isMerchant, async (req: A
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
 
-    const { name, description, menuItems, menuType, subType, startTime, endTime, themeName, icon, color, storeId } = req.body;
+    const {
+      name,
+      description,
+      menuItems,
+      menuType,
+      subType,
+      startTime,
+      endTime,
+      themeName,
+      icon,
+      color,
+      storeId,
+      coverImageUrl,
+      servesCount,
+      packagePrice,
+      displayOrder,
+    } = req.body;
 
     // Validation
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -5347,6 +5423,30 @@ router.post('/merchants/me/menu-collections', protect, isMerchant, async (req: A
     const validMenuTypes = ['STANDARD', 'HAPPY_HOUR', 'SPECIAL'];
     if (menuType && !validMenuTypes.includes(menuType)) {
       return res.status(400).json({ error: 'Invalid menu type. Must be STANDARD, HAPPY_HOUR, or SPECIAL' });
+    }
+
+    let normalizedDescription: string | null | undefined;
+    let normalizedThemeName: string | null | undefined;
+    let normalizedIcon: string | null | undefined;
+    let normalizedColor: string | null | undefined;
+    let normalizedCoverImageUrl: string | null | undefined;
+    let normalizedServesCount: number | null | undefined;
+    let normalizedPackagePrice: number | null | undefined;
+    let normalizedDisplayOrder: number | null | undefined;
+
+    try {
+      normalizedDescription = normalizeOptionalTrimmedString(description, 500);
+      normalizedThemeName = normalizeOptionalTrimmedString(themeName, 100);
+      normalizedIcon = normalizeOptionalTrimmedString(icon, 50);
+      normalizedColor = normalizeOptionalTrimmedString(color, 32);
+      normalizedCoverImageUrl = normalizeOptionalTrimmedString(coverImageUrl, 2048);
+      normalizedServesCount = normalizeOptionalPositiveInteger(servesCount, 'servesCount');
+      normalizedPackagePrice = normalizeOptionalNonNegativeFloat(packagePrice, 'packagePrice');
+      normalizedDisplayOrder = normalizeOptionalNonNegativeInteger(displayOrder, 'displayOrder');
+    } catch (validationError) {
+      return res.status(400).json({
+        error: validationError instanceof Error ? validationError.message : 'Invalid collection metadata',
+      });
     }
 
     // Check if collection name already exists for this merchant
@@ -5380,14 +5480,18 @@ router.post('/merchants/me/menu-collections', protect, isMerchant, async (req: A
           merchantId,
           storeId: storeId ? Number(storeId) : null,
           name: name.trim(),
-          description: description ? description.trim() : null,
+          description: normalizedDescription ?? null,
+          coverImageUrl: normalizedCoverImageUrl ?? null,
+          servesCount: normalizedServesCount ?? null,
+          packagePrice: normalizedPackagePrice ?? null,
+          displayOrder: normalizedDisplayOrder ?? 0,
           menuType: menuType || 'STANDARD',
           subType: subType || null,
           startTime: startTime || null,
           endTime: endTime || null,
-          themeName: themeName ? themeName.trim() : null,
-          icon: icon || null,
-          color: color || null
+          themeName: normalizedThemeName ?? null,
+          icon: normalizedIcon ?? null,
+          color: normalizedColor ?? null
         }
       });
 
@@ -5490,7 +5594,23 @@ router.put('/merchants/me/menu-collections/:collectionId', protect, isMerchant, 
       return res.status(400).json({ error: 'Invalid collection ID' });
     }
 
-    const { name, description, isActive, menuType, subType, startTime, endTime, themeName, icon, color, storeId } = req.body;
+    const {
+      name,
+      description,
+      isActive,
+      menuType,
+      subType,
+      startTime,
+      endTime,
+      themeName,
+      icon,
+      color,
+      storeId,
+      coverImageUrl,
+      servesCount,
+      packagePrice,
+      displayOrder,
+    } = req.body;
 
     // Check if collection exists and belongs to merchant
     const existingCollection = await prisma.menuCollection.findFirst({
@@ -5536,6 +5656,30 @@ router.put('/merchants/me/menu-collections/:collectionId', protect, isMerchant, 
       }
     }
 
+    let normalizedDescription: string | null | undefined;
+    let normalizedThemeName: string | null | undefined;
+    let normalizedIcon: string | null | undefined;
+    let normalizedColor: string | null | undefined;
+    let normalizedCoverImageUrl: string | null | undefined;
+    let normalizedServesCount: number | null | undefined;
+    let normalizedPackagePrice: number | null | undefined;
+    let normalizedDisplayOrder: number | null | undefined;
+
+    try {
+      normalizedDescription = normalizeOptionalTrimmedString(description, 500);
+      normalizedThemeName = normalizeOptionalTrimmedString(themeName, 100);
+      normalizedIcon = normalizeOptionalTrimmedString(icon, 50);
+      normalizedColor = normalizeOptionalTrimmedString(color, 32);
+      normalizedCoverImageUrl = normalizeOptionalTrimmedString(coverImageUrl, 2048);
+      normalizedServesCount = normalizeOptionalPositiveInteger(servesCount, 'servesCount');
+      normalizedPackagePrice = normalizeOptionalNonNegativeFloat(packagePrice, 'packagePrice');
+      normalizedDisplayOrder = normalizeOptionalNonNegativeInteger(displayOrder, 'displayOrder');
+    } catch (validationError) {
+      return res.status(400).json({
+        error: validationError instanceof Error ? validationError.message : 'Invalid collection metadata',
+      });
+    }
+
     // Validate storeId if provided
     if (storeId) {
       const store = await prisma.store.findFirst({
@@ -5551,15 +5695,19 @@ router.put('/merchants/me/menu-collections/:collectionId', protect, isMerchant, 
       where: { id: collectionId },
       data: {
         ...(name !== undefined && { name: name.trim() }),
-        ...(description !== undefined && { description: description ? description.trim() : null }),
+        ...(description !== undefined && { description: normalizedDescription ?? null }),
+        ...(coverImageUrl !== undefined && { coverImageUrl: normalizedCoverImageUrl ?? null }),
+        ...(servesCount !== undefined && { servesCount: normalizedServesCount ?? null }),
+        ...(packagePrice !== undefined && { packagePrice: normalizedPackagePrice ?? null }),
+        ...(displayOrder !== undefined && { displayOrder: normalizedDisplayOrder ?? 0 }),
         ...(isActive !== undefined && { isActive: Boolean(isActive) }),
         ...(menuType !== undefined && { menuType }),
         ...(subType !== undefined && { subType: subType || null }),
         ...(startTime !== undefined && { startTime: startTime || null }),
         ...(endTime !== undefined && { endTime: endTime || null }),
-        ...(themeName !== undefined && { themeName: themeName ? themeName.trim() : null }),
-        ...(icon !== undefined && { icon: icon || null }),
-        ...(color !== undefined && { color: color || null }),
+        ...(themeName !== undefined && { themeName: normalizedThemeName ?? null }),
+        ...(icon !== undefined && { icon: normalizedIcon ?? null }),
+        ...(color !== undefined && { color: normalizedColor ?? null }),
         ...(storeId !== undefined && { storeId: storeId ? Number(storeId) : null })
       },
       include: {

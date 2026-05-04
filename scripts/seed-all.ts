@@ -1311,18 +1311,25 @@ async function seedMenuCollections(
 ) {
   console.log('\n📋 Seeding menu collections...');
 
-  const collectionsData: Record<string, { name: string; description: string; itemNames: string[] }[]> = {
+  const collectionsData: Record<string, Array<{
+    name: string;
+    description: string;
+    itemNames: string[];
+    servesCount?: number;
+    packagePrice?: number;
+    displayOrder?: number;
+  }>> = {
     'The Velvet Lounge': [
-      { name: 'Happy Hour Specials', description: 'Discounted cocktails 5–8 PM daily', itemNames: ['Espresso Martini', 'Old Fashioned', 'Champagne Flight'] },
-      { name: 'Date Night', description: 'Perfect pairing for two', itemNames: ['Charcuterie Board', 'Smoky Negroni', 'Red Wine Glass'] },
+      { name: 'Happy Hour Specials', description: 'Discounted cocktails 5–8 PM daily', itemNames: ['Espresso Martini', 'Old Fashioned', 'Champagne Flight'], servesCount: 3, packagePrice: 36, displayOrder: 1 },
+      { name: 'Date Night', description: 'Perfect pairing for two', itemNames: ['Charcuterie Board', 'Smoky Negroni', 'Red Wine Glass'], servesCount: 2, packagePrice: 42, displayOrder: 2 },
     ],
     'Spice Route Kitchen': [
-      { name: 'Lunch Express', description: 'Quick weekday lunch options', itemNames: ['Thali Platter', 'Garlic Naan', 'Mango Lassi'] },
-      { name: 'Vegetarian Favorites', description: 'Our best meat-free dishes', itemNames: ['Paneer Tikka Masala', 'Samosa Platter', 'Garlic Naan', 'Gulab Jamun'] },
+      { name: 'Lunch Express', description: 'Quick weekday lunch options', itemNames: ['Thali Platter', 'Garlic Naan', 'Mango Lassi'], servesCount: 2, packagePrice: 28, displayOrder: 1 },
+      { name: 'Vegetarian Favorites', description: 'Our best meat-free dishes', itemNames: ['Paneer Tikka Masala', 'Samosa Platter', 'Garlic Naan', 'Gulab Jamun'], servesCount: 4, packagePrice: 54, displayOrder: 2 },
     ],
     'Sunset Taco Co.': [
-      { name: 'Taco Tuesday Picks', description: 'Our most popular Tuesday tacos', itemNames: ['Street Taco (Carne Asada)', 'Street Taco (Al Pastor)', 'Street Taco (Carnitas)', 'Street Taco (Veggie)'] },
-      { name: 'Happy Hour Combos', description: 'Drinks + bites at special prices', itemNames: ['Margarita (Classic)', 'Mexican Beer Bucket', 'Queso Fundido'] },
+      { name: 'Taco Tuesday Picks', description: 'Our most popular Tuesday tacos', itemNames: ['Street Taco (Carne Asada)', 'Street Taco (Al Pastor)', 'Street Taco (Carnitas)', 'Street Taco (Veggie)'], servesCount: 4, packagePrice: 32, displayOrder: 1 },
+      { name: 'Happy Hour Combos', description: 'Drinks + bites at special prices', itemNames: ['Margarita (Classic)', 'Mexican Beer Bucket', 'Queso Fundido'], servesCount: 3, packagePrice: 30, displayOrder: 2 },
     ],
   };
 
@@ -1338,7 +1345,15 @@ async function seedMenuCollections(
       if (existing) { total++; continue; }
 
       const collection = await prisma.menuCollection.create({
-        data: { merchantId: merchant.id, name: col.name, description: col.description, isActive: true },
+        data: {
+          merchantId: merchant.id,
+          name: col.name,
+          description: col.description,
+          servesCount: col.servesCount ?? null,
+          packagePrice: col.packagePrice ?? null,
+          displayOrder: col.displayOrder ?? 0,
+          isActive: true,
+        },
       });
 
       const menuItems = await prisma.menuItem.findMany({
