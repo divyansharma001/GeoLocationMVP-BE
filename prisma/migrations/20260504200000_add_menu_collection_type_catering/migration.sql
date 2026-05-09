@@ -1,0 +1,15 @@
+-- Placeholder migration for add_menu_collection_type_catering
+-- The original migration folder was created without a migration.sql which caused Prisma P3015.
+-- This placeholder is intentionally a no-op to restore repository consistency.
+
+-- No schema changes here. If you intended to add the CATERING enum value,
+-- replace this file's contents with the appropriate SQL, for example:
+-- DO $$
+-- BEGIN
+--   IF NOT EXISTS (
+--     SELECT 1 FROM pg_type t JOIN pg_enum e ON t.oid = e.enumtypid
+--     WHERE t.typname = 'MenuCollectionType' AND e.enumlabel = 'CATERING'
+--   ) THEN
+--     ALTER TYPE "MenuCollectionType" ADD VALUE 'CATERING';
+--   END IF;
+-- END$$;
