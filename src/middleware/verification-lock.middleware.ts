@@ -11,9 +11,21 @@ const REQUIRED_VERIFICATION_STEPS: VerificationStepType[] = [
 ];
 
 /**
+ * Dev escape hatch: when BYPASS_MERCHANT_VERIFICATION=true, skip the check entirely.
+ * Useful for local development where merchant verifications aren't seeded.
+ */
+const shouldBypassVerification = () => {
+  const raw = (process.env.BYPASS_MERCHANT_VERIFICATION || '').toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+};
+
+/**
  * Middleware: Prevents merchants from creating/activating venue rewards
  * until their business verification is complete.
  * Must be used AFTER protect + isApprovedMerchant.
+ *
+ * Tolerates Redis being unavailable — falls through to a direct DB query
+ * instead of 500ing. Redis is a cache, not a source of truth here.
  */
 export const requireMerchantVerified = async (
   req: AuthRequest,
@@ -26,9 +38,20 @@ export const requireMerchantVerified = async (
       return res.status(403).json({ error: 'Merchant profile required' });
     }
 
-    // Check Redis cache first
+    if (shouldBypassVerification()) {
+      return next();
+    }
+
+    // Check Redis cache first — but tolerate Redis being down.
     const cacheKey = `merchant_verified:${merchantId}`;
-    const cached = await redis.get(cacheKey);
+    let cached: string | null = null;
+    try {
+      cached = await redis.get(cacheKey);
+    } catch (cacheError) {
+      // Redis unreachable — log once and fall through to DB. Don't 500.
+      console.warn('[verify] Redis read failed, falling through to DB:',
+        cacheError instanceof Error ? cacheError.message : cacheError);
+    }
 
     if (cached === 'true') {
       return next();
@@ -40,7 +63,7 @@ export const requireMerchantVerified = async (
       });
     }
 
-    // Cache miss: query DB
+    // Cache miss (or cache unreachable): query DB
     const approvedSteps = await prisma.merchantVerification.count({
       where: {
         merchantId,
@@ -51,8 +74,13 @@ export const requireMerchantVerified = async (
 
     const isVerified = approvedSteps >= REQUIRED_VERIFICATION_STEPS.length;
 
-    // Cache for 5 minutes
-    await redis.set(cacheKey, isVerified ? 'true' : 'false', 'EX', 300);
+    // Best-effort cache write — never block the request on Redis.
+    try {
+      await redis.set(cacheKey, isVerified ? 'true' : 'false', 'EX', 300);
+    } catch (cacheError) {
+      console.warn('[verify] Redis write failed (non-fatal):',
+        cacheError instanceof Error ? cacheError.message : cacheError);
+    }
 
     if (!isVerified) {
       return res.status(403).json({
