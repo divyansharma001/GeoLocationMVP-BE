@@ -1600,6 +1600,22 @@ router.get('/merchants/deals', protect, isApprovedMerchant, async (req: AuthRequ
         redemptionInstructions: true,
         createdAt: true,
         updatedAt: true,
+        // Type-specific fields needed by the merchant list pages
+        // (BOGO list, Hidden deals list, Bounty list).
+        accessCode: true,
+        bountyQRCode: true,
+        bountyRewardAmount: true,
+        minReferralsRequired: true,
+        bountyPotAmount: true,
+        bountyMaxInvites: true,
+        bountyMinSpend: true,
+        bogoBuyQuantity: true,
+        bogoGetQuantity: true,
+        bogoGetDiscountPercent: true,
+        currentRedemptions: true,
+        maxRedemptions: true,
+        isFlashSale: true,
+        dealType: { select: { name: true } },
       }
     });
 
