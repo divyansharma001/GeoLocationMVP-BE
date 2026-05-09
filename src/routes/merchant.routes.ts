@@ -1,7 +1,8 @@
 // src/routes/merchant.routes.ts
 import { Router, Response } from 'express';
 import { protect, isApprovedMerchant, isMerchant, AuthRequest } from '../middleware/auth.middleware';
-import { requireMerchantVerified } from '../middleware/verification-lock.middleware';
+// requireMerchantVerified removed from store CRUD — basic location setup shouldn't require docs.
+// The verification gate stays on venue-reward routes (where it actually issues value).
 import prisma from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { uploadImage, deleteImage, uploadToCloudinary } from '../lib/cloudinary';
@@ -5283,7 +5284,7 @@ router.get('/merchants/stores', protect, isApprovedMerchant, async (req: AuthReq
 // --- Endpoint: POST /api/merchants/stores ---
 // Create a new store for the authenticated approved merchant
 // Body: { address, latitude?, longitude?, cityId? OR (cityName & state), active? }
-router.post('/merchants/stores', protect, isApprovedMerchant, requireMerchantVerified, async (req: AuthRequest, res) => {
+router.post('/merchants/stores', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
@@ -5329,7 +5330,7 @@ router.post('/merchants/stores', protect, isApprovedMerchant, requireMerchantVer
 
 // --- Endpoint: PUT /api/merchants/stores/:storeId ---
 // Update a store for the authenticated approved merchant
-router.put('/merchants/stores/:storeId', protect, isApprovedMerchant, requireMerchantVerified, async (req: AuthRequest, res) => {
+router.put('/merchants/stores/:storeId', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });

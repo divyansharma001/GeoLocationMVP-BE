@@ -6,7 +6,6 @@
 import { Router, Response } from 'express';
 import prisma from '../lib/prisma';
 import { protect, isApprovedMerchant, AuthRequest } from '../middleware/auth.middleware';
-import { requireMerchantVerified } from '../middleware/verification-lock.middleware';
 import { Prisma, OrderStatus } from '@prisma/client';
 
 const router = Router();
@@ -292,7 +291,6 @@ router.post(
   '/merchants/me/catering-items',
   protect,
   isApprovedMerchant,
-  requireMerchantVerified,
   async (req: AuthRequest, res) => {
     try {
       const merchantId = req.merchant?.id;
@@ -348,7 +346,6 @@ router.put(
   '/merchants/me/catering-items/:id',
   protect,
   isApprovedMerchant,
-  requireMerchantVerified,
   async (req: AuthRequest, res) => {
     try {
       const id = parseIntParam(req.params.id);
@@ -435,7 +432,6 @@ router.post(
   '/merchants/me/catering-items/:id/options',
   protect,
   isApprovedMerchant,
-  requireMerchantVerified,
   async (req: AuthRequest, res) => {
     try {
       const id = parseIntParam(req.params.id);
@@ -472,7 +468,6 @@ router.put(
   '/merchants/me/catering-items/:itemId/options/:optionId',
   protect,
   isApprovedMerchant,
-  requireMerchantVerified,
   async (req: AuthRequest, res) => {
     try {
       const itemId = parseIntParam(req.params.itemId);

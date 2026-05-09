@@ -6,7 +6,6 @@
 import { Router, Response } from 'express';
 import prisma from '../lib/prisma';
 import { protect, isApprovedMerchant, AuthRequest } from '../middleware/auth.middleware';
-import { requireMerchantVerified } from '../middleware/verification-lock.middleware';
 import {
   annotateStopStatus,
   resolveScheduleStatusFor,
@@ -243,7 +242,6 @@ router.post(
   '/merchants/stores/:storeId/schedule',
   protect,
   isApprovedMerchant,
-  requireMerchantVerified,
   async (req: AuthRequest, res) => {
     try {
       const storeId = parseStoreId(req.params.storeId);
@@ -279,7 +277,6 @@ router.put(
   '/merchants/stores/:storeId/schedule/:stopId',
   protect,
   isApprovedMerchant,
-  requireMerchantVerified,
   async (req: AuthRequest, res) => {
     try {
       const storeId = parseStoreId(req.params.storeId);
