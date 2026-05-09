@@ -53,6 +53,7 @@ import merchantTruckRoutes from './routes/merchant-truck.routes';
 import foodTruckRoutes from './routes/food-truck.routes';
 import cateringMerchantRoutes from './routes/catering.merchant.routes';
 import cateringPublicRoutes from './routes/catering.public.routes';
+import merchantReferralsRoutes from './routes/merchant-referrals.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -186,6 +187,7 @@ app.use('/api', merchantTruckRoutes);
 app.use('/api/food-trucks', foodTruckRoutes);
 app.use('/api', cateringMerchantRoutes);
 app.use('/api/catering', cateringPublicRoutes);
+app.use('/api', merchantReferralsRoutes);
 
 export default app;
 

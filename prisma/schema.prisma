@@ -95,6 +95,8 @@ model User {
   socialAccounts        SocialAccount[]
   referredBy            User?                     @relation("UserReferrals", fields: [referredByUserId], references: [id])
   referrals             User[]                    @relation("UserReferrals")
+  referralsGiven        ReferralAttribution[]     @relation("ReferralsGiven")
+  referralsReceived     ReferralAttribution[]     @relation("ReferralsReceived")
   UserAchievement       UserAchievement[]
   savedDeals            UserDeal[]
   heistItems            UserHeistItem[]
@@ -169,6 +171,8 @@ model Merchant {
   menuCollections     MenuCollection[]
   menuItems           MenuItem[]
   cateringItems       CateringItem[]
+  referralPrograms    MerchantReferralProgram[]
+  referralAttributions ReferralAttribution[]
   category            DealCategoryMaster?       @relation(fields: [categoryId], references: [id])
   owner               User                      @relation(fields: [ownerId], references: [id])
   loyaltyProgram      MerchantLoyaltyProgram?
@@ -718,6 +722,57 @@ model CateringOrderItem {
 
   @@index([orderId])
   @@index([cateringItemId])
+}
+
+// ─── Merchant Referral Programs ──────────────────────────────────────────────
+// Per-merchant referral configurations. Reward fields are free-text in v1
+// so merchants can describe the offer however they want. Structured payouts +
+// attribution on redemption come in a later pass.
+
+model MerchantReferralProgram {
+  id                    Int                   @id @default(autoincrement())
+  merchantId            Int
+  name                  String
+  description           String?
+  rewardForReferrer     String
+  rewardForReferred     String
+  isActive              Boolean               @default(true)
+  maxRedemptionsPerUser Int?
+  expiresAt             DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  merchant              Merchant              @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  attributions          ReferralAttribution[]
+
+  @@index([merchantId])
+  @@index([merchantId, isActive])
+}
+
+/// Records every successful referral conversion for a merchant's program.
+/// One row per (program, referredUser, triggerType) — so each customer triggers
+/// each program once per kind of action.
+model ReferralAttribution {
+  id              Int                     @id @default(autoincrement())
+  programId       Int
+  merchantId      Int
+  referrerUserId  Int
+  referredUserId  Int
+  /// e.g. 'CHECKIN', 'CATERING_ORDER' — used for dedupe + analytics.
+  triggerType     String
+  /// id of the row that triggered attribution (checkInId, orderId, etc.).
+  triggerId       Int?
+  dealId          Int?
+  createdAt       DateTime                @default(now())
+  program         MerchantReferralProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  merchant        Merchant                @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  referrer        User                    @relation("ReferralsGiven", fields: [referrerUserId], references: [id])
+  referred        User                    @relation("ReferralsReceived", fields: [referredUserId], references: [id])
+
+  @@unique([programId, referredUserId, triggerType])
+  @@index([merchantId])
+  @@index([programId])
+  @@index([referrerUserId])
+  @@index([merchantId, createdAt])
 }
 
 model KickbackEvent {

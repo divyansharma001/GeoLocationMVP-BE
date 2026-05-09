@@ -15,6 +15,7 @@ import {
   DEFAULT_TRUCK_RADIUS_METERS,
   resolveScheduleStatusFor,
 } from '../services/truck-schedule.service';
+import { attributeReferralForAction } from '../services/referral-attribution.service';
 
 const router = Router();
 
@@ -384,6 +385,16 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
 
   // Update streak after successful check-in
   const streakUpdate = await updateStreakAfterCheckIn(userId, now);
+
+  // Best-effort referral attribution — credits the user who referred this
+  // customer if the merchant has an active referral program. Never throws.
+  void attributeReferralForAction({
+    referredUserId: userId,
+    merchantId: deal.merchant.id,
+    triggerType: 'CHECKIN',
+    triggerId: result.checkIn.id,
+    dealId: deal.id,
+  });
 
   // Get merchant-level rewards that become available as a result of this check-in.
   const eligibleRewards = await getEligibleCheckInRewardsForUser({
