@@ -37,6 +37,11 @@ const dealTypes = [
     name: 'Recurring Deal',
     description: 'Daily deals that recur on specific days of the week (e.g., Taco Tuesday)',
     active: true
+  },
+  {
+    name: 'BOGO',
+    description: 'Buy-N-Get-M deal: customer buys a quantity to unlock another at a discount (or free)',
+    active: true
   }
 ];
 

@@ -3,6 +3,10 @@
 import { Router } from 'express';
 import prisma from '../lib/prisma';
 import { protect, AuthRequest } from '../middleware/auth.middleware';
+import {
+  annotateStopStatus,
+  resolveScheduleStatusFor,
+} from '../services/truck-schedule.service';
 
 const router = Router();
 
@@ -1180,23 +1184,35 @@ router.get('/deals/:id', async (req, res) => {
       status: deal.merchant.status,
       totalDeals: deal.merchant._count.deals,
       totalStores: deal.merchant._count.stores,
-      stores: deal.merchant.stores.map((store: any) => ({
-        id: store.id,
-        address: store.address,
-        latitude: store.latitude,
-        longitude: store.longitude,
-        active: store.active,
-        description: store.description ?? null,
-        operatingHours: store.operatingHours ?? null,
-        galleryUrls: store.galleryUrls ?? [],
-        isFoodTruck: store.isFoodTruck ?? false,
-        city: {
-          id: store.city.id,
-          name: store.city.name,
-          state: store.city.state,
-          active: store.city.active
-        }
-      }))
+      stores: await (async () => {
+        const truckIds = deal.merchant.stores.filter((s: any) => s.isFoodTruck).map((s: any) => s.id);
+        const scheduleNow = new Date();
+        const scheduleMap = truckIds.length
+          ? await resolveScheduleStatusFor(truckIds, scheduleNow)
+          : new Map();
+        return deal.merchant.stores.map((store: any) => {
+          const status = store.isFoodTruck ? scheduleMap.get(store.id) : null;
+          return {
+            id: store.id,
+            address: store.address,
+            latitude: store.latitude,
+            longitude: store.longitude,
+            active: store.active,
+            description: store.description ?? null,
+            operatingHours: store.operatingHours ?? null,
+            galleryUrls: store.galleryUrls ?? [],
+            isFoodTruck: store.isFoodTruck ?? false,
+            currentStop: status?.current ? annotateStopStatus(status.current, scheduleNow) : null,
+            nextStop: status?.next ? annotateStopStatus(status.next, scheduleNow) : null,
+            city: {
+              id: store.city.id,
+              name: store.city.name,
+              state: store.city.state,
+              active: store.city.active
+            }
+          };
+        });
+      })()
     };
 
     // Check if user has saved this deal (if userId provided)

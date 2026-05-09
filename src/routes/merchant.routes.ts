@@ -8,6 +8,7 @@ import { uploadImage, deleteImage, uploadToCloudinary } from '../lib/cloudinary'
 import { slugify } from '../lib/slugify';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
+import { annotateStopStatus, resolveScheduleStatusFor } from '../services/truck-schedule.service';
 
 
 const router = Router();
@@ -1004,6 +1005,12 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
     let maxRedemptionsValue: number | undefined;
     let kickbackEnabledValue = !!kickbackEnabled;
     let discountPercentageValue = discountPercentage;
+    let bogoBuyQuantityValue: number | undefined;
+    let bogoGetQuantityValue: number | undefined;
+    let bogoGetDiscountPercentValue: number | undefined;
+    let bountyPotAmountValue: number | undefined;
+    let bountyMaxInvitesValue: number | undefined;
+    let bountyMinSpendValue: number | undefined;
 
     // --- HAPPY HOUR DEAL VALIDATION ---
     if (dealTypeName === 'Happy Hour') {
@@ -1051,9 +1058,29 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
 
       // Auto-enable kickback for bounty deals
       kickbackEnabledValue = true;
-      
+
       // Generate QR code for bounty verification (will be updated after deal creation with dealId)
       // We'll generate it after the deal is created
+
+      // Optional pot-based fields (flash group bounty)
+      if (req.body.bountyPotAmount !== undefined && req.body.bountyPotAmount !== null && req.body.bountyPotAmount !== '') {
+        bountyPotAmountValue = parseFloat(req.body.bountyPotAmount);
+        if (!Number.isFinite(bountyPotAmountValue) || bountyPotAmountValue < 0) {
+          return res.status(400).json({ error: 'bountyPotAmount must be a non-negative number' });
+        }
+      }
+      if (req.body.bountyMaxInvites !== undefined && req.body.bountyMaxInvites !== null && req.body.bountyMaxInvites !== '') {
+        bountyMaxInvitesValue = parseInt(req.body.bountyMaxInvites);
+        if (!Number.isFinite(bountyMaxInvitesValue) || bountyMaxInvitesValue < 1) {
+          return res.status(400).json({ error: 'bountyMaxInvites must be an integer >= 1' });
+        }
+      }
+      if (req.body.bountyMinSpend !== undefined && req.body.bountyMinSpend !== null && req.body.bountyMinSpend !== '') {
+        bountyMinSpendValue = parseFloat(req.body.bountyMinSpend);
+        if (!Number.isFinite(bountyMinSpendValue) || bountyMinSpendValue < 0) {
+          return res.status(400).json({ error: 'bountyMinSpend must be a non-negative number' });
+        }
+      }
     }
 
     // --- HIDDEN DEAL VALIDATION ---
@@ -1149,6 +1176,63 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
       }
     }
 
+    // --- BOGO DEAL VALIDATION ---
+    if (dealTypeName === 'BOGO') {
+      bogoBuyQuantityValue = req.body.bogoBuyQuantity ? parseInt(req.body.bogoBuyQuantity) : undefined;
+      bogoGetQuantityValue = req.body.bogoGetQuantity ? parseInt(req.body.bogoGetQuantity) : undefined;
+      bogoGetDiscountPercentValue = req.body.bogoGetDiscountPercent !== undefined && req.body.bogoGetDiscountPercent !== null && req.body.bogoGetDiscountPercent !== ''
+        ? parseFloat(req.body.bogoGetDiscountPercent)
+        : undefined;
+
+      if (!bogoBuyQuantityValue || bogoBuyQuantityValue < 1) {
+        return res.status(400).json({
+          error: 'BOGO buy quantity is required and must be at least 1',
+          hint: 'How many items must the customer buy to unlock the BOGO offer?'
+        });
+      }
+      if (!bogoGetQuantityValue || bogoGetQuantityValue < 1) {
+        return res.status(400).json({
+          error: 'BOGO get quantity is required and must be at least 1',
+          hint: 'How many items does the customer get at a discount?'
+        });
+      }
+      if (
+        bogoGetDiscountPercentValue === undefined ||
+        !Number.isFinite(bogoGetDiscountPercentValue) ||
+        bogoGetDiscountPercentValue < 0 ||
+        bogoGetDiscountPercentValue > 100
+      ) {
+        return res.status(400).json({
+          error: 'BOGO discount percent is required and must be between 0 and 100',
+          hint: 'Use 100 for "free", 50 for "half off", etc.'
+        });
+      }
+    } else if (
+      req.body.bogoBuyQuantity !== undefined &&
+      req.body.bogoBuyQuantity !== null &&
+      req.body.bogoBuyQuantity !== ''
+    ) {
+      // Allow BOGO config on any deal type (e.g. layered on a Standard deal),
+      // but if any field is provided, require all three.
+      bogoBuyQuantityValue = parseInt(req.body.bogoBuyQuantity);
+      bogoGetQuantityValue = req.body.bogoGetQuantity ? parseInt(req.body.bogoGetQuantity) : undefined;
+      bogoGetDiscountPercentValue = req.body.bogoGetDiscountPercent !== undefined && req.body.bogoGetDiscountPercent !== null && req.body.bogoGetDiscountPercent !== ''
+        ? parseFloat(req.body.bogoGetDiscountPercent)
+        : undefined;
+      if (
+        !bogoBuyQuantityValue || bogoBuyQuantityValue < 1 ||
+        !bogoGetQuantityValue || bogoGetQuantityValue < 1 ||
+        bogoGetDiscountPercentValue === undefined ||
+        !Number.isFinite(bogoGetDiscountPercentValue) ||
+        bogoGetDiscountPercentValue < 0 ||
+        bogoGetDiscountPercentValue > 100
+      ) {
+        return res.status(400).json({
+          error: 'BOGO config requires bogoBuyQuantity (≥1), bogoGetQuantity (≥1), and bogoGetDiscountPercent (0–100)',
+        });
+      }
+    }
+
     // ==================== END DEAL TYPE VALIDATION ====================
 
 
@@ -1179,7 +1263,13 @@ router.post('/deals', protect, isApprovedMerchant, async (req: AuthRequest, res)
         accessCode: accessCodeValue || null,
         isFlashSale: isFlashSaleValue,
         maxRedemptions: maxRedemptionsValue || null,
-        currentRedemptions: 0
+        currentRedemptions: 0,
+        bogoBuyQuantity: bogoBuyQuantityValue ?? null,
+        bogoGetQuantity: bogoGetQuantityValue ?? null,
+        bogoGetDiscountPercent: bogoGetDiscountPercentValue ?? null,
+        bountyPotAmount: bountyPotAmountValue ?? null,
+        bountyMaxInvites: bountyMaxInvitesValue ?? null,
+        bountyMinSpend: bountyMinSpendValue ?? null,
       };
 
       const createdDeal = await tx.deal.create({
@@ -5098,14 +5188,32 @@ router.get('/merchants/me/kickback-earnings', protect, isApprovedMerchant, async
 });
 
 // --- Endpoint: GET /api/merchants/stores ---
-// List stores for the authenticated approved merchant
+// List stores for the authenticated approved merchant.
+// For food-truck stores, the response includes `currentStop` and `nextStop`
+// resolved server-side from the truck's posted schedule.
 router.get('/merchants/stores', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
   try {
     const merchantId = req.merchant?.id;
     if (!merchantId) return res.status(401).json({ error: 'Merchant authentication required' });
     // @ts-ignore
     const stores = await prisma.store.findMany({ where: { merchantId }, include: { city: true } });
-    res.status(200).json({ total: stores.length, stores });
+
+    const truckIds = stores.filter((s: any) => s.isFoodTruck).map((s: any) => s.id);
+    const now = new Date();
+    const scheduleMap = truckIds.length
+      ? await resolveScheduleStatusFor(truckIds, now)
+      : new Map();
+
+    const enrichedStores = stores.map((store: any) => {
+      const status = store.isFoodTruck ? scheduleMap.get(store.id) : null;
+      return {
+        ...store,
+        currentStop: status?.current ? annotateStopStatus(status.current, now) : null,
+        nextStop: status?.next ? annotateStopStatus(status.next, now) : null,
+      };
+    });
+
+    res.status(200).json({ total: enrichedStores.length, stores: enrichedStores });
   } catch (e) {
     console.error('List stores failed', e);
     res.status(500).json({ error: 'Internal server error' });

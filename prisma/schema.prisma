@@ -49,63 +49,63 @@ model PointEventTypeMaster {
 }
 
 model User {
-  id                   Int                       @id @default(autoincrement())
-  email                String                    @unique
-  name                 String?
-  password             String?
-  createdAt            DateTime                  @default(now())
-  updatedAt            DateTime                  @updatedAt
-  role                 UserRole                  @default(USER)
-  points               Int                       @default(0)
-  monthlyPoints        Int                       @default(0)
-  referralCode         String?                   @unique
-  referredByUserId     Int?
-  birthday             DateTime?
-  avatarUrl            String?
-  coins                Int                       @default(0)
-  experiencePoints     Int                       @default(0)
-  loyaltyTier          LoyaltyTier               @default(BRONZE)
-  totalSpent           Float                     @default(0)
-  emailVerifiedAt      DateTime?
-  lastLoginAt          DateTime?
-  bookings             Booking[]
-  bountyProgress       BountyProgress[]
-  checkIns             CheckIn[]
-  CoinTransaction      CoinTransaction[]
-  organizedEvents      Event[]                   @relation("EventOrganizer")
-  eventAddOnPurchases  EventAddOnPurchase[]
-  eventAttendees       EventAttendee[]           @relation("EventAttendees")
-  eventCheckIns        EventCheckIn[]            @relation("EventCheckIns")
-  originalEventTickets EventTicket[]             @relation("OriginalTicketOwner")
-  eventTickets         EventTicket[]             @relation("EventTickets")
-  heistsAsAttacker     Heist[]                   @relation("HeistsAsAttacker")
-  heistsAsVictim       Heist[]                   @relation("HeistsAsVictim")
-  heistItemUsages      HeistItemUsage[]
-  heistNotifications   HeistNotification[]
-  heistToken           HeistToken?
-  kickbackEvents       KickbackEvent[]
-  kittyGamesCreated    KittyGame[]               @relation("KittyGameCreator")
-  kittyGamesWon        KittyGame[]               @relation("KittyGameWinner")
-  kittyGuesses         KittyGuess[]
-  loyaltyTransactions  LoyaltyPointTransaction[]
-  loyaltyRedemptions   LoyaltyRedemption[]
-  merchant             Merchant?
-  orders               Order[]
-  PaymentTransaction   PaymentTransaction[]
-  socialAccounts       SocialAccount[]
-  referredBy           User?                     @relation("UserReferrals", fields: [referredByUserId], references: [id])
-  referrals            User[]                    @relation("UserReferrals")
-  UserAchievement      UserAchievement[]
-  savedDeals           UserDeal[]
-  heistItems           UserHeistItem[]
-  loyaltyBalances      UserMerchantLoyalty[]
-  userNudges           UserNudge[]
-  nudgePreferences     UserNudgePreferences?
-  pointEvents          UserPointEvent[]
-  streak               UserStreak?
-  venueRewardClaims    VenueRewardClaim[]
-  checkInGameSessions  CheckInGameSession[]
-  checkInGameRewards   CheckInGameIssuedReward[]
+  id                    Int                       @id @default(autoincrement())
+  email                 String                    @unique
+  name                  String?
+  password              String?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+  role                  UserRole                  @default(USER)
+  points                Int                       @default(0)
+  monthlyPoints         Int                       @default(0)
+  referralCode          String?                   @unique
+  referredByUserId      Int?
+  birthday              DateTime?
+  avatarUrl             String?
+  coins                 Int                       @default(0)
+  experiencePoints      Int                       @default(0)
+  loyaltyTier           LoyaltyTier               @default(BRONZE)
+  totalSpent            Float                     @default(0)
+  emailVerifiedAt       DateTime?
+  lastLoginAt           DateTime?
+  bookings              Booking[]
+  bountyProgress        BountyProgress[]
+  checkIns              CheckIn[]
+  CoinTransaction       CoinTransaction[]
+  organizedEvents       Event[]                   @relation("EventOrganizer")
+  eventAddOnPurchases   EventAddOnPurchase[]
+  eventAttendees        EventAttendee[]           @relation("EventAttendees")
+  eventCheckIns         EventCheckIn[]            @relation("EventCheckIns")
+  originalEventTickets  EventTicket[]             @relation("OriginalTicketOwner")
+  eventTickets          EventTicket[]             @relation("EventTickets")
+  heistsAsAttacker      Heist[]                   @relation("HeistsAsAttacker")
+  heistsAsVictim        Heist[]                   @relation("HeistsAsVictim")
+  heistItemUsages       HeistItemUsage[]
+  heistNotifications    HeistNotification[]
+  heistToken            HeistToken?
+  kickbackEvents        KickbackEvent[]
+  kittyGamesCreated     KittyGame[]               @relation("KittyGameCreator")
+  kittyGamesWon         KittyGame[]               @relation("KittyGameWinner")
+  kittyGuesses          KittyGuess[]
+  loyaltyTransactions   LoyaltyPointTransaction[]
+  loyaltyRedemptions    LoyaltyRedemption[]
+  merchant              Merchant?
+  orders                Order[]
+  PaymentTransaction    PaymentTransaction[]
+  socialAccounts        SocialAccount[]
+  referredBy            User?                     @relation("UserReferrals", fields: [referredByUserId], references: [id])
+  referrals             User[]                    @relation("UserReferrals")
+  UserAchievement       UserAchievement[]
+  savedDeals            UserDeal[]
+  heistItems            UserHeistItem[]
+  loyaltyBalances       UserMerchantLoyalty[]
+  userNudges            UserNudge[]
+  nudgePreferences      UserNudgePreferences?
+  pointEvents           UserPointEvent[]
+  streak                UserStreak?
+  venueRewardClaims     VenueRewardClaim[]
+  checkInGameSessions   CheckInGameSession[]
+  checkInGameRewards    CheckInGameIssuedReward[]
   serviceBookings       ServiceBooking[]
   serviceAddOnPurchases ServiceAddOnPurchase[]
   surpriseReveals       UserSurpriseReveal[]
@@ -168,6 +168,7 @@ model Merchant {
   loyaltyRedemptions  LoyaltyRedemption[]
   menuCollections     MenuCollection[]
   menuItems           MenuItem[]
+  cateringItems       CateringItem[]
   category            DealCategoryMaster?       @relation(fields: [categoryId], references: [id])
   owner               User                      @relation(fields: [ownerId], references: [id])
   loyaltyProgram      MerchantLoyaltyProgram?
@@ -188,7 +189,7 @@ model Merchant {
 
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model Deal {
-  id                     Int                @id @default(autoincrement())
+  id                     Int                       @id @default(autoincrement())
   title                  String
   description            String
   discountPercentage     Int?
@@ -196,36 +197,45 @@ model Deal {
   startTime              DateTime
   endTime                DateTime
   redemptionInstructions String
-  createdAt              DateTime           @default(now())
-  updatedAt              DateTime           @updatedAt
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
   merchantId             Int
   recurringDays          String?
   imageUrls              String[]
-  kickbackEnabled        Boolean            @default(false)
+  kickbackEnabled        Boolean                   @default(false)
   offerTerms             String?
   categoryId             Int
   dealTypeId             Int
   accessCode             String?
   bountyQRCode           String?
   bountyRewardAmount     Float?
-  currentRedemptions     Int                @default(0)
-  isFlashSale            Boolean            @default(false)
+  /// BOGO ("buy N get M") config — when bogoBuyQuantity is set, the deal is treated as BOGO.
+  /// bogoGetDiscountPercent: 100 = free, 50 = half off, etc.
+  bogoBuyQuantity        Int?
+  bogoGetQuantity        Int?
+  bogoGetDiscountPercent Float?
+  /// Flash group bounty config — pot-based mechanic with per-person payout, slot cap, min spend.
+  bountyPotAmount        Float?
+  bountyMaxInvites       Int?
+  bountyMinSpend         Float?
+  currentRedemptions     Int                       @default(0)
+  isFlashSale            Boolean                   @default(false)
   maxRedemptions         Int?
   minReferralsRequired   Int?
-  isSurprise             Boolean            @default(false)
+  isSurprise             Boolean                   @default(false)
   surpriseType           SurpriseType?
   surpriseHint           String?
   revealRadiusMeters     Int?
   revealAt               DateTime?
-  revealDurationMinutes  Int?               @default(60)
+  revealDurationMinutes  Int?                      @default(60)
   surpriseTotalSlots     Int?
-  surpriseSlotsUsed      Int                @default(0)
+  surpriseSlotsUsed      Int                       @default(0)
   surpriseReveals        UserSurpriseReveal[]
   bountyProgress         BountyProgress[]
   checkIns               CheckIn[]
-  category               DealCategoryMaster @relation(fields: [categoryId], references: [id])
-  dealType               DealTypeMaster     @relation(fields: [dealTypeId], references: [id])
-  merchant               Merchant           @relation(fields: [merchantId], references: [id])
+  category               DealCategoryMaster        @relation(fields: [categoryId], references: [id])
+  dealType               DealTypeMaster            @relation(fields: [dealTypeId], references: [id])
+  merchant               Merchant                  @relation(fields: [merchantId], references: [id])
   menuItems              DealMenuItem[]
   kickbackEvents         KickbackEvent[]
   savedByUsers           UserDeal[]
@@ -285,16 +295,16 @@ model UserPointEvent {
 }
 
 model CheckIn {
-  id             Int      @id @default(autoincrement())
-  userId         Int
-  dealId         Int
-  merchantId     Int
-  latitude       Float
-  longitude      Float
-  distanceMeters Float
-  createdAt      DateTime @default(now())
-  deal           Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id              Int                 @id @default(autoincrement())
+  userId          Int
+  dealId          Int
+  merchantId      Int
+  latitude        Float
+  longitude       Float
+  distanceMeters  Float
+  createdAt       DateTime            @default(now())
+  deal            Deal                @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   miniGameSession CheckInGameSession?
 
   @@index([userId, dealId])
@@ -303,21 +313,21 @@ model CheckIn {
 }
 
 model CheckInGameConfig {
-  id                   Int                   @id @default(autoincrement())
-  merchantId           Int                   @unique
-  isEnabled            Boolean               @default(false)
-  gameType             CheckInGameType       @default(SCRATCH_CARD)
-  title                String                @default("Tap to win")
+  id                   Int                  @id @default(autoincrement())
+  merchantId           Int                  @unique
+  isEnabled            Boolean              @default(false)
+  gameType             CheckInGameType      @default(SCRATCH_CARD)
+  title                String               @default("Tap to win")
   subtitle             String?
   accentColor          String?
-  cooldownMinutes      Int                   @default(0)
-  maxPlaysPerCheckIn   Int                   @default(1)
-  sessionExpiryMinutes Int                   @default(15)
-  rewardExpiryHours    Int                   @default(24)
+  cooldownMinutes      Int                  @default(0)
+  maxPlaysPerCheckIn   Int                  @default(1)
+  sessionExpiryMinutes Int                  @default(15)
+  rewardExpiryHours    Int                  @default(24)
   settings             Json?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  merchant             Merchant              @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  merchant             Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   rewards              CheckInGameReward[]
   sessions             CheckInGameSession[]
 
@@ -325,7 +335,7 @@ model CheckInGameConfig {
 }
 
 model CheckInGameReward {
-  id                Int                     @id @default(autoincrement())
+  id                Int                       @id @default(autoincrement())
   configId          Int
   label             String
   description       String?
@@ -333,14 +343,14 @@ model CheckInGameReward {
   rewardType        CheckInGameRewardType
   rewardValue       Float
   rewardLabel       String?
-  probabilityWeight Int                     @default(1)
-  isActive          Boolean                 @default(true)
+  probabilityWeight Int                       @default(1)
+  isActive          Boolean                   @default(true)
   maxWins           Int?
-  currentWins       Int                     @default(0)
+  currentWins       Int                       @default(0)
   metadata          Json?
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
-  config            CheckInGameConfig       @relation(fields: [configId], references: [id], onDelete: Cascade)
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  config            CheckInGameConfig         @relation(fields: [configId], references: [id], onDelete: Cascade)
   sessions          CheckInGameSession[]
   issuedRewards     CheckInGameIssuedReward[]
 
@@ -375,27 +385,27 @@ model CheckInGameSession {
 }
 
 model CheckInGameIssuedReward {
-  id            Int                       @id @default(autoincrement())
-  sessionId     Int                       @unique
-  rewardId      Int
-  merchantId    Int
-  userId        Int
-  dealId        Int?
-  rewardType    CheckInGameRewardType
-  rewardValue   Float
-  rewardLabel   String?
-  imageUrl      String?
-  claimCode     String                    @unique
-  status        CheckInGameRewardStatus   @default(AVAILABLE)
-  expiresAt     DateTime?
-  redeemedAt    DateTime?
-  createdAt     DateTime                  @default(now())
-  updatedAt     DateTime                  @updatedAt
-  deal          Deal?                     @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  merchant      Merchant                  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  reward        CheckInGameReward         @relation(fields: [rewardId], references: [id], onDelete: Cascade)
-  session       CheckInGameSession        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  user          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          Int                     @id @default(autoincrement())
+  sessionId   Int                     @unique
+  rewardId    Int
+  merchantId  Int
+  userId      Int
+  dealId      Int?
+  rewardType  CheckInGameRewardType
+  rewardValue Float
+  rewardLabel String?
+  imageUrl    String?
+  claimCode   String                  @unique
+  status      CheckInGameRewardStatus @default(AVAILABLE)
+  expiresAt   DateTime?
+  redeemedAt  DateTime?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  deal        Deal?                   @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  merchant    Merchant                @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  reward      CheckInGameReward       @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+  session     CheckInGameSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([merchantId, createdAt])
   @@index([userId, status, createdAt])
@@ -435,61 +445,91 @@ model City {
 }
 
 model Store {
-  id             Int              @id @default(autoincrement())
-  merchantId     Int
-  cityId         Int
-  address        String
-  latitude       Float?
-  longitude      Float?
-  active         Boolean          @default(true)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  description    String?
-  galleryUrls    String[]         @default([])
-  isFoodTruck    Boolean          @default(false)
-  operatingHours Json?
-  city           City             @relation(fields: [cityId], references: [id])
-  merchant       Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  venueRewards   VenueReward[]
+  id              Int              @id @default(autoincrement())
+  merchantId      Int
+  cityId          Int
+  address         String
+  latitude        Float?
+  longitude       Float?
+  active          Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  description     String?
+  galleryUrls     String[]         @default([])
+  isFoodTruck     Boolean          @default(false)
+  operatingHours  Json?
+  city            City             @relation(fields: [cityId], references: [id])
+  merchant        Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  venueRewards    VenueReward[]
   menuCollections MenuCollection[]
+  scheduledStops  ScheduledStop[]
 
   @@index([merchantId])
   @@index([cityId])
   @@index([active, cityId])
 }
 
+enum ScheduledStopStatus {
+  SCHEDULED
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+model ScheduledStop {
+  id           Int                 @id @default(autoincrement())
+  storeId      Int
+  startsAt     DateTime
+  endsAt       DateTime
+  latitude     Float
+  longitude    Float
+  address      String
+  notes        String?
+  /// Optional override radius in meters; defaults to 200 in the API.
+  radiusMeters Int?
+  status       ScheduledStopStatus @default(SCHEDULED)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  store        Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@index([startsAt])
+  @@index([storeId, startsAt])
+  @@index([endsAt])
+}
+
 model MenuItem {
-  id                 Int                  @id @default(autoincrement())
-  merchantId         Int
-  name               String
-  description        String?
-  price              Float
-  category           String
-  imageUrl           String?
-  imageUrls          String[]             @default([])
-  isAvailable        Boolean              @default(true)
-  inventoryTrackingEnabled Boolean        @default(false)
-  inventoryQuantity  Int?
-  lowStockThreshold  Int?
-  allowBackorder     Boolean              @default(false)
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  happyHourPrice     Float?
-  isHappyHour        Boolean              @default(false)
-  dealType           MenuDealType         @default(STANDARD)
-  isSurprise         Boolean              @default(false)
-  surpriseRevealTime String?
-  validDays          String?
-  validEndTime       String?
-  validStartTime     String?
-  hasVariants        Boolean              @default(false)
-  isBulkOrderEnabled Boolean              @default(false)
-  defaultPeopleCount Int?
-  minPeopleCount     Int?
-  dealLinks          DealMenuItem[]
-  collectionItems    MenuCollectionItem[]
-  variants           MenuItemVariant[]
-  merchant           Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  id                       Int                  @id @default(autoincrement())
+  merchantId               Int
+  name                     String
+  description              String?
+  price                    Float
+  category                 String
+  imageUrl                 String?
+  imageUrls                String[]             @default([])
+  isAvailable              Boolean              @default(true)
+  inventoryTrackingEnabled Boolean              @default(false)
+  inventoryQuantity        Int?
+  lowStockThreshold        Int?
+  allowBackorder           Boolean              @default(false)
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+  happyHourPrice           Float?
+  isHappyHour              Boolean              @default(false)
+  dealType                 MenuDealType         @default(STANDARD)
+  isSurprise               Boolean              @default(false)
+  surpriseRevealTime       String?
+  validDays                String?
+  validEndTime             String?
+  validStartTime           String?
+  hasVariants              Boolean              @default(false)
+  isBulkOrderEnabled       Boolean              @default(false)
+  defaultPeopleCount       Int?
+  minPeopleCount           Int?
+  dealLinks                DealMenuItem[]
+  collectionItems          MenuCollectionItem[]
+  variants                 MenuItemVariant[]
+  merchant                 Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   @@index([merchantId])
   @@index([merchantId, dealType])
@@ -539,12 +579,12 @@ model MenuCollection {
   description String?
   isActive    Boolean              @default(true)
   menuType    MenuCollectionType   @default(STANDARD)
-  subType     String?              // e.g. DAILY, KIDS, DRINKS, DESSERTS, EARLY_MORNING, EVENING, LATE_NIGHT
-  startTime   String?              // Happy hour start e.g. "06:00"
-  endTime     String?              // Happy hour end e.g. "11:00"
-  themeName   String?              // For special event menus
-  icon        String?              // Lucide icon name for display
-  color       String?              // Theme color hex
+  subType     String? // e.g. DAILY, KIDS, DRINKS, DESSERTS, EARLY_MORNING, EVENING, LATE_NIGHT
+  startTime   String? // Happy hour start e.g. "06:00"
+  endTime     String? // Happy hour end e.g. "11:00"
+  themeName   String? // For special event menus
+  icon        String? // Lucide icon name for display
+  color       String? // Theme color hex
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
   storeId     Int?
@@ -576,6 +616,103 @@ model MenuCollectionItem {
   @@index([collectionId])
   @@index([menuItemId])
   @@index([collectionId, sortOrder])
+}
+
+// ─── Catering ────────────────────────────────────────────────────────────────
+// Catering items are standalone, separate from MenuCollection/Packages.
+// Each item belongs to a merchant, has per-person OR fixed pricing, a category
+// label, and optional customization options (radio/checkbox groups).
+
+enum CateringPricingType {
+  PER_PERSON
+  FIXED
+}
+
+model CateringItem {
+  id                  Int                  @id @default(autoincrement())
+  merchantId          Int
+  name                String
+  description         String?
+  category            String
+  pricePerPerson      Float                @default(0)
+  fixedPrice          Float?
+  pricingType         CateringPricingType  @default(PER_PERSON)
+  minPeople           Int                  @default(1)
+  maxPeople           Int?
+  servesCount         Int?
+  imageUrl            String?
+  imageUrls           String[]             @default([])
+  tags                String[]             @default([])
+  packagingType       String?
+  dietaryInfo         String[]             @default([])
+  isActive            Boolean              @default(true)
+  isPopular           Boolean              @default(false)
+  displayOrder        Int                  @default(0)
+  specialInstructions Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  merchant            Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  options             CateringItemOption[]
+  orderItems          CateringOrderItem[]
+
+  @@index([merchantId])
+  @@index([merchantId, category])
+  @@index([merchantId, isActive])
+  @@index([category])
+  @@index([isActive, isPopular])
+}
+
+model CateringItemOption {
+  id             Int                        @id @default(autoincrement())
+  cateringItemId Int
+  name           String
+  isRequired     Boolean                    @default(false)
+  minSelections  Int                        @default(0)
+  maxSelections  Int                        @default(1)
+  displayOrder   Int                        @default(0)
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+  cateringItem   CateringItem               @relation(fields: [cateringItemId], references: [id], onDelete: Cascade)
+  choices        CateringItemOptionChoice[]
+
+  @@index([cateringItemId])
+  @@index([cateringItemId, displayOrder])
+}
+
+model CateringItemOptionChoice {
+  id            Int                @id @default(autoincrement())
+  optionId      Int
+  label         String
+  description   String?
+  priceModifier Float              @default(0)
+  isDefault     Boolean            @default(false)
+  isPopular     Boolean            @default(false)
+  displayOrder  Int                @default(0)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  option        CateringItemOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@index([optionId])
+  @@index([optionId, displayOrder])
+}
+
+model CateringOrderItem {
+  id                  Int          @id @default(autoincrement())
+  orderId             Int
+  cateringItemId      Int
+  quantity            Int
+  pricePerUnit        Float
+  totalPrice          Float
+  specialInstructions String?
+  /// Snapshot of selected options at order time, e.g.
+  /// [{ optionId, optionName, choices: [{ choiceId, label, priceModifier }] }]
+  selectedOptions     Json?
+  createdAt           DateTime     @default(now())
+  order               Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  cateringItem        CateringItem @relation(fields: [cateringItemId], references: [id])
+
+  @@index([orderId])
+  @@index([cateringItemId])
 }
 
 model KickbackEvent {
@@ -926,6 +1063,7 @@ model Order {
   merchant              Merchant                  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   user                  User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
   payments              PaymentTransaction[]
+  cateringOrderItems    CateringOrderItem[]
 
   @@index([userId])
   @@index([merchantId])
@@ -1331,10 +1469,10 @@ model UserNudgePreferences {
   inactivityEnabled     Boolean  @default(true)
   nearbyDealEnabled     Boolean  @default(true)
   streakReminderEnabled Boolean  @default(true)
-  happyHourAlertEnabled  Boolean  @default(true)
-  weatherBasedEnabled    Boolean  @default(true)
-  surpriseNearbyEnabled  Boolean  @default(true)
-  quietHoursStart        String?
+  happyHourAlertEnabled Boolean  @default(true)
+  weatherBasedEnabled   Boolean  @default(true)
+  surpriseNearbyEnabled Boolean  @default(true)
+  quietHoursStart       String?
   quietHoursEnd         String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -1896,31 +2034,31 @@ enum ServiceBookingStatus {
 }
 
 model Service {
-  id                  Int                  @id @default(autoincrement())
-  merchantId          Int
-  title               String
-  description         String               @db.Text
-  shortDescription    String?              @db.VarChar(500)
-  serviceType         String
-  status              ServiceStatus        @default(DRAFT)
-  category            String?
-  durationMinutes     Int
-  coverImageUrl       String?
-  imageGallery        String[]             @default([])
-  tags                String[]             @default([])
-  requiresApproval    Boolean              @default(false)
-  advanceBookingDays  Int                  @default(30)
-  cancellationHours   Int                  @default(24)
-  maxBookingsPerDay   Int?
-  publishedAt         DateTime?
-  cancelledAt         DateTime?
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  merchant            Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  pricingTiers        ServicePricingTier[]
-  bookings            ServiceBooking[]
-  addOns              ServiceAddOn[]
-  checkIns            ServiceCheckIn[]
+  id                 Int                  @id @default(autoincrement())
+  merchantId         Int
+  title              String
+  description        String               @db.Text
+  shortDescription   String?              @db.VarChar(500)
+  serviceType        String
+  status             ServiceStatus        @default(DRAFT)
+  category           String?
+  durationMinutes    Int
+  coverImageUrl      String?
+  imageGallery       String[]             @default([])
+  tags               String[]             @default([])
+  requiresApproval   Boolean              @default(false)
+  advanceBookingDays Int                  @default(30)
+  cancellationHours  Int                  @default(24)
+  maxBookingsPerDay  Int?
+  publishedAt        DateTime?
+  cancelledAt        DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  merchant           Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  pricingTiers       ServicePricingTier[]
+  bookings           ServiceBooking[]
+  addOns             ServiceAddOn[]
+  checkIns           ServiceCheckIn[]
 
   @@index([merchantId, status])
   @@index([serviceType, status])
@@ -2019,17 +2157,17 @@ model ServiceAddOn {
 }
 
 model ServiceAddOnPurchase {
-  id           Int          @id @default(autoincrement())
-  addOnId      Int
-  bookingId    Int
-  userId       Int
-  quantity     Int          @default(1)
-  unitPrice    Float
-  totalPrice   Float
-  purchasedAt  DateTime     @default(now())
-  addOn        ServiceAddOn @relation(fields: [addOnId], references: [id])
-  booking      ServiceBooking @relation(fields: [bookingId], references: [id])
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          Int            @id @default(autoincrement())
+  addOnId     Int
+  bookingId   Int
+  userId      Int
+  quantity    Int            @default(1)
+  unitPrice   Float
+  totalPrice  Float
+  purchasedAt DateTime       @default(now())
+  addOn       ServiceAddOn   @relation(fields: [addOnId], references: [id])
+  booking     ServiceBooking @relation(fields: [bookingId], references: [id])
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([bookingId])
   @@index([addOnId])

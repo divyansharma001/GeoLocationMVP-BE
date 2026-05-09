@@ -11,6 +11,10 @@ import { haversineMeters } from '../lib/geo';
 import { getEligibleCheckInRewardsForUser } from '../services/venue-reward.service';
 import { registerCheckInLotteryEntry } from '../services/checkin-lottery.service';
 import { createCheckInGameSessionForCheckIn } from '../services/checkin-game.service';
+import {
+  DEFAULT_TRUCK_RADIUS_METERS,
+  resolveScheduleStatusFor,
+} from '../services/truck-schedule.service';
 
 const router = Router();
 
@@ -160,12 +164,26 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
     const { dealId, latitude, longitude } = parsed.data;
     const userId = req.user!.id;
 
-    // Fetch deal with merchant location
+    // Fetch deal with merchant + stores. Truck stores need their schedule
+    // resolved at check-in time so we validate against where the truck *is*,
+    // not where it's registered.
     const deal = await prisma.deal.findUnique({
       where: { id: dealId },
       include: {
-        merchant: { select: { id: true, status: true, latitude: true, longitude: true } }
-      }
+        merchant: {
+          select: {
+            id: true,
+            status: true,
+            businessName: true,
+            latitude: true,
+            longitude: true,
+            stores: {
+              where: { active: true },
+              select: { id: true, latitude: true, longitude: true, isFoodTruck: true },
+            },
+          },
+        },
+      },
     });
 
     if (!deal) {
@@ -176,37 +194,133 @@ router.post('/check-in', protect, async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Deal merchant is not approved' });
     }
 
-    if (deal.merchant.latitude == null || deal.merchant.longitude == null) {
-      return res.status(400).json({ error: 'Merchant location not set; cannot perform check-in.' });
-    }
-
     const now = new Date();
     const dealActive = deal.startTime <= now && deal.endTime >= now;
     if (!dealActive) {
       return res.status(400).json({ error: 'Deal is not currently active.' });
     }
 
-    // Distance calculation
-    const distanceMeters = haversineMeters(latitude, longitude, deal.merchant.latitude, deal.merchant.longitude);
-
     const { checkInRadiusMeters, checkInPoints, firstCheckInBonus } = getPointConfig();
-
     const thresholdMeters = checkInRadiusMeters;
     const bypassGeo = shouldBypassCheckInGeo();
-    const withinRange = bypassGeo ? true : distanceMeters <= thresholdMeters;
+
+    // Resolve truck schedules up-front (only for stores actually marked as trucks).
+    const truckStores = deal.merchant.stores.filter((s) => s.isFoodTruck);
+    const truckScheduleMap = truckStores.length
+      ? await resolveScheduleStatusFor(truckStores.map((s) => s.id), now)
+      : new Map();
+
+    // Build the list of valid "anchor" coordinates the user can be near:
+    //   - Each fixed store's coords (radius = standard checkInRadiusMeters)
+    //   - Each truck's currentStop coords (radius = stop override or DEFAULT_TRUCK_RADIUS_METERS)
+    type Anchor = { lat: number; lng: number; radius: number; storeId: number | null; isTruck: boolean };
+    const anchors: Anchor[] = [];
+
+    for (const store of deal.merchant.stores) {
+      if (store.isFoodTruck) {
+        const status = truckScheduleMap.get(store.id);
+        if (status?.current) {
+          anchors.push({
+            lat: status.current.latitude,
+            lng: status.current.longitude,
+            radius: status.current.radiusMeters ?? DEFAULT_TRUCK_RADIUS_METERS,
+            storeId: store.id,
+            isTruck: true,
+          });
+        }
+      } else if (store.latitude != null && store.longitude != null) {
+        anchors.push({
+          lat: store.latitude,
+          lng: store.longitude,
+          radius: thresholdMeters,
+          storeId: store.id,
+          isTruck: false,
+        });
+      }
+    }
+
+    // Backwards-compat: if there are no per-store anchors but the merchant has
+    // top-level coords (legacy data), fall back to checking against those.
+    if (anchors.length === 0 && deal.merchant.latitude != null && deal.merchant.longitude != null) {
+      anchors.push({
+        lat: deal.merchant.latitude,
+        lng: deal.merchant.longitude,
+        radius: thresholdMeters,
+        storeId: null,
+        isTruck: false,
+      });
+    }
+
+    // No usable anchor at all — could be a truck with no live stop, or a
+    // misconfigured merchant.
+    if (anchors.length === 0) {
+      const merchantHasOnlyTrucks = truckStores.length > 0 && deal.merchant.stores.length === truckStores.length;
+      if (merchantHasOnlyTrucks) {
+        // Determine why: are there ANY non-cancelled stops with endsAt >= now?
+        const upcomingCount = await prisma.scheduledStop.count({
+          where: {
+            storeId: { in: truckStores.map((s) => s.id) },
+            status: { in: ['SCHEDULED', 'LIVE'] },
+            endsAt: { gte: now },
+          },
+        });
+        return res.status(200).json({
+          dealId: deal.id,
+          merchantId: deal.merchant.id,
+          userId,
+          distanceMeters: null,
+          withinRange: false,
+          thresholdMeters,
+          bypassGeo,
+          dealActive,
+          pointsAwarded: 0,
+          pointEvents: [],
+          failureReason: upcomingCount > 0 ? 'TRUCK_NOT_LIVE' : 'TRUCK_NO_STOP_TODAY',
+          merchantBusinessName: deal.merchant.businessName,
+        });
+      }
+      return res.status(400).json({ error: 'Merchant location not set; cannot perform check-in.' });
+    }
+
+    // Distance to the *closest* anchor wins. We also remember which anchor matched
+    // so the failure-reason copy can name the truck location if applicable.
+    let bestDistance = Infinity;
+    let bestAnchor: Anchor = anchors[0];
+    for (const anchor of anchors) {
+      const d = haversineMeters(latitude, longitude, anchor.lat, anchor.lng);
+      if (d < bestDistance) {
+        bestDistance = d;
+        bestAnchor = anchor;
+      }
+    }
+
+    const distanceMeters = bestDistance;
+    const effectiveRadius = bestAnchor.radius;
+    const withinRange = bypassGeo ? true : distanceMeters <= effectiveRadius;
 
     if (!withinRange) {
+      // For mixed merchants, the failure is just OUT_OF_RANGE. For truck-only
+      // merchants where the closest anchor is a truck stop, surface the address
+      // for friendlier copy.
+      let currentStopAddress: string | undefined;
+      if (bestAnchor.isTruck && bestAnchor.storeId !== null) {
+        const stopForAnchor = truckScheduleMap.get(bestAnchor.storeId)?.current;
+        if (stopForAnchor) currentStopAddress = stopForAnchor.address;
+      }
       return res.status(200).json({
         dealId: deal.id,
         merchantId: deal.merchant.id,
         userId,
         distanceMeters: Math.round(distanceMeters * 100) / 100,
         withinRange,
-        thresholdMeters,
+        thresholdMeters: effectiveRadius,
         bypassGeo,
         dealActive,
         pointsAwarded: 0,
-        pointEvents: []
+        pointEvents: [],
+        failureReason: 'OUT_OF_RANGE',
+        merchantBusinessName: deal.merchant.businessName,
+        currentStopAddress,
       });
     }
 

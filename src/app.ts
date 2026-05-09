@@ -49,6 +49,10 @@ import checkInLotteryRoutes from './routes/checkin-lottery.routes';
 import checkInGameRoutes from './routes/checkin-game.routes';
 import blogRoutes from './routes/blog.routes';
 import blogPublicRoutes from './routes/blog-public.routes';
+import merchantTruckRoutes from './routes/merchant-truck.routes';
+import foodTruckRoutes from './routes/food-truck.routes';
+import cateringMerchantRoutes from './routes/catering.merchant.routes';
+import cateringPublicRoutes from './routes/catering.public.routes';
 
 // Load env (tests can set process.env before importing this file)
 dotenv.config();
@@ -178,6 +182,10 @@ app.use('/api/checkin-lottery', checkInLotteryRoutes);
 app.use('/api', checkInGameRoutes);
 app.use('/api/merchant/blog', blogRoutes);
 app.use('/api/blog', blogPublicRoutes);
+app.use('/api', merchantTruckRoutes);
+app.use('/api/food-trucks', foodTruckRoutes);
+app.use('/api', cateringMerchantRoutes);
+app.use('/api/catering', cateringPublicRoutes);
 
 export default app;
 
