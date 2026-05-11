@@ -1619,12 +1619,51 @@ router.get('/merchants/deals', protect, isApprovedMerchant, async (req: AuthRequ
       }
     });
 
+    // Aggregate bounty progress stats (shares / conversions / revenue) per deal
+    // for use on the Referral Deals dashboard. Empty result on non-bounty deals.
+    // - shares: total friends invited (sum of referralCount across all referrers)
+    // - conversions: bounties completed (isCompleted = true)
+    // - attributedRevenue: estimated friend spend = conversions × bountyMinSpend
+    const bountyDealsForStats = deals.filter(d => (d.bountyRewardAmount ?? 0) > 0);
+    const bountyDealIds = bountyDealsForStats.map(d => d.id);
+    const minSpendByDealId = new Map<number, number>(
+      bountyDealsForStats.map(d => [d.id, d.bountyMinSpend ?? 0])
+    );
+
+    const bountyStatsByDealId = new Map<number, { shares: number; conversions: number; attributedRevenue: number }>();
+    if (bountyDealIds.length > 0) {
+      const grouped = await prisma.bountyProgress.groupBy({
+        by: ['dealId'],
+        where: { dealId: { in: bountyDealIds } },
+        _sum: { referralCount: true },
+      });
+      const completedCounts = await prisma.bountyProgress.groupBy({
+        by: ['dealId'],
+        where: { dealId: { in: bountyDealIds }, isCompleted: true },
+        _count: { _all: true },
+      });
+      const completedByDealId = new Map<number, number>(
+        completedCounts.map(c => [c.dealId, c._count._all])
+      );
+      for (const dealId of bountyDealIds) {
+        const shares = grouped.find(g => g.dealId === dealId)?._sum.referralCount ?? 0;
+        const conversions = completedByDealId.get(dealId) ?? 0;
+        const minSpend = minSpendByDealId.get(dealId) ?? 0;
+        bountyStatsByDealId.set(dealId, {
+          shares,
+          conversions,
+          attributedRevenue: conversions * minSpend,
+        });
+      }
+    }
+
     // Derive status flags
     const enriched = deals.map(d => {
       const isActive = d.startTime <= now && d.endTime >= now;
       const isExpired = d.endTime < now;
       const isUpcoming = d.startTime > now;
-      return { ...d, isActive, isExpired, isUpcoming };
+      const bountyStats = bountyStatsByDealId.get(d.id) ?? null;
+      return { ...d, isActive, isExpired, isUpcoming, bountyStats };
     });
 
     // Filtering logic
