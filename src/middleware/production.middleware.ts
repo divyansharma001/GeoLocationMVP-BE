@@ -60,74 +60,16 @@ function shouldSkipRateLimit(req: Request): boolean {
   return req.path === '/health' || req.path === '/ready' || req.path === '/live';
 }
 
-function buildRateLimiter(options: {
+// Rate limiting globally disabled. Every limiter built via `buildRateLimiter`
+// is now a pass-through no-op middleware. To re-enable, restore the original
+// implementation from git history (commit before this change).
+function buildRateLimiter(_options: {
   name: string;
   windowMs: number;
   limit: number;
   message: string;
 }) {
-  const memoryStore = new Map<string, { count: number; resetAt: number }>();
-
-  return async (req: Request, res: Response, next: NextFunction) => {
-    if (shouldSkipRateLimit(req)) {
-      return next();
-    }
-
-    const key = `${options.name}:${getClientKey(req)}`;
-    const now = Date.now();
-    const resetAt = now + options.windowMs;
-
-    let count: number;
-    let retryAfterSeconds: number;
-
-    try {
-      if (process.env.NODE_ENV !== 'test' && isRedisReady()) {
-        const redisKey = `rate_limit:${key}`;
-        count = await redis.incr(redisKey);
-        if (count === 1) {
-          await redis.pexpire(redisKey, options.windowMs);
-        }
-        const ttlMs = await redis.pttl(redisKey);
-        retryAfterSeconds = Math.max(1, Math.ceil(ttlMs / 1000));
-      } else {
-        const current = memoryStore.get(key);
-        if (!current || current.resetAt <= now) {
-          memoryStore.set(key, { count: 1, resetAt });
-          count = 1;
-          retryAfterSeconds = Math.ceil(options.windowMs / 1000);
-        } else {
-          current.count += 1;
-          count = current.count;
-          retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
-        }
-      }
-    } catch {
-      const current = memoryStore.get(key);
-      if (!current || current.resetAt <= now) {
-        memoryStore.set(key, { count: 1, resetAt });
-        count = 1;
-        retryAfterSeconds = Math.ceil(options.windowMs / 1000);
-      } else {
-        current.count += 1;
-        count = current.count;
-        retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
-      }
-    }
-
-    res.setHeader('RateLimit-Limit', options.limit.toString());
-    res.setHeader('RateLimit-Remaining', Math.max(0, options.limit - count).toString());
-    res.setHeader('RateLimit-Reset', retryAfterSeconds.toString());
-
-    if (count > options.limit) {
-      metricsCollector.recordRateLimit(options.name);
-      return res.status(429).json({
-        error: options.message,
-        retryAfterSeconds,
-      });
-    }
-
-    next();
-  };
+  return (_req: Request, _res: Response, next: NextFunction) => next();
 }
 
 // Compression middleware
