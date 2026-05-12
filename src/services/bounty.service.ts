@@ -16,10 +16,6 @@ export async function startBountyProgress(userId: number, dealId: number) {
     throw new Error('Deal not found');
   }
 
-  if (deal.dealType.name !== 'Bounty Deal') {
-    throw new Error('This deal is not a bounty deal');
-  }
-
   if (!deal.bountyRewardAmount || !deal.minReferralsRequired) {
     throw new Error('Bounty deal is not properly configured');
   }
@@ -57,7 +53,7 @@ export async function recordBountyReferral(
     include: { dealType: true },
   });
 
-  if (!deal || deal.dealType.name !== 'Bounty Deal') {
+  if (!deal || !deal.bountyRewardAmount) {
     throw new Error('Invalid bounty deal');
   }
 
@@ -224,7 +220,7 @@ export async function refreshBountyQRCode(dealId: number, merchantId: number) {
     throw new Error('Deal not found for this merchant');
   }
 
-  if (deal.dealType.name !== 'Bounty Deal') {
+  if (!deal.bountyRewardAmount) {
     throw new Error('This deal is not a bounty deal');
   }
 

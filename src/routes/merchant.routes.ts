@@ -1699,6 +1699,98 @@ router.get('/merchants/deals', protect, isApprovedMerchant, async (req: AuthRequ
   }
 });
 
+// --- Endpoint: PATCH /api/merchants/deals/:dealId/bounty ---
+// Attaches or updates bounty settings on an existing merchant deal.
+router.patch('/merchants/deals/:dealId/bounty', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
+  try {
+    const merchantId = req.merchant?.id;
+    const dealId = Number(req.params.dealId);
+
+    if (!merchantId) {
+      return res.status(401).json({ error: 'Merchant authentication required' });
+    }
+
+    if (!Number.isInteger(dealId) || dealId < 1) {
+      return res.status(400).json({ error: 'Valid dealId is required' });
+    }
+
+    const existingDeal = await prisma.deal.findFirst({
+      where: { id: dealId, merchantId },
+      select: { id: true, title: true, bountyRewardAmount: true, minReferralsRequired: true },
+    });
+
+    if (!existingDeal) {
+      return res.status(404).json({ error: 'Deal not found for this merchant' });
+    }
+
+    const bountyRewardAmount = normalizeOptionalNonNegativeFloat(req.body?.bountyRewardAmount, 'bountyRewardAmount');
+    if (bountyRewardAmount == null || bountyRewardAmount <= 0) {
+      return res.status(400).json({ error: 'bountyRewardAmount must be a positive number' });
+    }
+
+    const minReferralsRequired = normalizeOptionalPositiveInteger(req.body?.minReferralsRequired, 'minReferralsRequired');
+    if (minReferralsRequired == null) {
+      return res.status(400).json({ error: 'minReferralsRequired must be a positive integer' });
+    }
+
+    const bountyPotAmount = normalizeOptionalNonNegativeFloat(req.body?.bountyPotAmount, 'bountyPotAmount');
+    const bountyMaxInvites = normalizeOptionalPositiveInteger(req.body?.bountyMaxInvites, 'bountyMaxInvites');
+    const bountyMinSpend = normalizeOptionalNonNegativeFloat(req.body?.bountyMinSpend, 'bountyMinSpend');
+
+    if (req.body?.kickbackEnabled !== undefined && typeof req.body.kickbackEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'kickbackEnabled must be a boolean' });
+    }
+
+    const kickbackEnabled = req.body?.kickbackEnabled ?? true;
+    const { generateBountyQRCode } = require('../lib/dealUtils');
+    const bountyQRCode = generateBountyQRCode(dealId, merchantId);
+
+    const updatedDeal = await prisma.deal.update({
+      where: { id: dealId },
+      data: {
+        bountyRewardAmount,
+        minReferralsRequired,
+        bountyPotAmount: bountyPotAmount ?? null,
+        bountyMaxInvites: bountyMaxInvites ?? null,
+        bountyMinSpend: bountyMinSpend ?? null,
+        kickbackEnabled,
+        bountyQRCode,
+      },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        startTime: true,
+        endTime: true,
+        bountyRewardAmount: true,
+        minReferralsRequired: true,
+        bountyPotAmount: true,
+        bountyMaxInvites: true,
+        bountyMinSpend: true,
+        bountyQRCode: true,
+        kickbackEnabled: true,
+        currentRedemptions: true,
+        dealType: { select: { name: true } },
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        deal: updatedDeal,
+        bounty: {
+          rewardAmount: updatedDeal.bountyRewardAmount,
+          minReferrals: updatedDeal.minReferralsRequired,
+          qrCode: updatedDeal.bountyQRCode,
+        },
+      },
+    });
+  } catch (error: any) {
+    console.error('Error updating bounty deal:', error);
+    res.status(500).json({ error: error?.message || 'Failed to update bounty deal' });
+  }
+});
+
 // --- Endpoint: GET /api/merchants/dashboard/stats ---
 // Returns key performance indicators for the merchant dashboard
 router.get('/merchants/dashboard/stats', protect, isApprovedMerchant, async (req: AuthRequest, res) => {
